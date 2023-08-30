@@ -1,4 +1,6 @@
 import os
+
+import cv2
 import torch
 import random
 import numpy as np
@@ -6,6 +8,9 @@ from functools import reduce
 from visdom import Visdom
 from torchvision.transforms import ToPILImage, ToTensor
 import torch.nn.functional as F
+
+from utils.image_utils import merge_by_wavelets
+from utils.tensor_utils import preprocess_image
 
 
 def add_prefix(path, pref):
@@ -220,67 +225,81 @@ class VisPlot(AbstractCallback):
         pass
 
 
-class VisImagesGrid(AbstractCallback):
+class VisImageForWavelets(AbstractCallback):
     def __init__(self, title, server='http://localhost', port=8080,
-                 vis_step=1, scale=10, grid_size=8):
+                 vis_step=1, scale=10):
         self.viz = Visdom(server=server, port=port)
-        self.title = title + 'Image'
+        self.title = title + ' input|original|predicted'
         self.windows = {1: None}
         self.n = 0
         self.step = vis_step
         self.scale = scale
 
-        self.mean = torch.FloatTensor([0.485, 0.456, 0.406]).unsqueeze(1).unsqueeze(1)
-        self.std = torch.FloatTensor([0.229, 0.224, 0.225]).unsqueeze(1).unsqueeze(1)
-
-        self.to_image = ToPILImage()
-        self.to_tensor = ToTensor()
-
-        self.grid_size = grid_size
+        self.img_mean = 0.5
+        self.img_std = 0.5
+        self.w_mean = 0
+        self.w_std = 1
 
         random.seed()
 
+    def _denorm_image(self, im: torch.Tensor) -> torch.Tensor:
+        return im * self.img_std + self.img_mean
+
+    def _tensor_to_image(self, im: torch.Tensor) -> np.ndarray:
+        _image = self._denorm_image(im)
+        return np.clip((_image.permute(1, 2, 0) * 255.0).to('cpu').numpy(), 0, 255).astype(np.uint8)
+
+    def _merge_by_wavelets(self, im: torch.Tensor, waves: torch.Tensor) -> torch.Tensor:
+        np_image_lr = self._tensor_to_image(im)
+        _waves = waves * self.w_std + self.w_mean
+        np_wavelets = (_waves * 255.0).to('cpu').numpy()
+
+        y_lh, y_hl, y_hh, cr_lh, cr_hl, cr_hh, cb_lh, cb_hl, cb_hh = np_wavelets
+
+        y_hr = merge_by_wavelets(np_image_lr[..., 0], y_lh, y_hl, y_hh)
+        cr_hr = merge_by_wavelets(np_image_lr[..., 1], cr_lh, cr_hl, cr_hh)
+        cb_hr = merge_by_wavelets(np_image_lr[..., 2], cb_lh, cb_hl, cb_hh)
+
+        ycrcb_hr = cv2.merge((y_hr, cr_hr, cb_hr))
+
+        return preprocess_image(ycrcb_hr, self.img_mean, self.img_std)
+
+    def _ycrcb_to_rgb(self, im: torch.Tensor) -> torch.Tensor:
+        np_image = self._tensor_to_image(im)
+        rgb_image = cv2.cvtColor(np_image, cv2.COLOR_YCrCb2RGB)
+        return preprocess_image(rgb_image, self.img_mean, self.img_std)
+
     def per_batch(self, args, label=1):
-        """
-        Per batch visualization
-        Args:
-            args: input tensor in [0, 1] values format
-            label: 1
-
-        Returns:
-
-        """
         if self.n % self.step == 0:
-            # i = random.randint(0, args['img'].size(0) - 1)
-            # i = (args['img'].size(0) - 1) // 2
+            i = random.randint(0, args['lr_img'].size(0) - 1)
 
             for win in self.windows.keys():
                 if win == label:
-                    _grid_size = int(np.sqrt(args['img'].size(0)))
+                    # """
+                    # 'lr_img': lr_image,
+                    # 'gt_wavelets': wavelets_truth,
+                    # 'pred_wavelets': wavelets_pred,
+                    # 'gt_image': _hr_image
+                    # """
+                    lr_img = args['lr_img'][i]
+                    gt_wavelets = args['gt_wavelets'][i]
+                    pred_wavelets = args['pred_wavelets'][i]
+                    gt_image = args['gt_image'][i]
 
-                    grid_size = _grid_size \
-                        if _grid_size < self.grid_size else self.grid_size
+                    input_image = self._denorm_image(self._ycrcb_to_rgb(self._merge_by_wavelets(lr_img, gt_wavelets)))
+                    pred_image = self._denorm_image(self._ycrcb_to_rgb(self._merge_by_wavelets(lr_img, pred_wavelets)))
+                    gt_image = self._denorm_image(self._ycrcb_to_rgb(gt_image))
 
-                    imgs = args['img'].to('cpu')
-
-                    grid_lines = []
-                    for line in range(grid_size):
-                        grid_lines.append(
-                            torch.cat(
-                                tuple(imgs[line*grid_size:(line+1)*grid_size]),
-                                dim=2
-                            )
-                        )
-
-                    grid = torch.cat(tuple(grid_lines), dim=1)
-                    grid = grid * self.std + self.mean
-                    grid = torch.clamp(grid, 0, 1)
+                    x = torch.cat(
+                        (input_image, gt_image, pred_image),
+                        dim=2
+                    )
 
                     self.windows[win] = self.viz.image(
                         F.interpolate(
-                            grid.unsqueeze(0),
+                            x.unsqueeze(0),
                             scale_factor=(self.scale, self.scale)
-                        ).squeeze(0),
+                        ).squeeze(),
                         win=self.windows[win],
                         opts=dict(title=self.title)
                     )

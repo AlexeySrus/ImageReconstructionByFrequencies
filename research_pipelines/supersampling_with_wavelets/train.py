@@ -1,19 +1,23 @@
+import logging
 from argparse import ArgumentParser, Namespace
 from typing import Tuple
 import tqdm
 import torch
 from torch.utils import data
 import torchvision
+import segmentation_models_pytorch as smp
 import timm
 import os
+from torchmetrics.image import PeakSignalNoiseRatio as TorchPSNR
 
-from dataloader import ClassificationDataloader
-from callbacks import VisImagesGrid, VisPlot
+from dataloader import WaveletSuperSamplingDataset
+from callbacks import VisImageForWavelets, VisPlot
 
 
 class CustomTrainingPipeline(object):
     def __init__(self,
-                 data_path: str,
+                 train_data_path: str,
+                 val_data_path: str,
                  experiment_folder: str,
                  model_name: str = 'resnet18',
                  load_path: str = None,
@@ -40,9 +44,6 @@ class CustomTrainingPipeline(object):
             image_size: Input image size
         """
         self.device = device
-        self.dataset_path = data_path
-        train_data_path = os.path.join(data_path, 'train/')
-        val_data_path = os.path.join(data_path, 'val/')
         self.experiment_folder = experiment_folder
         self.checkpoints_dir = os.path.join(experiment_folder, 'checkpoints/')
 
@@ -59,26 +60,20 @@ class CustomTrainingPipeline(object):
         os.makedirs(experiment_folder, exist_ok=True)
         os.makedirs(self.checkpoints_dir, exist_ok=True)
 
-        self.train_dataset = ClassificationDataloader(
+        self.train_dataset = WaveletSuperSamplingDataset(
             train_data_path,
-            self.image_shape,
-            True,
-            os.path.join(experiment_folder, 'train_data.csv'),
-            os.path.join(experiment_folder, 'classes.txt')
+            self.image_shape[0]
         )
-        self.val_dataset = ClassificationDataloader(
+        self.val_dataset = WaveletSuperSamplingDataset(
             val_data_path,
-            self.image_shape,
-            False,
-            os.path.join(experiment_folder, 'val_data.csv'),
-            os.path.join(experiment_folder, 'classes.txt')
+            self.image_shape[0],
+            dataset_size=32
         )
 
         self.train_dataloader = torch.utils.data.DataLoader(
             dataset=self.train_dataset,
             batch_size=batch_size,
-            shuffle=False,
-            sampler=self.train_dataset.get_classes_sampler(),
+            shuffle=True,
             drop_last=True,
             num_workers=4
         )
@@ -90,12 +85,11 @@ class CustomTrainingPipeline(object):
             num_workers=4
         )
 
-        self.batch_visualizer = None if visdom_port is None else VisImagesGrid(
-            title='Classification',
+        self.batch_visualizer = None if visdom_port is None else VisImageForWavelets(
+            title='SuperSampling',
             port=visdom_port,
             vis_step=250,
-            scale=1,
-            grid_size=8
+            scale=1
         )
 
         self.plot_visualizer = None if visdom_port is None else VisPlot(
@@ -114,11 +108,16 @@ class CustomTrainingPipeline(object):
             self.plot_visualizer.register_scatterplot(
                 name='validation acc per_epoch',
                 xlabel='Epoch',
-                ylabel='Accuracy',
+                ylabel='PSNR',
                 legend=['val']
             )
 
-        self.model = timm.create_model(model_name, num_classes=self.train_dataset.num_classes)
+        self.model = smp.Unet(
+            encoder_name="resnet18",
+            encoder_weights="imagenet",
+            in_channels=3,
+            classes=9,
+        )
 
         if load_path is not None:
             self.model.load_state_dict(
@@ -128,7 +127,8 @@ class CustomTrainingPipeline(object):
             )
         self.model = self.model.to(device)
 
-        self.criterion = torch.nn.CrossEntropyLoss()
+        self.criterion = torch.nn.MSELoss()
+        self.accuracy_measure = TorchPSNR()
         self.optimizer = torch.optim.RAdam(
             params=self.model.parameters(), lr=0.01)
         # self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -149,12 +149,14 @@ class CustomTrainingPipeline(object):
         avg_epoch_loss = 0
 
         with tqdm.tqdm(total=len(self.train_dataloader)) as pbar:
-            for i, (_x, _y) in enumerate(self.train_dataloader):
+            for i, (_lr_image, _wavelets, _hr_image) in enumerate(self.train_dataloader):
                 self.optimizer.zero_grad()
-                x = _x.to(self.device)
-                y_truth = _y.to(self.device)
-                y_pred = self.model(x)
-                loss = self.criterion(y_pred, y_truth)
+
+                lr_image = _lr_image.to(self.device)
+                wavelets_truth = _wavelets.to(self.device)
+
+                wavelets_pred = self.model(lr_image)
+                loss = self.criterion(wavelets_pred, wavelets_truth)
 
                 loss.backward()
                 self.optimizer.step()
@@ -169,11 +171,15 @@ class CustomTrainingPipeline(object):
                     loss.item() / len(self.train_dataloader)
 
                 if self.batch_visualizer is not None:
-                    self.batch_visualizer.per_batch(
-                        {
-                            'img': x
-                        }
-                    )
+                    with torch.no_grad():
+                        self.batch_visualizer.per_batch(
+                            {
+                                'lr_img': lr_image,
+                                'gt_wavelets': wavelets_truth,
+                                'pred_wavelets': wavelets_pred,
+                                'gt_image': _hr_image
+                            }
+                        )
 
                 pbar.update(1)
 
@@ -186,15 +192,14 @@ class CustomTrainingPipeline(object):
         test_len = 0
 
         if self.val_dataloader is not None:
-            for _x, _y in tqdm.tqdm(self.val_dataloader):
-                x = _x.to(self.device)
-                y_truth = _y.to(self.device)
-                y_pred = self.model(x)
-                loss = self.criterion(y_pred, y_truth)
+            for _lr_image, _wavelets, _hr_image in tqdm.tqdm(self.val_dataloader):
+                lr_image = _lr_image.to(self.device)
+                wavelets_truth = _wavelets.to(self.device)
+                wavelets_pred = self.model(lr_image)
+                loss = self.criterion(wavelets_pred, wavelets_truth)
                 avg_loss_rate += loss.item()
-                acc_rate = torch.eq(y_truth, y_pred.argmax(
-                    dim=1)).sum() / y_truth.size(0)
-                acc_rate = float(acc_rate.to('cpu').numpy())
+
+                acc_rate = 1.0 / (loss.item() + 1E-5)   # float(acc_rate.to('cpu').numpy())
 
                 avg_acc_rate += acc_rate
                 test_len += 1
@@ -242,7 +247,7 @@ class CustomTrainingPipeline(object):
 
         self.model = self.model.to('cpu')
         self.model.eval()
-        self._save_best_traced_model(latest_traced_model_path)
+        # self._save_best_traced_model(latest_traced_model_path)
         self.model = self.model.to(self.device)
 
         if self.best_test_score - avg_acc_rate < -1E-5:
@@ -258,7 +263,7 @@ class CustomTrainingPipeline(object):
                 self.model.state_dict(),
                 best_model_path
             )
-            self._save_best_traced_model(best_traced_model_path)
+            # self._save_best_traced_model(best_traced_model_path)
             self.model = self.model.to(self.device)
 
     def _check_stop_criteria(self):
@@ -278,8 +283,12 @@ class CustomTrainingPipeline(object):
 def parse_args() -> Namespace:
     parser = ArgumentParser(description='Training pipeline')
     parser.add_argument(
-        '--data', type=str, required=True,
+        '--train_data', type=str, required=True,
         help='Path to training data root folder.'
+    )
+    parser.add_argument(
+        '--validation_data', type=str, required=True,
+        help='Path to validating data root folder.'
     )
     parser.add_argument(
         '--experiment_folder', type=str, required=True,
@@ -317,7 +326,8 @@ if __name__ == '__main__':
     args = parse_args()
 
     CustomTrainingPipeline(
-        data_path=args.data,
+        train_data_path=args.train_data,
+        val_data_path=args.validation_data,
         experiment_folder=args.experiment_folder,
         load_path=args.load_path,
         visdom_port=args.visdom_port,
