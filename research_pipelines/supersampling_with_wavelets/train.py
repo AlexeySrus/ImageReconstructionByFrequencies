@@ -27,7 +27,8 @@ class CustomTrainingPipeline(object):
                  resume_epoch: int = 1,
                  stop_criteria: float = 1E-7,
                  device: str = 'cuda',
-                 image_size: int = 224):
+                 image_size: int = 224,
+                 train_workers: int = 8):
         """
         Train model
         Args:
@@ -62,7 +63,8 @@ class CustomTrainingPipeline(object):
 
         self.train_dataset = WaveletSuperSamplingDataset(
             train_data_path,
-            self.image_shape[0]
+            self.image_shape[0],
+            dataset_size=10000
         )
         self.val_dataset = WaveletSuperSamplingDataset(
             val_data_path,
@@ -75,7 +77,7 @@ class CustomTrainingPipeline(object):
             batch_size=batch_size,
             shuffle=True,
             drop_last=True,
-            num_workers=4
+            num_workers=train_workers
         )
         self.val_dataloader = torch.utils.data.DataLoader(
             dataset=self.val_dataset,
@@ -88,8 +90,8 @@ class CustomTrainingPipeline(object):
         self.batch_visualizer = None if visdom_port is None else VisImageForWavelets(
             title='SuperSampling',
             port=visdom_port,
-            vis_step=250,
-            scale=1
+            vis_step=100,
+            scale=3
         )
 
         self.plot_visualizer = None if visdom_port is None else VisPlot(
@@ -113,8 +115,8 @@ class CustomTrainingPipeline(object):
             )
 
         self.model = smp.Unet(
-            encoder_name="resnet18",
-            encoder_weights="imagenet",
+            encoder_name="mobileone_s0",
+            encoder_weights=None,
             in_channels=3,
             classes=9,
         )
@@ -127,7 +129,7 @@ class CustomTrainingPipeline(object):
             )
         self.model = self.model.to(device)
 
-        self.criterion = torch.nn.MSELoss()
+        self.criterion = torch.nn.L1Loss()
         self.accuracy_measure = TorchPSNR()
         self.optimizer = torch.optim.RAdam(
             params=self.model.parameters(), lr=0.01)
