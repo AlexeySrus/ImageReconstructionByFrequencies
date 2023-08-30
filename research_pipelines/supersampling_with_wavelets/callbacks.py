@@ -245,12 +245,15 @@ class VisImageForWavelets(AbstractCallback):
     def _denorm_image(self, im: torch.Tensor) -> torch.Tensor:
         return im * self.img_std + self.img_mean
 
-    def _tensor_to_image(self, im: torch.Tensor) -> np.ndarray:
+    def _tensor_to_image(self, im: torch.Tensor, cv_out: bool = True) -> np.ndarray:
         _image = self._denorm_image(im)
-        return np.clip((_image.permute(1, 2, 0) * 255.0).to('cpu').numpy(), 0, 255).astype(np.uint8)
+        out = (_image.permute(1, 2, 0) * 255.0).to('cpu').numpy()
+        if cv_out:
+            out = np.clip(out, 0, 255).astype(np.uint8)
+        return out
 
     def _merge_by_wavelets(self, im: torch.Tensor, waves: torch.Tensor) -> torch.Tensor:
-        np_image_lr = self._tensor_to_image(im)
+        np_image_lr = self._tensor_to_image(im, cv_out=False)
         _waves = waves * self.w_std + self.w_mean
         np_wavelets = (_waves * 255.0).to('cpu').numpy()
 
@@ -260,7 +263,7 @@ class VisImageForWavelets(AbstractCallback):
         cr_hr = merge_by_wavelets(np_image_lr[..., 1], cr_lh, cr_hl, cr_hh)
         cb_hr = merge_by_wavelets(np_image_lr[..., 2], cb_lh, cb_hl, cb_hh)
 
-        ycrcb_hr = cv2.merge((y_hr, cr_hr, cb_hr))
+        ycrcb_hr = np.clip(cv2.merge((y_hr, cr_hr, cb_hr)), 0, 255)
 
         return preprocess_image(ycrcb_hr, self.img_mean, self.img_std)
 

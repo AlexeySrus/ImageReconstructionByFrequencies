@@ -56,6 +56,8 @@ class WaveletSuperSamplingDataset(Dataset):
         )
 
         selected_inter_method: Optional[int] = self.interpolations[np.random.randint(0, len(self.interpolations))]
+        # TODO: Add transform which changed OpenCV image to LL wavelet representation
+        selected_inter_method = None
         ycrcb_ll_crop: Optional[np.ndarray] = None
 
         if selected_inter_method is not None:
