@@ -28,7 +28,7 @@ class CustomTrainingPipeline(object):
                  stop_criteria: float = 1E-7,
                  device: str = 'cuda',
                  image_size: int = 224,
-                 train_workers: int = 8):
+                 train_workers: int = 4):
         """
         Train model
         Args:
@@ -90,7 +90,7 @@ class CustomTrainingPipeline(object):
         self.batch_visualizer = None if visdom_port is None else VisImageForWavelets(
             title='SuperSampling',
             port=visdom_port,
-            vis_step=100,
+            vis_step=1000,
             scale=3
         )
 
@@ -115,8 +115,9 @@ class CustomTrainingPipeline(object):
             )
 
         self.model = smp.Unet(
-            encoder_name="mobileone_s0",
+            encoder_name="resnet18",
             encoder_weights=None,
+            decoder_use_batchnorm=False,
             in_channels=3,
             classes=9,
         )
@@ -138,7 +139,7 @@ class CustomTrainingPipeline(object):
         # )
         self.scheduler = torch.optim.lr_scheduler.MultiStepLR(
             self.optimizer,
-            milestones=[15, 30, 50],
+            milestones=[150, 300, 5000],
             gamma=0.1
         )
 
@@ -195,16 +196,27 @@ class CustomTrainingPipeline(object):
 
         if self.val_dataloader is not None:
             for _lr_image, _wavelets, _hr_image in tqdm.tqdm(self.val_dataloader):
-                lr_image = _lr_image.to(self.device)
-                wavelets_truth = _wavelets.to(self.device)
-                wavelets_pred = self.model(lr_image)
-                loss = self.criterion(wavelets_pred, wavelets_truth)
-                avg_loss_rate += loss.item()
+                with torch.no_grad():
+                    lr_image = _lr_image.to(self.device)
+                    wavelets_truth = _wavelets.to(self.device)
+                    wavelets_pred = self.model(lr_image)
+                    loss = self.criterion(wavelets_pred, wavelets_truth)
+                    avg_loss_rate += loss.item()
 
-                acc_rate = 1.0 / (loss.item() + 1E-5)   # float(acc_rate.to('cpu').numpy())
+                    pred_image = torch.stack(
+                        [self.batch_visualizer._merge_by_wavelets(single_lr_img, wavelets_pred[bi]).to('cpu') for bi, single_lr_img in enumerate(lr_image)],
+                        dim=0
+                    )
 
-                avg_acc_rate += acc_rate
-                test_len += 1
+                    val_psnr = self.accuracy_measure(
+                        self.batch_visualizer._denorm_image(pred_image),
+                        self.batch_visualizer._denorm_image(_hr_image)
+                    )
+
+                    acc_rate = val_psnr.item()   # float(acc_rate.to('cpu').numpy())
+
+                    avg_acc_rate += acc_rate
+                    test_len += 1
 
         if test_len > 0:
             avg_acc_rate /= test_len

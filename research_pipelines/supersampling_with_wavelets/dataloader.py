@@ -48,7 +48,7 @@ class WaveletSuperSamplingDataset(Dataset):
 
         if min(image.shape[:2]) < self.window_size:
             logging.info('Image {} so small, resizing!'.format(self.images_paths[image_idx]))
-            image = cv2.resize(image, (self.window_size + 2, self.window_size + 2), interpolation=cv2.INTER_AREA)
+            image = cv2.resize(image, (self.window_size + 5, self.window_size + 5), interpolation=cv2.INTER_AREA)
 
         crop = random_crop_with_transforms(
             image1=image,

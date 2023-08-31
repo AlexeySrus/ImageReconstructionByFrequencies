@@ -57,8 +57,8 @@ def random_crop(
     else:
         select_image1, select_image2 = image1, image2
 
-    x = np.random.randint(0, select_image1.shape[1] - window_size)
-    y = np.random.randint(0, select_image1.shape[0] - window_size)
+    x = np.random.randint(0, select_image1.shape[1] - window_size + 1)
+    y = np.random.randint(0, select_image1.shape[0] - window_size + 1)
 
     if image2 is not None:
         return select_image1[
