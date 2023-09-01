@@ -9,10 +9,16 @@ import segmentation_models_pytorch as smp
 import timm
 import os
 from torchmetrics.image import PeakSignalNoiseRatio as TorchPSNR
+from pytorch_msssim import SSIM
 
 from dataloader import SuperSamplingDataset
 from callbacks import VisImage, VisPlot
 from DWT_IDWT.DWT_IDWT_layer import DWT_2D, IDWT_2D
+
+
+class SSIMLoss(SSIM):
+    def forward(self, x, y):
+        return 1. - super().forward(x, y)
 
 
 class CustomTrainingPipeline(object):
@@ -133,7 +139,9 @@ class CustomTrainingPipeline(object):
         self.model = self.model.to(device)
 
         self.criterion = torch.nn.MSELoss()
-        self.wavelets_criterion = torch.nn.MSELoss()
+        self.ssim_loss = SSIMLoss()
+        # self.wavelets_criterion = torch.nn.MSELoss()
+        self.wavelets_criterion = None
         self.accuracy_measure = TorchPSNR().to(device)
         self.optimizer = torch.optim.RAdam(
             params=self.model.parameters(), lr=0.01)
@@ -165,7 +173,7 @@ class CustomTrainingPipeline(object):
                 lh_t, hl_t, hh_t = torch.split(wavelets_pred, 3, dim=1)
                 restored_image = self.iwt(lr_image * 2, lh_t, hl_t, hh_t)
 
-                loss = self.criterion(restored_image, hr_image)
+                loss = self.criterion(restored_image, hr_image) / 2 + self.ssim_loss(restored_image, hr_image) / 2
 
                 wavelets_gt = self.dwt(hr_image)
                 if self.wavelets_criterion is not None:
