@@ -168,8 +168,9 @@ class CustomTrainingPipeline(object):
                 loss = self.criterion(restored_image, hr_image)
 
                 wavelets_gt = self.dwt(hr_image)
-                for wi in range(1, 4):
-                    loss += self.wavelets_criterion([lh_t, hl_t, hh_t][wi - 1], wavelets_gt[wi]) / 4
+                if self.wavelets_criterion is not None:
+                    for wi in range(1, 4):
+                        loss += self.wavelets_criterion([lh_t, hl_t, hh_t][wi - 1], wavelets_gt[wi]) / 4
 
                 loss.backward()
                 self.optimizer.step()
