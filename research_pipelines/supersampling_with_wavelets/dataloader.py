@@ -84,3 +84,39 @@ class WaveletSuperSamplingDataset(Dataset):
         gt_wavelets = cv2.merge((y_lh, y_hl, y_hh, cr_lh, cr_hl, cr_hh, cb_lh, cb_hl, cb_hh))
 
         return preprocess_image(ycrcb_ll_crop), preprocess_image(gt_wavelets, 0, 1), preprocess_image(ycrcb_crop)
+
+
+class SuperSamplingDataset(WaveletSuperSamplingDataset):
+    def __init__(self, folder_path, window_size: int = 224, dataset_size: int = 1000):
+        super().__init__(folder_path, window_size, dataset_size)
+
+        self.interpolations = [
+            cv2.INTER_AREA,
+            cv2.INTER_LANCZOS4,
+            cv2.INTER_NEAREST,
+            cv2.INTER_LINEAR,
+            cv2.INTER_CUBIC
+        ]
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        image_idx = np.random.randint(0, self.images_count)
+        image = load_image(self.images_paths[image_idx])
+
+        if min(image.shape[:2]) < self.window_size:
+            logging.info('Image {} so small, resizing!'.format(self.images_paths[image_idx]))
+            image = cv2.resize(image, (self.window_size + 5, self.window_size + 5), interpolation=cv2.INTER_AREA)
+
+        crop = random_crop_with_transforms(
+            image1=image,
+            window_size=self.window_size
+        )
+
+        selected_inter_method: int = self.interpolations[np.random.randint(0, len(self.interpolations))]
+
+        low_res_crop = cv2.resize(
+            crop,
+            (self.window_size // 2, self.window_size // 2),
+            interpolation=selected_inter_method
+        )
+
+        return preprocess_image(low_res_crop, 0, 1), preprocess_image(crop, 0, 1)

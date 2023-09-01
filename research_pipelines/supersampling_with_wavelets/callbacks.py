@@ -319,3 +319,79 @@ class VisImageForWavelets(AbstractCallback):
 
     def add_window(self, label):
         self.windows[label] = None
+
+
+class VisImage(VisImageForWavelets):
+    def __init__(self, title, server='http://localhost', port=8080,
+                 vis_step=1, scale=10):
+        super().__init__(title, server, port, vis_step, scale)
+
+    def per_batch(self, args, label=1):
+        if self.n % self.step == 0:
+            i = random.randint(0, args['lr_img'].size(0) - 1)
+
+            for win in self.windows.keys():
+                if win == label:
+                    lr_img = args['lr_img'][i]
+                    pred_image = args['pred_image'][i]
+                    gt_image = args['gt_image'][i]
+                    gt_wavelets = [pw[i] for pw in args['gt_wavelets']]
+                    pred_wavelets = args['pred_wavelets'][i]
+
+                    lr_img = torch.clip(lr_img, 0, 1).to('cpu')
+                    gt_image = torch.clip(gt_image, 0, 1).to('cpu')
+                    pred_image = torch.clip(pred_image, 0, 1).to('cpu')
+                    pred_wavelets = torch.split(torch.clip((pred_wavelets.to('cpu') + 1.0) / 2, 0, 1), 3, dim=0)
+                    gt_wavelets[0] = torch.clip(gt_wavelets[0] / 2, 0, 1).to('cpu')
+                    for k in range(1, 4):
+                        gt_wavelets[k] = torch.clip((gt_wavelets[k] + 1.0) / 2, 0, 1).to('cpu')
+
+                    wx_gt = torch.cat(
+                        (
+                            torch.cat((gt_wavelets[0], gt_wavelets[1]), dim=2),
+                            torch.cat((gt_wavelets[2], gt_wavelets[3]), dim=2),
+                        ),
+                        dim=1
+                    )
+                    wx_pred = torch.cat(
+                        (
+                            torch.cat((lr_img, pred_wavelets[0]), dim=2),
+                            torch.cat((pred_wavelets[1], pred_wavelets[2]), dim=2),
+                        ),
+                        dim=1
+                    )
+                    wx = torch.cat(
+                        (wx_gt, wx_pred),
+                        dim=2
+                    )
+
+                    x = torch.cat(
+                        (gt_image, pred_image),
+                        dim=2
+                    )
+                    x = torch.cat(
+                        (x, wx),
+                        dim=1
+                    )
+
+                    self.windows[win] = self.viz.image(
+                        F.interpolate(
+                            x.unsqueeze(0),
+                            scale_factor=(self.scale, self.scale)
+                        ).squeeze(),
+                        win=self.windows[win],
+                        opts=dict(title=self.title)
+                    )
+
+        self.n += 1
+        if self.n >= 1000000000:
+            self.n = 0
+
+    def per_epoch(self, args):
+        pass
+
+    def early_stopping(self, args):
+        pass
+
+    def add_window(self, label):
+        self.windows[label] = None
