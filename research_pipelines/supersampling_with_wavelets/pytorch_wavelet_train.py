@@ -115,9 +115,9 @@ class CustomTrainingPipeline(object):
                 legend=['val']
             )
 
-        self.model = smp.FPN(
+        self.model = smp.PSPNet(
             encoder_name="resnet18",
-            encoder_weights=None,
+            encoder_weights='imagenet',
             in_channels=3,
             classes=9,
         )
@@ -132,7 +132,8 @@ class CustomTrainingPipeline(object):
             )
         self.model = self.model.to(device)
 
-        self.criterion = torch.nn.L1Loss()
+        self.criterion = torch.nn.MSELoss()
+        self.wavelets_criterion = torch.nn.MSELoss()
         self.accuracy_measure = TorchPSNR().to(device)
         self.optimizer = torch.optim.RAdam(
             params=self.model.parameters(), lr=0.01)
@@ -166,6 +167,10 @@ class CustomTrainingPipeline(object):
 
                 loss = self.criterion(restored_image, hr_image)
 
+                wavelets_gt = self.dwt(hr_image)
+                for wi in range(1, 4):
+                    loss += self.wavelets_criterion([lh_t, hl_t, hh_t][wi - 1], wavelets_gt[wi]) / 4
+
                 loss.backward()
                 self.optimizer.step()
 
@@ -173,14 +178,13 @@ class CustomTrainingPipeline(object):
                     'Epoch: {}/{}, loss: {:.8f}'.format(
                         epoch,
                         self.epochs,
-                        loss.item() / self.train_dataloader.batch_size
+                        loss.item()
                     )
                 avg_epoch_loss += \
                     loss.item() / len(self.train_dataloader)
 
                 if self.batch_visualizer is not None:
                     with torch.no_grad():
-                        wavelets_gt = self.dwt(hr_image)
                         self.batch_visualizer.per_batch(
                             {
                                 'lr_img': lr_image,
