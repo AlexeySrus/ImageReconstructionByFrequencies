@@ -490,7 +490,7 @@ class ISNetGTEncoder(nn.Module):
 
 class ISNetDIS(nn.Module):
 
-    def __init__(self, in_ch=3, out_ch=4):
+    def __init__(self, in_ch=3, out_ch=1):
         super(ISNetDIS,self).__init__()
 
         self.enable_upscale: bool = False

@@ -14,6 +14,7 @@ from pytorch_msssim import SSIM
 from dataloader import SeriesAndComputingClearDataset
 from callbacks import VisImage, VisPlot
 from DWT_IDWT.DWT_IDWT_layer import DWT_2D, IDWT_2D
+from IS_Net.isnet import ISNetDIS
 
 
 class SSIMLoss(SSIM):
@@ -100,7 +101,7 @@ class CustomTrainingPipeline(object):
             title='Denoising',
             port=visdom_port,
             vis_step=150,
-            scale=3
+            scale=1
         )
 
         self.plot_visualizer = None if visdom_port is None else VisPlot(
@@ -123,12 +124,7 @@ class CustomTrainingPipeline(object):
                 legend=['val']
             )
 
-        self.model = smp.MAnet(
-            encoder_name="resnet18",
-            encoder_weights='imagenet',
-            in_channels=3,
-            classes=12,
-        )
+        self.model = ISNetDIS(in_ch=3, out_ch=4 * 3)
         self.dwt = DWT_2D('haar')
         self.iwt = IDWT_2D('haar')
 
@@ -142,8 +138,7 @@ class CustomTrainingPipeline(object):
 
         self.criterion = torch.nn.MSELoss()
         self.ssim_loss = SSIMLoss()
-        # self.wavelets_criterion = torch.nn.MSELoss()
-        self.wavelets_criterion = None
+        self.wavelets_criterion = torch.nn.MSELoss()
         self.accuracy_measure = TorchPSNR().to(device)
         self.optimizer = torch.optim.RAdam(
             params=self.model.parameters(), lr=0.01)
@@ -160,6 +155,23 @@ class CustomTrainingPipeline(object):
         for param_group in self.optimizer.param_groups:
             return param_group['lr']
 
+    def _compute_wavelets_loss(self, pred_wavelets_pyramid, gt_image):
+        gt_d0_ll = gt_image
+        _loss = None
+
+        for i in range(len(pred_wavelets_pyramid)):
+            pred_ll, pred_lh, pred_hl, pred_hh = self.dwt(gt_d0_ll)
+            gt_wavelets = torch.cat((pred_ll, pred_lh, pred_hl, pred_hh), dim=1)
+
+            if _loss is None:
+                _loss = self.wavelets_criterion(pred_wavelets_pyramid[i], gt_wavelets)
+            else:
+                _loss += self.wavelets_criterion(pred_wavelets_pyramid[i], gt_wavelets)
+
+            gt_d0_ll = pred_ll / 2.0
+
+        return _loss
+
     def _train_step(self, epoch) -> float:
         self.model.train()
         avg_epoch_loss = 0
@@ -171,47 +183,39 @@ class CustomTrainingPipeline(object):
                 noisy_image = _noisy_image.to(self.device)
                 clear_image = _clear_image.to(self.device)
 
-                noisy_ll, noisy_lh, noisy_hl, noisy_hh = self.dwt(noisy_image)
+                pred_wavelets_pyramid, _ = self.model(noisy_image)
 
-                wavelets_pred = self.model(noisy_ll)
-
-                ll_t, lh_t, hl_t, hh_t = torch.split(wavelets_pred, 3, dim=1)
-
-                noisy_ll = ll_t
-                noisy_lh -= lh_t
-                noisy_hl -= hl_t
-                noisy_hh -= hh_t
-
-                restored_image = self.iwt(noisy_ll, noisy_lh, noisy_hl, noisy_hh)
+                restored_image = self.iwt(*torch.split(pred_wavelets_pyramid[0], 3, dim=1))
 
                 loss = self.criterion(restored_image, clear_image)  #  / 2 + self.ssim_loss(restored_image, clear_image) / 2
+                wloss = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image)
 
-                wavelets_gt = self.dwt(clear_image)
-                if self.wavelets_criterion is not None:
-                    for wi in range(1, 4):
-                        loss += self.wavelets_criterion([lh_t, hl_t, hh_t][wi - 1], wavelets_gt[wi]) / 4
+                total_loss = loss + wloss
 
-                loss.backward()
+                total_loss.backward()
                 self.optimizer.step()
 
                 pbar.postfix = \
-                    'Epoch: {}/{}, loss: {:.8f}'.format(
+                    'Epoch: {}/{}, px_loss: {:.8f}, w_loss: {:.8f}'.format(
                         epoch,
                         self.epochs,
-                        loss.item()
+                        loss.item(),
+                        wloss.item()
                     )
                 avg_epoch_loss += \
                     loss.item() / len(self.train_dataloader)
 
                 if self.batch_visualizer is not None:
-                    # wavelets_pred = torch.cat(
-                    #     (noisy_lh.detach(), noisy_hl.detach(), noisy_hh.detach()),
-                    #     dim=1
-                    # )
+                    wavelets_pred = pred_wavelets_pyramid[0].detach()
                     with torch.no_grad():
+                        wavelets_gt = self.dwt(clear_image)
+                        wavelets_inp = self.dwt(noisy_image)
+                        noisy_ll = wavelets_gt[0]
                         self.batch_visualizer.per_batch(
                             {
                                 'lr_img': noisy_ll / 2,
+                                'input_img': noisy_image,
+                                'input_wavelets': wavelets_inp,
                                 'pred_image': restored_image.detach(),
                                 'pred_wavelets': wavelets_pred.detach(),
                                 'gt_wavelets': wavelets_gt,
@@ -235,20 +239,12 @@ class CustomTrainingPipeline(object):
                     noisy_image = _noisy_image.to(self.device)
                     clear_image = _clear_image.to(self.device)
 
-                    noisy_ll, noisy_lh, noisy_hl, noisy_hh = self.dwt(noisy_image)
+                    pred_wavelets_pyramid, _ = self.model(noisy_image)
 
-                    wavelets_pred = self.model(noisy_image)
+                    restored_image = self.iwt(*torch.split(pred_wavelets_pyramid[0], 3, dim=1))
 
-                    ll_t, lh_t, hl_t, hh_t = torch.split(wavelets_pred, 3, dim=1)
-
-                    noisy_ll = ll_t
-                    noisy_lh -= lh_t
-                    noisy_hl -= hl_t
-                    noisy_hh -= hh_t
-
-                    restored_image = self.iwt(noisy_ll, noisy_lh, noisy_hl, noisy_hh)
-
-                    loss = self.criterion(restored_image, clear_image)
+                    loss = self.criterion(restored_image, clear_image)  # / 2 + self.ssim_loss(restored_image, clear_image) / 2
+                    loss += self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image)
                     avg_loss_rate += loss.item()
 
                     val_psnr = self.accuracy_measure(

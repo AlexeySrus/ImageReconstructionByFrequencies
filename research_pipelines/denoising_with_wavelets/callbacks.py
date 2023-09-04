@@ -335,16 +335,33 @@ class VisImage(VisImageForWavelets):
                     lr_img = args['lr_img'][i]
                     pred_image = args['pred_image'][i]
                     gt_image = args['gt_image'][i]
+                    inp_image = args['input_img'][i]
                     gt_wavelets = [pw[i] for pw in args['gt_wavelets']]
                     pred_wavelets = args['pred_wavelets'][i]
+                    inp_wavelets = [pw[i] for pw in args['input_wavelets']]
 
                     lr_img = torch.clip(lr_img, 0, 1).to('cpu')
+                    inp_image = torch.clip(inp_image, 0, 1).to('cpu')
                     gt_image = torch.clip(gt_image, 0, 1).to('cpu')
                     pred_image = torch.clip(pred_image, 0, 1).to('cpu')
                     pred_wavelets = torch.split(torch.clip((pred_wavelets.to('cpu') + 1.0) / 2, 0, 1), 3, dim=0)
+
                     gt_wavelets[0] = torch.clip(gt_wavelets[0] / 2, 0, 1).to('cpu')
                     for k in range(1, 4):
                         gt_wavelets[k] = torch.clip((gt_wavelets[k] + 1.0) / 2, 0, 1).to('cpu')
+
+                    inp_wavelets[0] = torch.clip(inp_wavelets[0] / 2, 0, 1).to('cpu')
+                    for k in range(1, 4):
+                        inp_wavelets[k] = torch.clip((inp_wavelets[k] + 1.0) / 2, 0, 1).to('cpu')
+
+                    wx_inp = torch.cat(
+                        (
+                            torch.cat((inp_wavelets[0], inp_wavelets[1]), dim=2),
+                            torch.cat((inp_wavelets[2], inp_wavelets[3]), dim=2),
+                        ),
+                        dim=1
+                    ).to('cpu')
+
 
                     wx_gt = torch.cat(
                         (
@@ -360,13 +377,14 @@ class VisImage(VisImageForWavelets):
                         ),
                         dim=1
                     )
+
                     wx = torch.cat(
-                        (wx_gt, wx_pred),
+                        (wx_inp, wx_gt, wx_pred),
                         dim=2
                     )
 
                     x = torch.cat(
-                        (gt_image, pred_image),
+                        (inp_image, gt_image, pred_image),
                         dim=2
                     )
                     x = torch.cat(
