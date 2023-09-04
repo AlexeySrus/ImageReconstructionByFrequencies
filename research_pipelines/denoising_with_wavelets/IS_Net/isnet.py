@@ -490,8 +490,10 @@ class ISNetGTEncoder(nn.Module):
 
 class ISNetDIS(nn.Module):
 
-    def __init__(self,in_ch=3,out_ch=1):
+    def __init__(self, in_ch=3, out_ch=4):
         super(ISNetDIS,self).__init__()
+
+        self.enable_upscale: bool = False
 
         self.conv_in = nn.Conv2d(in_ch,64,3,stride=2,padding=1)
         self.pool_in = nn.MaxPool2d(2,stride=2,ceil_mode=True)
@@ -588,22 +590,28 @@ class ISNetDIS(nn.Module):
 
         #side output
         d1 = self.side1(hx1d)
-        d1 = _upsample_like(d1,x)
+        if self.enable_upscale:
+            d1 = _upsample_like(d1,x)
 
         d2 = self.side2(hx2d)
-        d2 = _upsample_like(d2,x)
+        if self.enable_upscale:
+            d2 = _upsample_like(d2,x)
 
         d3 = self.side3(hx3d)
-        d3 = _upsample_like(d3,x)
+        if self.enable_upscale:
+            d3 = _upsample_like(d3,x)
 
         d4 = self.side4(hx4d)
-        d4 = _upsample_like(d4,x)
+        if self.enable_upscale:
+            d4 = _upsample_like(d4,x)
 
         d5 = self.side5(hx5d)
-        d5 = _upsample_like(d5,x)
+        if self.enable_upscale:
+            d5 = _upsample_like(d5,x)
 
         d6 = self.side6(hx6)
-        d6 = _upsample_like(d6,x)
+        if self.enable_upscale:
+            d6 = _upsample_like(d6,x)
 
         # d0 = self.outconv(torch.cat((d1,d2,d3,d4,d5,d6), 1))
 
