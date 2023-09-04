@@ -328,23 +328,24 @@ class VisImage(VisImageForWavelets):
 
     def per_batch(self, args, label=1):
         if self.n % self.step == 0:
-            i = random.randint(0, args['lr_img'].size(0) - 1)
+            i = random.randint(0, args['gt_image'].size(0) - 1)
 
             for win in self.windows.keys():
                 if win == label:
-                    lr_img = args['lr_img'][i]
                     pred_image = args['pred_image'][i]
                     gt_image = args['gt_image'][i]
                     inp_image = args['input_img'][i]
                     gt_wavelets = [pw[i] for pw in args['gt_wavelets']]
-                    pred_wavelets = args['pred_wavelets'][i]
+                    pred_wavelets = list(torch.split(args['pred_wavelets'][i], 3, dim=0))
                     inp_wavelets = [pw[i] for pw in args['input_wavelets']]
 
-                    lr_img = torch.clip(lr_img, 0, 1).to('cpu')
                     inp_image = torch.clip(inp_image, 0, 1).to('cpu')
                     gt_image = torch.clip(gt_image, 0, 1).to('cpu')
                     pred_image = torch.clip(pred_image, 0, 1).to('cpu')
-                    pred_wavelets = torch.split(torch.clip((pred_wavelets.to('cpu') + 1.0) / 2, 0, 1), 3, dim=0)
+
+                    pred_wavelets[0] = torch.clip(pred_wavelets[0] / 2, 0, 1).to('cpu')
+                    for k in range(1, 4):
+                        pred_wavelets[k] = torch.clip((pred_wavelets[k] + 1.0) / 2, 0, 1).to('cpu')
 
                     gt_wavelets[0] = torch.clip(gt_wavelets[0] / 2, 0, 1).to('cpu')
                     for k in range(1, 4):
@@ -372,8 +373,8 @@ class VisImage(VisImageForWavelets):
                     )
                     wx_pred = torch.cat(
                         (
-                            torch.cat((lr_img, pred_wavelets[0]), dim=2),
-                            torch.cat((pred_wavelets[1], pred_wavelets[2]), dim=2),
+                            torch.cat((pred_wavelets[0], pred_wavelets[1]), dim=2),
+                            torch.cat((pred_wavelets[2], pred_wavelets[3]), dim=2),
                         ),
                         dim=1
                     )

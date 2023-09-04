@@ -120,18 +120,18 @@ class SeriesAndComputingClearDataset(Dataset):
         self.series_folders_images = []
         self.clear_series_folders_images = []
 
-        print('Loading images into RAM:')
+        # print('Loading images into RAM:')
         for i in tqdm(range(len(self.series_folders_pathes))):
             self.series_folders_images.append(
                 [
-                    load_image(self.series_folders_pathes[i][j])
+                    self.series_folders_pathes[i][j]    # load_image(self.series_folders_pathes[i][j])
                     for j in range(len(self.series_folders_pathes[i]))
                 ]
             )
 
             self.clear_series_folders_images.append(
                 [
-                    load_image(self.clear_series_pathes[i][j])
+                    self.clear_series_pathes[i][j]  # load_image(self.clear_series_pathes[i][j])
                     for j in range(len(self.clear_series_pathes[i]))
                 ]
             )
@@ -150,11 +150,11 @@ class SeriesAndComputingClearDataset(Dataset):
             len(self.series_folders_pathes[select_series_index])
         )
 
-        select_image = self.series_folders_images[
-            select_series_index][select_image_index]
+        select_image = load_image(self.series_folders_images[
+            select_series_index][select_image_index])
 
-        clear_image = self.clear_series_folders_images[
-            select_series_index][select_image_index]
+        clear_image = load_image(self.clear_series_folders_images[
+            select_series_index][select_image_index])
 
         return select_image, clear_image
 

@@ -15,6 +15,7 @@ from dataloader import SeriesAndComputingClearDataset
 from callbacks import VisImage, VisPlot
 from DWT_IDWT.DWT_IDWT_layer import DWT_2D, IDWT_2D
 from IS_Net.isnet import ISNetDIS
+from IS_Net.discriminator import Discriminator
 
 
 class SSIMLoss(SSIM):
@@ -127,6 +128,7 @@ class CustomTrainingPipeline(object):
         self.model = ISNetDIS(in_ch=3, out_ch=4 * 3)
         self.dwt = DWT_2D('haar')
         self.iwt = IDWT_2D('haar')
+        self.discriminator = Discriminator()
 
         if load_path is not None:
             self.model.load_state_dict(
@@ -135,16 +137,19 @@ class CustomTrainingPipeline(object):
                 'Model has been loaded by path: {}'.format(load_path)
             )
         self.model = self.model.to(device)
+        self.discriminator = self.discriminator.to(device)
 
-        self.criterion = torch.nn.MSELoss()
+        self.images_criterion = torch.nn.MSELoss(size_average=True)
         self.ssim_loss = SSIMLoss()
-        self.wavelets_criterion = torch.nn.MSELoss()
+        self.wavelets_criterion = torch.nn.SmoothL1Loss(size_average=True)
         self.accuracy_measure = TorchPSNR().to(device)
+
         self.optimizer = torch.optim.RAdam(
             params=self.model.parameters(), lr=0.01)
-        # self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        #     self.optimizer, verbose=True, factor=0.1
-        # )
+        self.discriminator_optimizer = torch.optim.RAdam(
+            params=self.discriminator.parameters(), lr=0.01
+        )
+
         self.scheduler = torch.optim.lr_scheduler.MultiStepLR(
             self.optimizer,
             milestones=[150, 300, 5000],
@@ -155,65 +160,115 @@ class CustomTrainingPipeline(object):
         for param_group in self.optimizer.param_groups:
             return param_group['lr']
 
-    def _compute_wavelets_loss(self, pred_wavelets_pyramid, gt_image):
+    def _compute_wavelets_loss(self, pred_wavelets_pyramid, gt_image, factor: float = 0.9):
         gt_d0_ll = gt_image
         _loss = None
+        _loss_scale = 1.0
 
         for i in range(len(pred_wavelets_pyramid)):
-            pred_ll, pred_lh, pred_hl, pred_hh = self.dwt(gt_d0_ll)
-            gt_wavelets = torch.cat((pred_ll, pred_lh, pred_hl, pred_hh), dim=1)
+            gt_ll, gt_lh, gt_hl, gt_hh = self.dwt(gt_d0_ll)
+            gt_wavelets = torch.cat((gt_ll, gt_lh, gt_hl, gt_hh), dim=1)
 
-            if _loss is None:
-                _loss = self.wavelets_criterion(pred_wavelets_pyramid[i], gt_wavelets)
+            if i == 0:
+                _loss = self.wavelets_criterion(pred_wavelets_pyramid[i], gt_wavelets) * _loss_scale * 0.5
             else:
-                _loss += self.wavelets_criterion(pred_wavelets_pyramid[i], gt_wavelets)
+                _loss += self.wavelets_criterion(pred_wavelets_pyramid[i], gt_wavelets) * _loss_scale
 
-            gt_d0_ll = pred_ll / 2.0
+            _loss_scale *= factor
+
+            gt_d0_ll = gt_ll / 2.0
 
         return _loss
 
     def _train_step(self, epoch) -> float:
         self.model.train()
+        self.discriminator.train()
         avg_epoch_loss = 0
 
         with tqdm.tqdm(total=len(self.train_dataloader)) as pbar:
             for i, (_noisy_image, _clear_image) in enumerate(self.train_dataloader):
-                self.optimizer.zero_grad()
+                real_label = 1.
+                fake_label = 0.
 
                 noisy_image = _noisy_image.to(self.device)
                 clear_image = _clear_image.to(self.device)
 
+                ############################
+                # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
+                ###########################
+                label = torch.full((clear_image.size(0),), real_label, dtype=torch.float, device=self.device)
+
+                self.discriminator_optimizer.zero_grad()
+
+                real_d_out = self.discriminator(clear_image)
+                errD_real = torch.nn.functional.binary_cross_entropy(real_d_out, label)
+                errD_real.backward()
+                D_x = real_d_out.mean().item()
+
                 pred_wavelets_pyramid, _ = self.model(noisy_image)
+                pred_ll, pred_lh, pred_hl, pred_hh = torch.split(pred_wavelets_pyramid[0], 3, dim=1)
+                restored_image = self.iwt(pred_ll, pred_lh, pred_hl, pred_hh)
+                label.fill_(fake_label)
+                # Classify all fake batch with D
+                output = self.discriminator(restored_image.detach())
+                # Calculate D's loss on the all-fake batch
+                errD_fake = torch.nn.functional.binary_cross_entropy(output, label)
+                # Calculate the gradients for this batch, accumulated (summed) with previous gradients
+                errD_fake.backward()
+                D_G_z1 = output.mean().item()
+                # Compute error of D as sum over the fake and the real batches
+                errD = errD_real + errD_fake
+                # Update D
+                self.discriminator_optimizer.step()
 
-                restored_image = self.iwt(*torch.split(pred_wavelets_pyramid[0], 3, dim=1))
-
-                loss = self.criterion(restored_image, clear_image)  #  / 2 + self.ssim_loss(restored_image, clear_image) / 2
-                wloss = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image)
-
-                total_loss = loss + wloss
-
-                total_loss.backward()
+                ############################
+                # (2) Update G network: maximize log(D(G(z)))
+                ###########################
+                self.optimizer.zero_grad()
+                label.fill_(real_label)  # fake labels are real for generator cost
+                # Since we just updated D, perform another forward pass of all-fake batch through D
+                output = self.discriminator(restored_image)
+                # Calculate G's loss based on this output
+                errG = torch.nn.functional.binary_cross_entropy(output, label)
+                # Calculate gradients for G
+                errG.backward()
+                D_G_z2 = output.mean().item()
+                # Update G
                 self.optimizer.step()
 
+                ############################
+                # (3) Additional: Pixel-wise and wavelets losses
+                ###########################
+                # pred_wavelets_pyramid, _ = self.model(noisy_image)
+                # pred_ll, pred_lh, pred_hl, pred_hh = torch.split(pred_wavelets_pyramid[0], 3, dim=1)
+                #
+                # restored_image = self.iwt(pred_ll, pred_lh, pred_hl, pred_hh)
+                #
+                # loss = self.images_criterion(restored_image, clear_image)   # / 2 + self.ssim_loss(restored_image, clear_image) / 2
+                # wloss = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image)
+                #
+                # total_loss = loss + wloss
+                #
+                # total_loss.backward()
+                # self.optimizer.step()
+
                 pbar.postfix = \
-                    'Epoch: {}/{}, px_loss: {:.8f}, w_loss: {:.8f}'.format(
+                    'Epoch: {}/{}, D_loss: {:.8f}, G_loss: {:.8f}'.format(
                         epoch,
                         self.epochs,
-                        loss.item(),
-                        wloss.item()
+                        errD.item(),
+                        errG.item()
                     )
                 avg_epoch_loss += \
-                    loss.item() / len(self.train_dataloader)
+                    (errD + errG).item() / len(self.train_dataloader)
 
                 if self.batch_visualizer is not None:
                     wavelets_pred = pred_wavelets_pyramid[0].detach()
                     with torch.no_grad():
                         wavelets_gt = self.dwt(clear_image)
                         wavelets_inp = self.dwt(noisy_image)
-                        noisy_ll = wavelets_gt[0]
                         self.batch_visualizer.per_batch(
                             {
-                                'lr_img': noisy_ll / 2,
                                 'input_img': noisy_image,
                                 'input_wavelets': wavelets_inp,
                                 'pred_image': restored_image.detach(),
@@ -243,7 +298,7 @@ class CustomTrainingPipeline(object):
 
                     restored_image = self.iwt(*torch.split(pred_wavelets_pyramid[0], 3, dim=1))
 
-                    loss = self.criterion(restored_image, clear_image)  # / 2 + self.ssim_loss(restored_image, clear_image) / 2
+                    loss = self.images_criterion(restored_image, clear_image)   #  / 2 + self.ssim_loss(restored_image, clear_image) / 2
                     loss += self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image)
                     avg_loss_rate += loss.item()
 
@@ -289,6 +344,10 @@ class CustomTrainingPipeline(object):
             self.checkpoints_dir,
             'best.trh'
         )
+        best_discriminator_path = os.path.join(
+            self.checkpoints_dir,
+            'best_discriminator.trh'
+        )
         best_traced_model_path = os.path.join(
             self.experiment_folder,
             'traced_best_model.pt'
@@ -300,8 +359,10 @@ class CustomTrainingPipeline(object):
 
         self.model = self.model.to('cpu')
         self.model.eval()
+        self.discriminator.eval()
         # self._save_best_traced_model(latest_traced_model_path)
         self.model = self.model.to(self.device)
+        self.discriminator = self.discriminator.to(self.device)
 
         if self.best_test_score - avg_acc_rate < -1E-5:
             self.best_test_score = avg_acc_rate
@@ -316,8 +377,13 @@ class CustomTrainingPipeline(object):
                 self.model.state_dict(),
                 best_model_path
             )
+            torch.save(
+                self.discriminator.state_dict(),
+                best_discriminator_path
+            )
             # self._save_best_traced_model(best_traced_model_path)
             self.model = self.model.to(self.device)
+            self.discriminator = self.discriminator.to(self.device)
 
     def _check_stop_criteria(self):
         return self.get_lr() - self.stop_criteria < -1E-9
