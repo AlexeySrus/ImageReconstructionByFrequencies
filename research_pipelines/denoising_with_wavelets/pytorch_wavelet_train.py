@@ -186,6 +186,8 @@ class CustomTrainingPipeline(object):
         self.discriminator.train()
         avg_epoch_loss = 0
         last_px_loss = 0
+        errD = 0
+        errG = 0
 
         with tqdm.tqdm(total=len(self.train_dataloader)) as pbar:
             for i, (_noisy_image, _clear_image) in enumerate(self.train_dataloader):
@@ -195,7 +197,7 @@ class CustomTrainingPipeline(object):
                 noisy_image = _noisy_image.to(self.device)
                 clear_image = _clear_image.to(self.device)
 
-                if np.random.randint(1, 101) < 90:
+                if np.random.randint(1, 101) < 50:
                     ############################
                     # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
                     ###########################
@@ -262,12 +264,12 @@ class CustomTrainingPipeline(object):
                     'Epoch: {}/{}, D_loss: {:.7f}, G_loss: {:.7f}, px_loss: {:.7f}'.format(
                         epoch,
                         self.epochs,
-                        errD.item(),
-                        errG.item(),
+                        errD if isinstance(errD, int) else errD.item(),
+                        errG if isinstance(errG, int) else errG.item(),
                         last_px_loss
                     )
                 avg_epoch_loss += \
-                    (errD + errG).item() / len(self.train_dataloader)
+                    ((errD + errG).item() if not isinstance(errD, int) else (errD + errG)) / len(self.train_dataloader)
 
                 if self.batch_visualizer is not None:
                     wavelets_pred = pred_wavelets_pyramid[0].detach()
