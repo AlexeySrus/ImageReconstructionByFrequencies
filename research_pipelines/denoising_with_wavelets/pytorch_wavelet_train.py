@@ -1,5 +1,6 @@
 import logging
 from argparse import ArgumentParser, Namespace
+import numpy as np
 from typing import Tuple
 import tqdm
 import torch
@@ -193,71 +194,78 @@ class CustomTrainingPipeline(object):
                 noisy_image = _noisy_image.to(self.device)
                 clear_image = _clear_image.to(self.device)
 
-                ############################
-                # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
-                ###########################
-                label = torch.full((clear_image.size(0),), real_label, dtype=torch.float, device=self.device)
+                last_px_loss = 0
 
-                self.discriminator_optimizer.zero_grad()
+                if np.random.randint(1, 101) < 90:
+                    ############################
+                    # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
+                    ###########################
+                    label = torch.full((clear_image.size(0),), real_label, dtype=torch.float, device=self.device)
 
-                real_d_out = self.discriminator(clear_image)
-                errD_real = torch.nn.functional.binary_cross_entropy(real_d_out, label)
-                errD_real.backward()
-                D_x = real_d_out.mean().item()
+                    self.discriminator_optimizer.zero_grad()
 
-                pred_wavelets_pyramid, _ = self.model(noisy_image)
-                pred_ll, pred_lh, pred_hl, pred_hh = torch.split(pred_wavelets_pyramid[0], 3, dim=1)
-                restored_image = self.iwt(pred_ll, pred_lh, pred_hl, pred_hh)
-                label.fill_(fake_label)
-                # Classify all fake batch with D
-                output = self.discriminator(restored_image.detach())
-                # Calculate D's loss on the all-fake batch
-                errD_fake = torch.nn.functional.binary_cross_entropy(output, label)
-                # Calculate the gradients for this batch, accumulated (summed) with previous gradients
-                errD_fake.backward()
-                D_G_z1 = output.mean().item()
-                # Compute error of D as sum over the fake and the real batches
-                errD = errD_real + errD_fake
-                # Update D
-                self.discriminator_optimizer.step()
+                    real_d_out = self.discriminator(clear_image)
+                    errD_real = torch.nn.functional.binary_cross_entropy(real_d_out, label)
+                    errD_real.backward()
+                    D_x = real_d_out.mean().item()
 
-                ############################
-                # (2) Update G network: maximize log(D(G(z)))
-                ###########################
-                self.optimizer.zero_grad()
-                label.fill_(real_label)  # fake labels are real for generator cost
-                # Since we just updated D, perform another forward pass of all-fake batch through D
-                output = self.discriminator(restored_image)
-                # Calculate G's loss based on this output
-                errG = torch.nn.functional.binary_cross_entropy(output, label)
-                # Calculate gradients for G
-                errG.backward()
-                D_G_z2 = output.mean().item()
-                # Update G
-                self.optimizer.step()
+                    pred_wavelets_pyramid, _ = self.model(noisy_image)
+                    pred_ll, pred_lh, pred_hl, pred_hh = torch.split(pred_wavelets_pyramid[0], 3, dim=1)
+                    restored_image = self.iwt(pred_ll, pred_lh, pred_hl, pred_hh)
+                    label.fill_(fake_label)
+                    # Classify all fake batch with D
+                    output = self.discriminator(restored_image.detach())
+                    # Calculate D's loss on the all-fake batch
+                    errD_fake = torch.nn.functional.binary_cross_entropy(output, label)
+                    # Calculate the gradients for this batch, accumulated (summed) with previous gradients
+                    errD_fake.backward()
+                    D_G_z1 = output.mean().item()
+                    # Compute error of D as sum over the fake and the real batches
+                    errD = errD_real + errD_fake
+                    # Update D
+                    self.discriminator_optimizer.step()
 
-                ############################
-                # (3) Additional: Pixel-wise and wavelets losses
-                ###########################
-                # pred_wavelets_pyramid, _ = self.model(noisy_image)
-                # pred_ll, pred_lh, pred_hl, pred_hh = torch.split(pred_wavelets_pyramid[0], 3, dim=1)
-                #
-                # restored_image = self.iwt(pred_ll, pred_lh, pred_hl, pred_hh)
-                #
-                # loss = self.images_criterion(restored_image, clear_image)   # / 2 + self.ssim_loss(restored_image, clear_image) / 2
-                # wloss = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image)
-                #
-                # total_loss = loss + wloss
-                #
-                # total_loss.backward()
-                # self.optimizer.step()
+                    ############################
+                    # (2) Update G network: maximize log(D(G(z)))
+                    ###########################
+                    self.optimizer.zero_grad()
+                    label.fill_(real_label)  # fake labels are real for generator cost
+                    # Since we just updated D, perform another forward pass of all-fake batch through D
+                    output = self.discriminator(restored_image)
+                    # Calculate G's loss based on this output
+                    errG = torch.nn.functional.binary_cross_entropy(output, label)
+                    # Calculate gradients for G
+                    errG.backward()
+                    D_G_z2 = output.mean().item()
+                    # Update G
+                    self.optimizer.step()
+                else:
+                    ############################
+                    # (3) Additional: Pixel-wise and wavelets losses
+                    ###########################
+                    self.optimizer.zero_grad()
+                    pred_wavelets_pyramid, _ = self.model(noisy_image)
+                    pred_ll, pred_lh, pred_hl, pred_hh = torch.split(pred_wavelets_pyramid[0], 3, dim=1)
+
+                    restored_image = self.iwt(pred_ll, pred_lh, pred_hl, pred_hh)
+
+                    loss = self.images_criterion(restored_image, clear_image)   # / 2 + self.ssim_loss(restored_image, clear_image) / 2
+                    wloss = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image)
+
+                    total_loss = loss + wloss
+
+                    total_loss.backward()
+                    self.optimizer.step()
+
+                    last_px_loss = total_loss.item()
 
                 pbar.postfix = \
-                    'Epoch: {}/{}, D_loss: {:.8f}, G_loss: {:.8f}'.format(
+                    'Epoch: {}/{}, D_loss: {:.7f}, G_loss: {:.7f}, px_loss: {:.7f}'.format(
                         epoch,
                         self.epochs,
                         errD.item(),
-                        errG.item()
+                        errG.item(),
+                        last_px_loss
                     )
                 avg_epoch_loss += \
                     (errD + errG).item() / len(self.train_dataloader)
