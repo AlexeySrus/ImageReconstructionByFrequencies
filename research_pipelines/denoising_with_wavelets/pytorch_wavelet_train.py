@@ -14,7 +14,7 @@ import os
 from torchmetrics.image import PeakSignalNoiseRatio as TorchPSNR
 from pytorch_msssim import SSIM
 
-from dataloader import SeriesAndComputingClearDataset, PairedDenoiseDataset
+from dataloader import SeriesAndComputingClearDataset, PairedDenoiseDataset, SyntheticNoiseDataset
 from callbacks import VisImage, VisPlot
 from DWT_IDWT.DWT_IDWT_layer import DWT_2D, IDWT_2D
 from IS_Net.isnet import ISNetDIS
@@ -31,6 +31,7 @@ class CustomTrainingPipeline(object):
     def __init__(self,
                  train_data_paths: Tuple[str, str],
                  val_data_paths: Tuple[str, str],
+                 synth_data_paths: str,
                  experiment_folder: str,
                  model_name: str = 'resnet18',
                  load_path: str = None,
@@ -76,23 +77,25 @@ class CustomTrainingPipeline(object):
         os.makedirs(self.checkpoints_dir, exist_ok=True)
         os.makedirs(self.output_val_images_dir, exist_ok=True)
 
-        self.train_dataset = SeriesAndComputingClearDataset(
+        self.train_base_dataset = SeriesAndComputingClearDataset(
             images_series_folder=train_data_paths[0],
             clear_images_path=train_data_paths[1],
             window_size=self.image_shape[0],
-            dataset_size=10000
+            dataset_size=2000
         )
+
         self.val_dataset = PairedDenoiseDataset(
             noisy_images_path=val_data_paths[0],
             clear_images_path=val_data_paths[1]
         )
 
         self.train_dataloader = torch.utils.data.DataLoader(
-            dataset=self.train_dataset,
+            dataset=self.train_base_dataset,
             batch_size=batch_size,
             shuffle=True,
             drop_last=True,
-            num_workers=train_workers
+            num_workers=train_workers,
+            pin_memory=True
         )
 
         self.batch_visualizer = None if visdom_port is None else VisImage(
@@ -250,7 +253,7 @@ class CustomTrainingPipeline(object):
                 loss = self.images_criterion(restored_image, clear_image)   # / 2 + self.ssim_loss(restored_image, clear_image) / 2
                 wloss, hist_loss = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image)
 
-                total_loss = loss + wloss + hist_loss
+                total_loss = loss + wloss + hist_loss * 0.05
 
                 total_loss.backward()
                 self.optimizer.step()
@@ -472,10 +475,12 @@ if __name__ == '__main__':
         '/media/alexey/SSDData/datasets/denoising_dataset/real_sense_noise_val/noisy/',
         '/media/alexey/SSDData/datasets/denoising_dataset/real_sense_noise_val/clear/'
     )
+    clear_path = '/media/alexey/SSDData/datasets/room_inpainting/train/images/'
 
     CustomTrainingPipeline(
         train_data_paths=train_data,
         val_data_paths=val_data,
+        synth_data_paths=clear_path,
         experiment_folder=args.experiment_folder,
         load_path=args.load_path,
         visdom_port=args.visdom_port,
@@ -483,7 +488,8 @@ if __name__ == '__main__':
         resume_epoch=args.resume_epoch,
         batch_size=args.batch_size,
         model_name=args.model,
-        image_size=args.image_size
+        image_size=args.image_size,
+        train_workers=4
     ).fit()
 
     exit(0)

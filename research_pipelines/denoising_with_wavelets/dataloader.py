@@ -1,4 +1,4 @@
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List
 import albumentations as A
 import cv2
 import numpy as np
@@ -205,13 +205,56 @@ class PairedDenoiseDataset(Dataset):
         return preprocess_image(noisy_image, 0, 1), preprocess_image(clear_image, 0, 1)
 
 
+class SyntheticNoiseDataset(Dataset):
+    def __init__(self, clear_images_path, window_size: int = 224):
+        self.clear_images = [
+            os.path.join(clear_images_path, img_name)
+            for img_name in os.listdir(clear_images_path)
+        ]
+
+        self.dataset_size = len(self.clear_images)
+        self.window_size = window_size
+
+        self.noise_transform = A.Compose([
+            A.OneOf([
+                A.IAAAdditiveGaussianNoise(),
+                A.GaussNoise(var_limit=(10.0, 150.0)),
+                A.ISONoise(),
+                A.MultiplicativeNoise()
+            ], p=1.0)
+        ])
+
+    def __len__(self):
+        return self.dataset_size
+
+    def __getitem__(self, idx) -> Tuple[torch.Tensor, torch.Tensor]:
+        clear_image = load_image(self.clear_images[idx])
+
+        if min(clear_image.shape[:2]) <= self.window_size:
+            clear_image = cv2.resize(
+                clear_image,
+                (self.window_size + 2, self.window_size + 2),
+                interpolation=cv2.INTER_AREA
+            )
+
+        noisy_image = self.noise_transform(image=clear_image)['image']
+
+        clear_crop, noisy_crop = random_crop_with_transforms(
+            clear_image, noisy_image,
+            window_size=self.window_size,
+            random_swap=False
+        )
+
+        return preprocess_image(noisy_crop, 0, 1), preprocess_image(clear_crop, 0, 1)
+
+
 if __name__ == '__main__':
     val_data = (
         '/media/alexey/SSDData/datasets/denoising_dataset/real_sense_noise_val/noisy/',
         '/media/alexey/SSDData/datasets/denoising_dataset/real_sense_noise_val/clear/'
     )
 
-    dataset = PairedDenoiseDataset(val_data[0], val_data[1])
-    n, c = dataset[2]
+    dataset = SyntheticNoiseDataset(val_data[1])
     for i in range(len(dataset)):
+        n, c = dataset[2]
         print(i, n.shape, c.shape)
