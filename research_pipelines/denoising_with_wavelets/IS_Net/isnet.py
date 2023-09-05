@@ -620,7 +620,7 @@ class ISNetDIS(nn.Module):
 
 if __name__ == '__main__':
     model = ISNetDIS()
-    inp = torch.rand(1, 3, 512, 512)
+    inp = torch.rand(1, 3, 3048, 3049)
 
     with torch.no_grad():
         out = model(inp)

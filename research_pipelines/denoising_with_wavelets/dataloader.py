@@ -139,7 +139,7 @@ class SeriesAndComputingClearDataset(Dataset):
         self.window_size = window_size
         self.dataset_size = dataset_size
 
-    def get_random_images(self):
+    def get_random_images(self, idx: Optional[int] = None):
         select_series_index = np.random.randint(
             0,
             len(self.series_folders_pathes)
@@ -175,3 +175,43 @@ class SeriesAndComputingClearDataset(Dataset):
         )
 
         return preprocess_image(crop1, 0, 1), preprocess_image(crop2, 0, 1)
+
+
+class PairedDenoiseDataset(Dataset):
+    def __init__(self,
+                 noisy_images_path,
+                 clear_images_path):
+        self.noisy_images = {
+            os.path.splitext(img_name)[0]: os.path.join(noisy_images_path, img_name)
+            for img_name in os.listdir(noisy_images_path)
+        }
+        self.clear_images = {
+            os.path.splitext(img_name)[0]: os.path.join(clear_images_path, img_name)
+            for img_name in os.listdir(clear_images_path)
+        }
+
+        assert set(self.noisy_images.keys()) == set(self.clear_images.keys())
+
+        self.images_keys = list(self.noisy_images.keys())
+        self.dataset_size = len(self.images_keys)
+
+    def __len__(self):
+        return self.dataset_size
+
+    def __getitem__(self, idx) -> Tuple[torch.Tensor, torch.Tensor]:
+        noisy_image = load_image(self.noisy_images[self.images_keys[idx]])
+        clear_image = load_image(self.clear_images[self.images_keys[idx]])
+
+        return preprocess_image(noisy_image, 0, 1), preprocess_image(clear_image, 0, 1)
+
+
+if __name__ == '__main__':
+    val_data = (
+        '/media/alexey/SSDData/datasets/denoising_dataset/real_sense_noise_val/noisy/',
+        '/media/alexey/SSDData/datasets/denoising_dataset/real_sense_noise_val/clear/'
+    )
+
+    dataset = PairedDenoiseDataset(val_data[0], val_data[1])
+    n, c = dataset[2]
+    for i in range(len(dataset)):
+        print(i, n.shape, c.shape)

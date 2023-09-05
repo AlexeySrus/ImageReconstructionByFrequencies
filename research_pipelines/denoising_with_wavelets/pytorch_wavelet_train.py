@@ -1,5 +1,7 @@
 import logging
 from argparse import ArgumentParser, Namespace
+
+import cv2
 import numpy as np
 from typing import Tuple
 import tqdm
@@ -12,11 +14,12 @@ import os
 from torchmetrics.image import PeakSignalNoiseRatio as TorchPSNR
 from pytorch_msssim import SSIM
 
-from dataloader import SeriesAndComputingClearDataset
+from dataloader import SeriesAndComputingClearDataset, PairedDenoiseDataset
 from callbacks import VisImage, VisPlot
 from DWT_IDWT.DWT_IDWT_layer import DWT_2D, IDWT_2D
 from IS_Net.isnet import ISNetDIS
-from IS_Net.discriminator import Discriminator
+from utils.window_inference import denoise_inference
+from utils.hist_loss import HistLoss
 
 
 class SSIMLoss(SSIM):
@@ -57,6 +60,7 @@ class CustomTrainingPipeline(object):
         self.device = device
         self.experiment_folder = experiment_folder
         self.checkpoints_dir = os.path.join(experiment_folder, 'checkpoints/')
+        self.output_val_images_dir = os.path.join(experiment_folder, 'val_outputs/')
 
         self.load_path = load_path
         self.visdom_port = visdom_port  # Set None to disable
@@ -70,6 +74,7 @@ class CustomTrainingPipeline(object):
 
         os.makedirs(experiment_folder, exist_ok=True)
         os.makedirs(self.checkpoints_dir, exist_ok=True)
+        os.makedirs(self.output_val_images_dir, exist_ok=True)
 
         self.train_dataset = SeriesAndComputingClearDataset(
             images_series_folder=train_data_paths[0],
@@ -77,11 +82,9 @@ class CustomTrainingPipeline(object):
             window_size=self.image_shape[0],
             dataset_size=10000
         )
-        self.val_dataset = SeriesAndComputingClearDataset(
-            images_series_folder=val_data_paths[0],
-            clear_images_path=val_data_paths[1],
-            window_size=self.image_shape[0],
-            dataset_size=128
+        self.val_dataset = PairedDenoiseDataset(
+            noisy_images_path=val_data_paths[0],
+            clear_images_path=val_data_paths[1]
         )
 
         self.train_dataloader = torch.utils.data.DataLoader(
@@ -90,13 +93,6 @@ class CustomTrainingPipeline(object):
             shuffle=True,
             drop_last=True,
             num_workers=train_workers
-        )
-        self.val_dataloader = torch.utils.data.DataLoader(
-            dataset=self.val_dataset,
-            batch_size=batch_size,
-            shuffle=False,
-            drop_last=False,
-            num_workers=4
         )
 
         self.batch_visualizer = None if visdom_port is None else VisImage(
@@ -129,7 +125,7 @@ class CustomTrainingPipeline(object):
         self.model = ISNetDIS(in_ch=3, out_ch=4 * 3)
         self.dwt = DWT_2D('haar')
         self.iwt = IDWT_2D('haar')
-        self.discriminator = Discriminator()
+        # self.discriminator = Discriminator()
 
         if load_path is not None:
             self.model.load_state_dict(
@@ -138,23 +134,25 @@ class CustomTrainingPipeline(object):
                 'Model has been loaded by path: {}'.format(load_path)
             )
         self.model = self.model.to(device)
-        self.discriminator = self.discriminator.to(device)
+        # self.discriminator = self.discriminator.to(device)
 
         self.images_criterion = torch.nn.MSELoss(size_average=True)
         self.ssim_loss = SSIMLoss()
+        self.hist_loss = HistLoss(image_size=self.image_shape[0], device=self.device)
+        # self.images_criterion = self.ssim_loss
         self.wavelets_criterion = torch.nn.SmoothL1Loss(size_average=True)
         self.accuracy_measure = TorchPSNR().to(device)
 
         self.optimizer = torch.optim.RAdam(
-            params=self.model.parameters(), lr=0.01)
-        self.discriminator_optimizer = torch.optim.RAdam(
-            params=self.discriminator.parameters(), lr=0.01
-        )
+            params=self.model.parameters(), lr=0.002)
+        # self.discriminator_optimizer = torch.optim.RAdam(
+        #     params=self.discriminator.parameters(), lr=0.01
+        # )
 
         self.scheduler = torch.optim.lr_scheduler.MultiStepLR(
             self.optimizer,
-            milestones=[150, 300, 5000],
-            gamma=0.1
+            milestones=[100, 200, 300],
+            gamma=0.5
         )
 
     def get_lr(self):
@@ -164,6 +162,7 @@ class CustomTrainingPipeline(object):
     def _compute_wavelets_loss(self, pred_wavelets_pyramid, gt_image, factor: float = 0.9):
         gt_d0_ll = gt_image
         _loss = None
+        _h_loss = None
         _loss_scale = 1.0
 
         for i in range(len(pred_wavelets_pyramid)):
@@ -172,22 +171,22 @@ class CustomTrainingPipeline(object):
 
             if i == 0:
                 _loss = self.wavelets_criterion(pred_wavelets_pyramid[i], gt_wavelets) * _loss_scale * 0.5
+                _h_loss = self.hist_loss(pred_wavelets_pyramid[i][:, :3] / 2, gt_ll / 2)
             else:
                 _loss += self.wavelets_criterion(pred_wavelets_pyramid[i], gt_wavelets) * _loss_scale
+                if i < 3:
+                    _h_loss += self.hist_loss(pred_wavelets_pyramid[i][:, :3] / 2, gt_ll / 2) * _loss_scale
 
             _loss_scale *= factor
 
             gt_d0_ll = gt_ll / 2.0
 
-        return _loss
+        return _loss, _h_loss
 
     def _train_step(self, epoch) -> float:
         self.model.train()
-        self.discriminator.train()
+        # self.discriminator.train()
         avg_epoch_loss = 0
-        last_px_loss = 0
-        errD = 0
-        errG = 0
 
         with tqdm.tqdm(total=len(self.train_dataloader)) as pbar:
             for i, (_noisy_image, _clear_image) in enumerate(self.train_dataloader):
@@ -197,79 +196,82 @@ class CustomTrainingPipeline(object):
                 noisy_image = _noisy_image.to(self.device)
                 clear_image = _clear_image.to(self.device)
 
-                if np.random.randint(1, 101) < 50:
-                    ############################
-                    # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
-                    ###########################
-                    label = torch.full((clear_image.size(0),), real_label, dtype=torch.float, device=self.device)
+                # ############################
+                # # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
+                # ###########################
+                # label = torch.full((clear_image.size(0),), real_label, dtype=torch.float, device=self.device)
+                #
+                # self.discriminator_optimizer.zero_grad()
+                #
+                # real_d_out = self.discriminator(clear_image)
+                # errD_real = torch.nn.functional.binary_cross_entropy(real_d_out, label)
+                # errD_real.backward()
+                # D_x = real_d_out.mean().item()
+                #
+                # pred_wavelets_pyramid, _ = self.model(noisy_image)
+                # pred_ll, pred_lh, pred_hl, pred_hh = torch.split(pred_wavelets_pyramid[0], 3, dim=1)
+                # restored_image = self.iwt(pred_ll, pred_lh, pred_hl, pred_hh)
+                # label.fill_(fake_label)
+                # # Classify all fake batch with D
+                # output = self.discriminator(restored_image.detach())
+                # # Calculate D's loss on the all-fake batch
+                # errD_fake = torch.nn.functional.binary_cross_entropy(output, label)
+                # # Calculate the gradients for this batch, accumulated (summed) with previous gradients
+                # errD_fake.backward()
+                # D_G_z1 = output.mean().item()
+                # # Compute error of D as sum over the fake and the real batches
+                # errD = errD_real + errD_fake
+                # # Update D
+                # self.discriminator_optimizer.step()
+                #
+                # ############################
+                # # (2) Update G network: maximize log(D(G(z)))
+                # ###########################
+                # self.optimizer.zero_grad()
+                # label.fill_(real_label)  # fake labels are real for generator cost
+                # # Since we just updated D, perform another forward pass of all-fake batch through D
+                # output = self.discriminator(restored_image)
+                # # Calculate G's loss based on this output
+                # errG = torch.nn.functional.binary_cross_entropy(output, label)
+                # # Calculate gradients for G
+                # errG.backward()
+                # D_G_z2 = output.mean().item()
+                # # Update G
 
-                    self.discriminator_optimizer.zero_grad()
+                ############################
+                # (3) Pixel-wise and wavelets losses
+                ###########################
+                self.optimizer.zero_grad()
+                pred_wavelets_pyramid, _ = self.model(noisy_image)
+                pred_ll, pred_lh, pred_hl, pred_hh = torch.split(pred_wavelets_pyramid[0], 3, dim=1)
 
-                    real_d_out = self.discriminator(clear_image)
-                    errD_real = torch.nn.functional.binary_cross_entropy(real_d_out, label)
-                    errD_real.backward()
-                    D_x = real_d_out.mean().item()
+                restored_image = self.iwt(pred_ll, pred_lh, pred_hl, pred_hh)
 
-                    pred_wavelets_pyramid, _ = self.model(noisy_image)
-                    pred_ll, pred_lh, pred_hl, pred_hh = torch.split(pred_wavelets_pyramid[0], 3, dim=1)
-                    restored_image = self.iwt(pred_ll, pred_lh, pred_hl, pred_hh)
-                    label.fill_(fake_label)
-                    # Classify all fake batch with D
-                    output = self.discriminator(restored_image.detach())
-                    # Calculate D's loss on the all-fake batch
-                    errD_fake = torch.nn.functional.binary_cross_entropy(output, label)
-                    # Calculate the gradients for this batch, accumulated (summed) with previous gradients
-                    errD_fake.backward()
-                    D_G_z1 = output.mean().item()
-                    # Compute error of D as sum over the fake and the real batches
-                    errD = errD_real + errD_fake
-                    # Update D
-                    self.discriminator_optimizer.step()
+                loss = self.images_criterion(restored_image, clear_image)   # / 2 + self.ssim_loss(restored_image, clear_image) / 2
+                wloss, hist_loss = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image)
 
-                    ############################
-                    # (2) Update G network: maximize log(D(G(z)))
-                    ###########################
-                    self.optimizer.zero_grad()
-                    label.fill_(real_label)  # fake labels are real for generator cost
-                    # Since we just updated D, perform another forward pass of all-fake batch through D
-                    output = self.discriminator(restored_image)
-                    # Calculate G's loss based on this output
-                    errG = torch.nn.functional.binary_cross_entropy(output, label)
-                    # Calculate gradients for G
-                    errG.backward()
-                    D_G_z2 = output.mean().item()
-                    # Update G
-                    self.optimizer.step()
-                else:
-                    ############################
-                    # (3) Additional: Pixel-wise and wavelets losses
-                    ###########################
-                    self.optimizer.zero_grad()
-                    pred_wavelets_pyramid, _ = self.model(noisy_image)
-                    pred_ll, pred_lh, pred_hl, pred_hh = torch.split(pred_wavelets_pyramid[0], 3, dim=1)
+                total_loss = loss + wloss + hist_loss
 
-                    restored_image = self.iwt(pred_ll, pred_lh, pred_hl, pred_hh)
+                total_loss.backward()
+                self.optimizer.step()
 
-                    loss = self.images_criterion(restored_image, clear_image)   # / 2 + self.ssim_loss(restored_image, clear_image) / 2
-                    wloss = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image)
-
-                    total_loss = loss + wloss
-
-                    total_loss.backward()
-                    self.optimizer.step()
-
-                    last_px_loss = total_loss.item()
-
+                # pbar.postfix = \
+                #     'Epoch: {}/{}, D_loss: {:.7f}, G_loss: {:.7f}, px_loss: {:.7f}'.format(
+                #         epoch,
+                #         self.epochs,
+                #         errD if isinstance(errD, int) else errD.item(),
+                #         errG if isinstance(errG, int) else errG.item(),
+                #         last_px_loss
+                #     )
                 pbar.postfix = \
-                    'Epoch: {}/{}, D_loss: {:.7f}, G_loss: {:.7f}, px_loss: {:.7f}'.format(
+                    'Epoch: {}/{}, px_loss: {:.7f}, w_loss: {:.7f}, h_loss: {:.7f}'.format(
                         epoch,
                         self.epochs,
-                        errD if isinstance(errD, int) else errD.item(),
-                        errG if isinstance(errG, int) else errG.item(),
-                        last_px_loss
+                        loss.item(),
+                        wloss.item(),
+                        hist_loss.item()
                     )
-                avg_epoch_loss += \
-                    ((errD + errG).item() if not isinstance(errD, int) else (errD + errG)) / len(self.train_dataloader)
+                avg_epoch_loss += loss.item() / len(self.train_dataloader)
 
                 if self.batch_visualizer is not None:
                     wavelets_pred = pred_wavelets_pyramid[0].detach()
@@ -297,29 +299,34 @@ class CustomTrainingPipeline(object):
         avg_loss_rate = 0
         test_len = 0
 
-        if self.val_dataloader is not None:
-            for _noisy_image, _clear_image in tqdm.tqdm(self.val_dataloader):
+        if self.val_dataset is not None:
+            for sample_i in tqdm.tqdm(range(len(self.val_dataset))):
+                _noisy_image, _clear_image = self.val_dataset[sample_i]
+
+                noisy_image = _noisy_image.to(self.device)
+                clear_image = _clear_image.to(self.device)
+
                 with torch.no_grad():
-                    noisy_image = _noisy_image.to(self.device)
-                    clear_image = _clear_image.to(self.device)
+                    restored_image = denoise_inference(
+                        tensor_img=noisy_image, model=self.model, iwt=self.iwt, window_size=self.image_shape[0], batch_size=4
+                    ).unsqueeze(0)
 
-                    pred_wavelets_pyramid, _ = self.model(noisy_image)
-
-                    restored_image = self.iwt(*torch.split(pred_wavelets_pyramid[0], 3, dim=1))
-
-                    loss = self.images_criterion(restored_image, clear_image)   #  / 2 + self.ssim_loss(restored_image, clear_image) / 2
-                    loss += self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image)
+                    loss = self.images_criterion(restored_image, clear_image.unsqueeze(0))   #  / 2 + self.ssim_loss(restored_image, clear_image) / 2
                     avg_loss_rate += loss.item()
 
                     val_psnr = self.accuracy_measure(
                         restored_image,
-                        clear_image
+                        clear_image.unsqueeze(0)
                     )
 
-                    acc_rate = val_psnr.item()   # float(acc_rate.to('cpu').numpy())
+                    acc_rate = val_psnr.item()
 
                     avg_acc_rate += acc_rate
                     test_len += 1
+
+                    result_path = os.path.join(self.output_val_images_dir, '{}.png'.format(sample_i + 1))
+                    val_img = (torch.clip(restored_image[0].to('cpu').permute(1, 2, 0), 0, 1) * 255.0).numpy().astype(np.uint8)
+                    cv2.imwrite(result_path, cv2.cvtColor(val_img, cv2.COLOR_RGB2BGR))
 
         if test_len > 0:
             avg_acc_rate /= test_len
@@ -353,6 +360,10 @@ class CustomTrainingPipeline(object):
             self.checkpoints_dir,
             'best.trh'
         )
+        latest_model_path = os.path.join(
+            self.checkpoints_dir,
+            'last.trh'
+        )
         best_discriminator_path = os.path.join(
             self.checkpoints_dir,
             'best_discriminator.trh'
@@ -366,33 +377,40 @@ class CustomTrainingPipeline(object):
             'traced_latest_model.pt'
         )
 
+        # self.model = self.model.to('cpu')
+        # self.model.eval()
+        # self.discriminator.eval()
+        # self._save_best_traced_model(latest_traced_model_path)
+        # self.model = self.model.to(self.device)
+        # self.discriminator = self.discriminator.to(self.device)
+
         self.model = self.model.to('cpu')
         self.model.eval()
-        self.discriminator.eval()
-        # self._save_best_traced_model(latest_traced_model_path)
-        self.model = self.model.to(self.device)
-        self.discriminator = self.discriminator.to(self.device)
+
+        torch.save(
+            self.model.state_dict(),
+            latest_model_path
+        )
 
         if self.best_test_score - avg_acc_rate < -1E-5:
             self.best_test_score = avg_acc_rate
 
-            self.model = self.model.to('cpu')
-            self.model.eval()
-            torch.save(
-                self.model.state_dict(),
-                model_save_path
-            )
+            # torch.save(
+            #     self.model.state_dict(),
+            #     model_save_path
+            # )
             torch.save(
                 self.model.state_dict(),
                 best_model_path
             )
-            torch.save(
-                self.discriminator.state_dict(),
-                best_discriminator_path
-            )
+            # torch.save(
+            #     self.discriminator.state_dict(),
+            #     best_discriminator_path
+            # )
             # self._save_best_traced_model(best_traced_model_path)
-            self.model = self.model.to(self.device)
-            self.discriminator = self.discriminator.to(self.device)
+            # self.discriminator = self.discriminator.to(self.device)
+
+        self.model = self.model.to(self.device)
 
     def _check_stop_criteria(self):
         return self.get_lr() - self.stop_criteria < -1E-9
@@ -451,8 +469,8 @@ if __name__ == '__main__':
     )
 
     val_data = (
-        '/media/alexey/SSDData/datasets/denoising_dataset/real_sense_noise_val/images_series/',
-        '/media/alexey/SSDData/datasets/denoising_dataset/real_sense_noise_val/averaged_outclass_series/'
+        '/media/alexey/SSDData/datasets/denoising_dataset/real_sense_noise_val/noisy/',
+        '/media/alexey/SSDData/datasets/denoising_dataset/real_sense_noise_val/clear/'
     )
 
     CustomTrainingPipeline(

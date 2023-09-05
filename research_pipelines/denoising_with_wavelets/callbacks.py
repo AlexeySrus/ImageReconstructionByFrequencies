@@ -229,7 +229,7 @@ class VisImageForWavelets(AbstractCallback):
     def __init__(self, title, server='http://localhost', port=8080,
                  vis_step=1, scale=10):
         self.viz = Visdom(server=server, port=port)
-        self.title = title + ' input|original|predicted'
+        self.title = title + ' input | predicted | original'
         self.windows = {1: None}
         self.n = 0
         self.step = vis_step
@@ -294,7 +294,7 @@ class VisImageForWavelets(AbstractCallback):
                     gt_image = self._denorm_image(self._ycrcb_to_rgb(gt_image))
 
                     x = torch.cat(
-                        (input_image, gt_image, pred_image),
+                        (input_image, pred_image, gt_image),
                         dim=2
                     )
 
@@ -380,12 +380,12 @@ class VisImage(VisImageForWavelets):
                     )
 
                     wx = torch.cat(
-                        (wx_inp, wx_gt, wx_pred),
+                        (wx_inp, wx_pred, wx_gt),
                         dim=2
                     )
 
                     x = torch.cat(
-                        (inp_image, gt_image, pred_image),
+                        (inp_image, pred_image, gt_image),
                         dim=2
                     )
                     x = torch.cat(
