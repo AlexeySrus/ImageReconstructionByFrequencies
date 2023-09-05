@@ -185,6 +185,7 @@ class CustomTrainingPipeline(object):
         self.model.train()
         self.discriminator.train()
         avg_epoch_loss = 0
+        last_px_loss = 0
 
         with tqdm.tqdm(total=len(self.train_dataloader)) as pbar:
             for i, (_noisy_image, _clear_image) in enumerate(self.train_dataloader):
@@ -193,8 +194,6 @@ class CustomTrainingPipeline(object):
 
                 noisy_image = _noisy_image.to(self.device)
                 clear_image = _clear_image.to(self.device)
-
-                last_px_loss = 0
 
                 if np.random.randint(1, 101) < 90:
                     ############################
