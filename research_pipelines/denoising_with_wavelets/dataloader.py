@@ -180,7 +180,11 @@ class SeriesAndComputingClearDataset(Dataset):
 class PairedDenoiseDataset(Dataset):
     def __init__(self,
                  noisy_images_path,
-                 clear_images_path):
+                 clear_images_path,
+                 need_crop: bool = False,
+                 window_size: int = 224,
+                 optional_dataset_size: Optional[int] = None,
+                 preload: bool = False):
         self.noisy_images = {
             os.path.splitext(img_name)[0]: os.path.join(noisy_images_path, img_name)
             for img_name in os.listdir(noisy_images_path)
@@ -193,14 +197,36 @@ class PairedDenoiseDataset(Dataset):
         assert set(self.noisy_images.keys()) == set(self.clear_images.keys())
 
         self.images_keys = list(self.noisy_images.keys())
-        self.dataset_size = len(self.images_keys)
+        self.dataset_size = len(self.images_keys) if optional_dataset_size is not None else optional_dataset_size
+        self.window_size = window_size
+        self.need_crop = need_crop
+
+        if preload:
+            print('Loading images into RAM:')
+            for key in tqdm(self.images_keys):
+                self.noisy_images[key] = load_image(self.noisy_images[key])
+                self.clear_images[key] = load_image(self.clear_images[key])
 
     def __len__(self):
         return self.dataset_size
 
-    def __getitem__(self, idx) -> Tuple[torch.Tensor, torch.Tensor]:
-        noisy_image = load_image(self.noisy_images[self.images_keys[idx]])
-        clear_image = load_image(self.clear_images[self.images_keys[idx]])
+    def __getitem__(self, _idx) -> Tuple[torch.Tensor, torch.Tensor]:
+        idx = _idx % len(self.images_keys)
+
+        noisy_image = self.noisy_images[self.images_keys[idx]]
+        clear_image = self.clear_images[self.images_keys[idx]]
+
+        if isinstance(noisy_image, str):
+            noisy_image = load_image(noisy_image)
+        if isinstance(clear_image, str):
+            clear_image = load_image(clear_image)
+
+        if self.need_crop:
+            noisy_image, clear_image = random_crop_with_transforms(
+                noisy_image, clear_image,
+                window_size=self.window_size,
+                random_swap=False
+            )
 
         return preprocess_image(noisy_image, 0, 1), preprocess_image(clear_image, 0, 1)
 
