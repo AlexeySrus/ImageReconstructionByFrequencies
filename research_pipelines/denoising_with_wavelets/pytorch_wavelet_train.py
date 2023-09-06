@@ -133,10 +133,12 @@ class CustomTrainingPipeline(object):
         self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.002)
 
         if load_path is not None:
-            self.model.load_state_dict(
-                torch.load(load_path, map_location=self.device))
+            load_data = torch.load(load_path, map_location=self.device)
+            self.model.load_state_dict(load_data['model'])
+            self.optimizer.load_state_dict(load_data['optimizer'])
+
             print(
-                'Model has been loaded by path: {}'.format(load_path)
+                'Model and optimizer have been loaded by path: {}'.format(load_path)
             )
 
         self.images_criterion = torch.nn.MSELoss(size_average=True)

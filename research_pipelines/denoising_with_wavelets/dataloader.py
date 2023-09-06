@@ -197,7 +197,7 @@ class PairedDenoiseDataset(Dataset):
         assert set(self.noisy_images.keys()) == set(self.clear_images.keys())
 
         self.images_keys = list(self.noisy_images.keys())
-        self.dataset_size = len(self.images_keys) if optional_dataset_size is not None else optional_dataset_size
+        self.dataset_size = len(self.images_keys) if optional_dataset_size is None else optional_dataset_size
         self.window_size = window_size
         self.need_crop = need_crop
 
