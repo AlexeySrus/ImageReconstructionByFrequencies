@@ -199,7 +199,7 @@ class CustomTrainingPipeline(object):
                 loss = self.images_criterion(restored_image, clear_image)   # / 2 + self.ssim_loss(restored_image, clear_image) / 2
                 wloss, hist_loss = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image)
 
-                total_loss = loss + wloss + hist_loss * 0.05
+                total_loss = loss + wloss + hist_loss * 0.01
 
                 total_loss.backward()
                 self.optimizer.step()
@@ -395,7 +395,7 @@ if __name__ == '__main__':
         batch_size=args.batch_size,
         model_name=args.model,
         image_size=args.image_size,
-        train_workers=4
+        train_workers=8
     ).fit()
 
     exit(0)
