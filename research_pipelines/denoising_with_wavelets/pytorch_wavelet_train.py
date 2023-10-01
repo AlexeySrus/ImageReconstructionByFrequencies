@@ -396,8 +396,8 @@ if __name__ == '__main__':
     args = parse_args()
 
     train_data = (
-        '/media/alexey/SSDData/datasets/denoising_dataset/train/clear',
-        '/media/alexey/SSDData/datasets/denoising_dataset/train/noisy'
+        '/media/alexey/SSDData/datasets/denoising_dataset/train/noisy/',
+        '/media/alexey/SSDData/datasets/denoising_dataset/train/clear/'
     )
 
     val_data = (
