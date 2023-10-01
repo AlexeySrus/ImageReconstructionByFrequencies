@@ -1,5 +1,6 @@
 from typing import Optional, Tuple, Union
 import cv2
+from PIL import Image
 from enum import Enum
 import numpy as np
 import random
@@ -182,6 +183,18 @@ def load_image(path):
     if img is None:
         raise RuntimeError('Can\'t open image: {}'.format(path))
     return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+
+def pil_load_image(path):
+    """
+    Load image in HWC RGB uint8 format
+    Args:
+        path: path to image
+
+    Returns:
+        Image in HWC RGB uint8 format
+    """
+    return np.array(Image.open(path).convert('RGB'))
 
 
 def split_by_wavelets(grayscale_img: np.ndarray, wavelet_type: str = 'bior1.1') -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:

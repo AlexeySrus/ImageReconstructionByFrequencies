@@ -10,6 +10,7 @@ from torch.utils import data
 import torchvision
 import segmentation_models_pytorch as smp
 import timm
+from PIL import Image
 import os
 from torchmetrics.image import PeakSignalNoiseRatio as TorchPSNR
 from pytorch_msssim import SSIM
@@ -42,7 +43,7 @@ class CustomTrainingPipeline(object):
                  stop_criteria: float = 1E-7,
                  device: str = 'cuda',
                  image_size: int = 224,
-                 train_workers: int = 4):
+                 train_workers: int = 0):
         """
         Train model
         Args:
@@ -77,17 +78,36 @@ class CustomTrainingPipeline(object):
         os.makedirs(self.checkpoints_dir, exist_ok=True)
         os.makedirs(self.output_val_images_dir, exist_ok=True)
 
-        self.train_base_dataset = SeriesAndComputingClearDataset(
-            images_series_folder=train_data_paths[0],
+        # self.train_base_dataset = SeriesAndComputingClearDataset(
+        #     images_series_folder=train_data_paths[0],
+        #     clear_images_path=train_data_paths[1],
+        #     window_size=self.image_shape[0],
+        #     dataset_size=10000
+        # )
+
+
+        self.train_base_dataset = PairedDenoiseDataset(
+            noisy_images_path=train_data_paths[0],
             clear_images_path=train_data_paths[1],
+            need_crop=True,
             window_size=self.image_shape[0],
-            dataset_size=10000
+            optional_dataset_size=10000,
+            preload=False
         )
+        # self.train_synth_dataset = SyntheticNoiseDataset(
+        #     clear_images_path=synth_data_paths,
+        #     window_size=self.image_shape[0]
+        # )
+
+        # self.train_base_dataset = torch.utils.data.ConcatDataset(
+        #     [self.train_base_dataset, self.train_synth_dataset]
+        # )
+        
 
         self.val_dataset = PairedDenoiseDataset(
             noisy_images_path=val_data_paths[0],
             clear_images_path=val_data_paths[1],
-            preload=True
+            preload=False
         )
 
         self.train_dataloader = torch.utils.data.DataLoader(
@@ -95,8 +115,7 @@ class CustomTrainingPipeline(object):
             batch_size=batch_size,
             shuffle=True,
             drop_last=True,
-            num_workers=train_workers,
-            pin_memory=True
+            num_workers=train_workers
         )
 
         self.batch_visualizer = None if visdom_port is None else VisImage(
@@ -251,7 +270,8 @@ class CustomTrainingPipeline(object):
 
                 with torch.no_grad():
                     restored_image = denoise_inference(
-                        tensor_img=noisy_image, model=self.model, iwt=self.iwt, window_size=self.image_shape[0], batch_size=4
+                        tensor_img=noisy_image, model=self.model, iwt=self.iwt, window_size=self.image_shape[0], 
+                        batch_size=4, crop_size=self.image_shape[0] // 32
                     ).unsqueeze(0)
 
                     loss = self.images_criterion(restored_image, clear_image.unsqueeze(0))   #  / 2 + self.ssim_loss(restored_image, clear_image) / 2
@@ -269,7 +289,8 @@ class CustomTrainingPipeline(object):
 
                     result_path = os.path.join(self.output_val_images_dir, '{}.png'.format(sample_i + 1))
                     val_img = (torch.clip(restored_image[0].to('cpu').permute(1, 2, 0), 0, 1) * 255.0).numpy().astype(np.uint8)
-                    cv2.imwrite(result_path, cv2.cvtColor(val_img, cv2.COLOR_RGB2BGR))
+                    Image.fromarray(val_img).save(result_path)
+                    # cv2.imwrite(result_path, cv2.cvtColor(val_img, cv2.COLOR_RGB2BGR))
 
         if test_len > 0:
             avg_acc_rate /= test_len
@@ -347,7 +368,7 @@ def parse_args() -> Namespace:
         '--epochs', type=int, required=False, default=200
     ),
     parser.add_argument(
-        '--image_size', type=int, required=False, default=224
+        '--image_size', type=int, required=False, default=512
     ),
     parser.add_argument(
         '--resume_epoch', type=int, required=False, default=1
@@ -361,12 +382,12 @@ def parse_args() -> Namespace:
         help='Port of visualization.'
     )
     parser.add_argument(
-        '--batch_size', type=int, required=False, default=32,
-        help='Training batch size.'
+        '--njobs', type=int, required=False, default=8,
+        help='Count of dataset workers.'
     )
     parser.add_argument(
-        '--model', type=str, required=False, default='efficientnetv2_s',
-        help='Name of model from timm models pool.'
+        '--batch_size', type=int, required=False, default=32,
+        help='Training batch size.'
     )
     return parser.parse_args()
 
@@ -375,13 +396,13 @@ if __name__ == '__main__':
     args = parse_args()
 
     train_data = (
-        '/media/alexey/SSDData/datasets/denoising_dataset/real_sense_noise_train/images_series/',
-        '/media/alexey/SSDData/datasets/denoising_dataset/real_sense_noise_train/averaged_outclass_series/'
+        '/media/alexey/SSDData/datasets/denoising_dataset/train/clear',
+        '/media/alexey/SSDData/datasets/denoising_dataset/train/noisy'
     )
 
     val_data = (
-        '/media/alexey/SSDData/datasets/denoising_dataset/real_sense_noise_val/noisy/',
-        '/media/alexey/SSDData/datasets/denoising_dataset/real_sense_noise_val/clear/'
+        '/media/alexey/SSDData/datasets/denoising_dataset/val/noisy/',
+        '/media/alexey/SSDData/datasets/denoising_dataset/val/clear/'
     )
     clear_path = '/media/alexey/SSDData/datasets/room_inpainting/train/images/'
 
@@ -395,9 +416,8 @@ if __name__ == '__main__':
         epochs=args.epochs,
         resume_epoch=args.resume_epoch,
         batch_size=args.batch_size,
-        model_name=args.model,
         image_size=args.image_size,
-        train_workers=8
+        train_workers=args.njobs
     ).fit()
 
     exit(0)

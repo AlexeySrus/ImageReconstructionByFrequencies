@@ -13,7 +13,7 @@ import pywt
 import random
 import logging
 
-from utils.image_utils import random_crop_with_transforms, load_image
+from utils.image_utils import random_crop_with_transforms, pil_load_image as load_image
 from utils.tensor_utils import preprocess_image
 
 
@@ -210,7 +210,7 @@ class PairedDenoiseDataset(Dataset):
     def __len__(self):
         return self.dataset_size
 
-    def __getitem__(self, _idx) -> Tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, _idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         idx = _idx % len(self.images_keys)
 
         noisy_image = self.noisy_images[self.images_keys[idx]]
@@ -243,10 +243,9 @@ class SyntheticNoiseDataset(Dataset):
 
         self.noise_transform = A.Compose([
             A.OneOf([
-                A.IAAAdditiveGaussianNoise(),
-                A.GaussNoise(var_limit=(10.0, 150.0)),
-                A.ISONoise(),
-                A.MultiplicativeNoise()
+                A.GaussNoise(var_limit=(10.0, 150.0), always_apply=True),
+                A.ISONoise(always_apply=True),
+                A.MultiplicativeNoise(always_apply=True)
             ], p=1.0)
         ])
 
@@ -276,8 +275,8 @@ class SyntheticNoiseDataset(Dataset):
 
 if __name__ == '__main__':
     val_data = (
-        '/media/alexey/SSDData/datasets/denoising_dataset/real_sense_noise_val/noisy/',
-        '/media/alexey/SSDData/datasets/denoising_dataset/real_sense_noise_val/clear/'
+        '/media/alexey/SSDData/datasets/denoising_dataset/val/noisy/',
+        '/media/alexey/SSDData/datasets/denoising_dataset/val/clear/'
     )
 
     dataset = SyntheticNoiseDataset(val_data[1])

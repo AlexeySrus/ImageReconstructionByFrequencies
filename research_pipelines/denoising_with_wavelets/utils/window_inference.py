@@ -10,9 +10,10 @@ def denoise_inference(
         iwt: torch.nn.Module,
         window_size: int = 224,
         batch_size: int = 32,
-        verbose: bool = False) -> torch.Tensor:
+        verbose: bool = False,
+        crop_size: int = 0) -> torch.Tensor:
     # output_size = model(torch.zeros(1, 3, window_size, window_size).to(device))[0][0].size(2) * 2
-    crop_d = window_size // 32 // 2
+    crop_d = crop_size
     output_size = window_size - crop_d * 2
 
     d = (window_size - output_size) // 2

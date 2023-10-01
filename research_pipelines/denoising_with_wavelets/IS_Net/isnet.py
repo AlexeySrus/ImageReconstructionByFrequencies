@@ -522,13 +522,20 @@ class ISNetDIS(nn.Module):
         self.stage2d = RSU6(256,32,64)
         self.stage1d = RSU7(128,16,64)
 
-        self.side1 = nn.Sequential(nn.Conv2d(64,out_ch,3,padding=1), nn.SiLU(), nn.Conv2d(out_ch, out_ch, 1, padding=0))
-        self.side2 = nn.Sequential(nn.Conv2d(64,out_ch,3,padding=1), nn.SiLU(), nn.Conv2d(out_ch, out_ch, 1, padding=0))
-        self.side3 = nn.Sequential(nn.Conv2d(128,out_ch,3,padding=1), nn.SiLU(), nn.Conv2d(out_ch, out_ch, 1, padding=0))
-        self.side4 = nn.Sequential(nn.Conv2d(256,out_ch,3,padding=1), nn.SiLU(), nn.Conv2d(out_ch, out_ch, 1, padding=0))
-        self.side5 = nn.Sequential(nn.Conv2d(512,out_ch,3,padding=1), nn.SiLU(), nn.Conv2d(out_ch, out_ch, 1, padding=0))
-        self.side6 = nn.Sequential(nn.Conv2d(512,out_ch,3,padding=1), nn.SiLU(), nn.Conv2d(out_ch, out_ch, 1, padding=0))
+        # self.side1 = nn.Sequential(nn.Conv2d(64,out_ch,3,padding=1), nn.SiLU(), nn.Conv2d(out_ch, out_ch, 1, padding=0))
+        # self.side2 = nn.Sequential(nn.Conv2d(64,out_ch,3,padding=1), nn.SiLU(), nn.Conv2d(out_ch, out_ch, 1, padding=0))
+        # self.side3 = nn.Sequential(nn.Conv2d(128,out_ch,3,padding=1), nn.SiLU(), nn.Conv2d(out_ch, out_ch, 1, padding=0))
+        # self.side4 = nn.Sequential(nn.Conv2d(256,out_ch,3,padding=1), nn.SiLU(), nn.Conv2d(out_ch, out_ch, 1, padding=0))
+        # self.side5 = nn.Sequential(nn.Conv2d(512,out_ch,3,padding=1), nn.SiLU(), nn.Conv2d(out_ch, out_ch, 1, padding=0))
+        # self.side6 = nn.Sequential(nn.Conv2d(512,out_ch,3,padding=1), nn.SiLU(), nn.Conv2d(out_ch, out_ch, 1, padding=0))
 
+        self.side1 = nn.Conv2d(64,out_ch,3,padding=1)
+        self.side2 = nn.Conv2d(64,out_ch,3,padding=1)
+        self.side3 = nn.Conv2d(128,out_ch,3,padding=1)
+        self.side4 = nn.Conv2d(256,out_ch,3,padding=1)
+        self.side5 = nn.Conv2d(512,out_ch,3,padding=1)
+        self.side6 = nn.Conv2d(512,out_ch,3,padding=1)
+        
         # self.outconv = nn.Conv2d(6*out_ch,out_ch,3)
 
     def compute_loss_kl(self, preds, targets, dfs, fs, mode='MSE'):
@@ -620,7 +627,7 @@ class ISNetDIS(nn.Module):
 
 if __name__ == '__main__':
     model = ISNetDIS()
-    inp = torch.rand(1, 3, 3048, 3049)
+    inp = torch.rand(1, 3, 512, 512)
 
     with torch.no_grad():
         out = model(inp)
