@@ -34,7 +34,6 @@ class CustomTrainingPipeline(object):
                  val_data_paths: Tuple[str, str],
                  synth_data_paths: str,
                  experiment_folder: str,
-                 model_name: str = 'resnet18',
                  load_path: str = None,
                  visdom_port: int = 9000,
                  batch_size: int = 32,
@@ -42,7 +41,7 @@ class CustomTrainingPipeline(object):
                  resume_epoch: int = 1,
                  stop_criteria: float = 1E-7,
                  device: str = 'cuda',
-                 image_size: int = 224,
+                 image_size: int = 512,
                  train_workers: int = 0):
         """
         Train model
@@ -50,7 +49,6 @@ class CustomTrainingPipeline(object):
             data_tar_path: Path to training data tar archive
             val_split: Validation part rate
             experiment_folder: Path to folder with checkpoints and experiments data
-            model_name: timm classification model name
             load_path: Path to model weights to load
             visdom_port: Port of visualization
             batch_size: Training batch size
@@ -168,7 +166,7 @@ class CustomTrainingPipeline(object):
 
         self.scheduler = torch.optim.lr_scheduler.MultiStepLR(
             self.optimizer,
-            milestones=[100, 200, 300],
+            milestones=[epochs // 5, epochs // 2, 2 * epochs // 3],
             gamma=0.5
         )
 
