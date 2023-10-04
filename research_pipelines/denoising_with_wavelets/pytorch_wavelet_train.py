@@ -18,7 +18,7 @@ from pytorch_msssim import SSIM
 from dataloader import SeriesAndComputingClearDataset, PairedDenoiseDataset, SyntheticNoiseDataset
 from callbacks import VisImage, VisPlot
 from DWT_IDWT.DWT_IDWT_layer import DWT_2D, IDWT_2D
-from IS_Net.isnet import ISNetDIS
+from IS_Net.attn_isnet import ISNetDIS
 from utils.window_inference import denoise_inference
 from utils.hist_loss import HistLoss
 
@@ -42,7 +42,8 @@ class CustomTrainingPipeline(object):
                  stop_criteria: float = 1E-7,
                  device: str = 'cuda',
                  image_size: int = 512,
-                 train_workers: int = 0):
+                 train_workers: int = 0,
+                 preload_data: bool = False):
         """
         Train model
         Args:
@@ -89,8 +90,8 @@ class CustomTrainingPipeline(object):
             clear_images_path=train_data_paths[1],
             need_crop=True,
             window_size=self.image_shape[0],
-            optional_dataset_size=10000,
-            preload=False
+            optional_dataset_size=100000,
+            preload=preload_data
         )
         # self.train_synth_dataset = SyntheticNoiseDataset(
         #     clear_images_path=synth_data_paths,
@@ -105,7 +106,7 @@ class CustomTrainingPipeline(object):
         self.val_dataset = PairedDenoiseDataset(
             noisy_images_path=val_data_paths[0],
             clear_images_path=val_data_paths[1],
-            preload=False
+            preload=preload_data
         )
 
         self.train_dataloader = torch.utils.data.DataLoader(
@@ -147,7 +148,8 @@ class CustomTrainingPipeline(object):
         self.dwt = DWT_2D('haar')
         self.iwt = IDWT_2D('haar')
         self.model = self.model.to(device)
-        self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.002)
+        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.001, nesterov=True, momentum=0.9)
+        self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=0.002, weight_decay=1E-9)
 
         if load_path is not None:
             load_data = torch.load(load_path, map_location=self.device)
@@ -159,8 +161,10 @@ class CustomTrainingPipeline(object):
             )
 
         self.images_criterion = torch.nn.MSELoss(size_average=True)
-        self.ssim_loss = SSIMLoss()
-        self.hist_loss = HistLoss(image_size=self.image_shape[0], device=self.device)
+        # self.ssim_loss = SSIMLoss()
+        # self.hist_loss = HistLoss(image_size=self.image_shape[0], device=self.device)
+        self.hist_loss = None
+        self.ssim_loss = None
         self.wavelets_criterion = torch.nn.SmoothL1Loss(size_average=True)
         self.accuracy_measure = TorchPSNR().to(device)
 
@@ -177,7 +181,7 @@ class CustomTrainingPipeline(object):
     def _compute_wavelets_loss(self, pred_wavelets_pyramid, gt_image, factor: float = 0.9):
         gt_d0_ll = gt_image
         _loss = None
-        _h_loss = None
+        _h_loss = 0.0
         _loss_scale = 1.0
 
         for i in range(len(pred_wavelets_pyramid)):
@@ -186,10 +190,10 @@ class CustomTrainingPipeline(object):
 
             if i == 0:
                 _loss = self.wavelets_criterion(pred_wavelets_pyramid[i], gt_wavelets) * _loss_scale * 0.5
-                _h_loss = self.hist_loss(pred_wavelets_pyramid[i][:, :3] / 2, gt_ll / 2)
             else:
                 _loss += self.wavelets_criterion(pred_wavelets_pyramid[i], gt_wavelets) * _loss_scale
-                if i < 3:
+
+                if i < 3 and self.hist_loss is not None:
                     _h_loss += self.hist_loss(pred_wavelets_pyramid[i][:, :3] / 2, gt_ll / 2) * _loss_scale
 
             _loss_scale *= factor
@@ -203,9 +207,7 @@ class CustomTrainingPipeline(object):
         avg_epoch_loss = 0
 
         with tqdm.tqdm(total=len(self.train_dataloader)) as pbar:
-            for i, (_noisy_image, _clear_image) in enumerate(self.train_dataloader):
-
-
+            for _noisy_image, _clear_image in self.train_dataloader:
                 noisy_image = _noisy_image.to(self.device)
                 clear_image = _clear_image.to(self.device)
 
@@ -215,7 +217,11 @@ class CustomTrainingPipeline(object):
 
                 restored_image = self.iwt(pred_ll, pred_lh, pred_hl, pred_hh)
 
-                loss = self.images_criterion(restored_image, clear_image)   # / 2 + self.ssim_loss(restored_image, clear_image) / 2
+                loss = self.images_criterion(restored_image, clear_image)
+
+                if self.ssim_loss is not None:
+                    loss = loss / 2 + self.ssim_loss(restored_image, clear_image) / 2
+                    
                 wloss, hist_loss = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image)
 
                 total_loss = loss + wloss + hist_loss * 0.01
@@ -229,7 +235,7 @@ class CustomTrainingPipeline(object):
                         self.epochs,
                         loss.item(),
                         wloss.item(),
-                        hist_loss.item()
+                        hist_loss.item() if self.hist_loss is not None else hist_loss
                     )
                 avg_epoch_loss += loss.item() / len(self.train_dataloader)
 
@@ -269,10 +275,14 @@ class CustomTrainingPipeline(object):
                 with torch.no_grad():
                     restored_image = denoise_inference(
                         tensor_img=noisy_image, model=self.model, iwt=self.iwt, window_size=self.image_shape[0], 
-                        batch_size=4, crop_size=self.image_shape[0] // 32
+                        batch_size=self.batch_size, crop_size=self.image_shape[0] // 32
                     ).unsqueeze(0)
 
-                    loss = self.images_criterion(restored_image, clear_image.unsqueeze(0))   #  / 2 + self.ssim_loss(restored_image, clear_image) / 2
+                    loss = self.images_criterion(restored_image, clear_image.unsqueeze(0))
+
+                    if self.ssim_loss is not None:
+                        loss = loss / 2 + self.ssim_loss(restored_image, clear_image) / 2
+                    
                     avg_loss_rate += loss.item()
 
                     val_psnr = self.accuracy_measure(
@@ -294,7 +304,7 @@ class CustomTrainingPipeline(object):
             avg_acc_rate /= test_len
             avg_loss_rate /= test_len
 
-        self.scheduler.step(avg_loss_rate)
+        self.scheduler.step()
 
         return avg_loss_rate, avg_acc_rate
 
@@ -359,6 +369,14 @@ class CustomTrainingPipeline(object):
 def parse_args() -> Namespace:
     parser = ArgumentParser(description='Training pipeline')
     parser.add_argument(
+        '--train_data_folder', type=str, required=True,
+        help='Path folder with train data (contains clear/ and noisy/ subfolders).'
+    )
+    parser.add_argument(
+        '--validation_data_folder', type=str, required=True,
+        help='Path folder with validation data (contains clear/ and noisy/ subfolders).'
+    )
+    parser.add_argument(
         '--experiment_folder', type=str, required=True,
         help='Path to folder with checkpoints and experiments data.'
     )
@@ -387,6 +405,10 @@ def parse_args() -> Namespace:
         '--batch_size', type=int, required=False, default=32,
         help='Training batch size.'
     )
+    parser.add_argument(
+        '--preload_datasets', action='store_true',
+        help='Load images from datasaets into memory.'
+    )
     return parser.parse_args()
 
 
@@ -394,20 +416,18 @@ if __name__ == '__main__':
     args = parse_args()
 
     train_data = (
-        '/media/alexey/SSDData/datasets/denoising_dataset/train/noisy/',
-        '/media/alexey/SSDData/datasets/denoising_dataset/train/clear/'
+        os.path.join(args.train_data_folder, 'noisy/'),
+        os.path.join(args.train_data_folder, 'clear/')
     )
-
     val_data = (
-        '/media/alexey/SSDData/datasets/denoising_dataset/val/noisy/',
-        '/media/alexey/SSDData/datasets/denoising_dataset/val/clear/'
+        os.path.join(args.validation_data_folder, 'noisy/'),
+        os.path.join(args.validation_data_folder, 'clear/')
     )
-    clear_path = '/media/alexey/SSDData/datasets/room_inpainting/train/images/'
 
     CustomTrainingPipeline(
         train_data_paths=train_data,
         val_data_paths=val_data,
-        synth_data_paths=clear_path,
+        synth_data_paths=None,
         experiment_folder=args.experiment_folder,
         load_path=args.load_path,
         visdom_port=args.visdom_port,
@@ -415,7 +435,8 @@ if __name__ == '__main__':
         resume_epoch=args.resume_epoch,
         batch_size=args.batch_size,
         image_size=args.image_size,
-        train_workers=args.njobs
+        train_workers=args.njobs,
+        preload_data=args.preload_datasets
     ).fit()
 
     exit(0)
