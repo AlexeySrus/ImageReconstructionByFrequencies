@@ -11,7 +11,8 @@ def denoise_inference(
         window_size: int = 224,
         batch_size: int = 32,
         verbose: bool = False,
-        crop_size: int = 0) -> torch.Tensor:
+        crop_size: int = 0,
+        use_tta: bool = False) -> torch.Tensor:
     # output_size = model(torch.zeros(1, 3, window_size, window_size).to(device))[0][0].size(2) * 2
     crop_d = crop_size
     output_size = window_size - crop_d * 2
@@ -34,12 +35,13 @@ def denoise_inference(
 
     predicted_images = []
 
-    transforms = [
-        TensorRotate.NONE,
-        TensorRotate.ROTATE_90_CLOCKWISE,
-        TensorRotate.ROTATE_180,
-        TensorRotate.ROTATE_90_COUNTERCLOCKWISE
-    ]
+    transforms = [TensorRotate.NONE]
+    if use_tta:
+        transforms += [
+            TensorRotate.ROTATE_90_CLOCKWISE,
+            TensorRotate.ROTATE_180,
+            TensorRotate.ROTATE_90_COUNTERCLOCKWISE
+        ]
 
     for transform in transforms:
         transform_padded_image = rotate_tensor(padded_tensor, transform)
