@@ -3,6 +3,9 @@ import torch.nn as nn
 from torchvision import models
 import torch.nn.functional as F
 
+# From third_party directory of repo: https://github.com/changzy00/pytorch-attention
+from attention_mechanisms.cbam import CBAM
+
 
 padding_mode: str = 'zeros'
 
@@ -502,21 +505,27 @@ class ISNetDIS(nn.Module):
         self.pool_in = nn.MaxPool2d(2,stride=2,ceil_mode=True)
 
         self.stage1 = RSU7(64,32,64)
+        self.attn_s1 = CBAM(64)
         self.pool12 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
 
         self.stage2 = RSU6(64,32,128)
+        self.attn_s2 = CBAM(128)
         self.pool23 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
 
         self.stage3 = RSU5(128,64,256)
+        self.attn_s3 = CBAM(256)
         self.pool34 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
 
         self.stage4 = RSU4(256,128,512)
+        self.attn_s4 = CBAM(512)
         self.pool45 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
 
         self.stage5 = RSU4F(512,256,512)
+        self.attn_s5 = CBAM(512)
         self.pool56 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
 
         self.stage6 = RSU4F(512,256,512)
+        self.attn_s6 = CBAM(512)
 
         # decoder
         self.stage5d = RSU4F(1024,256,512)
@@ -525,21 +534,12 @@ class ISNetDIS(nn.Module):
         self.stage2d = RSU6(256,32,64)
         self.stage1d = RSU7(128,16,64)
 
-        # self.side1 = nn.Sequential(nn.Conv2d(64,out_ch,3,padding=1), nn.SiLU(), nn.Conv2d(out_ch, out_ch, 1, padding=0))
-        # self.side2 = nn.Sequential(nn.Conv2d(64,out_ch,3,padding=1), nn.SiLU(), nn.Conv2d(out_ch, out_ch, 1, padding=0))
-        # self.side3 = nn.Sequential(nn.Conv2d(128,out_ch,3,padding=1), nn.SiLU(), nn.Conv2d(out_ch, out_ch, 1, padding=0))
-        # self.side4 = nn.Sequential(nn.Conv2d(256,out_ch,3,padding=1), nn.SiLU(), nn.Conv2d(out_ch, out_ch, 1, padding=0))
-        # self.side5 = nn.Sequential(nn.Conv2d(512,out_ch,3,padding=1), nn.SiLU(), nn.Conv2d(out_ch, out_ch, 1, padding=0))
-        # self.side6 = nn.Sequential(nn.Conv2d(512,out_ch,3,padding=1), nn.SiLU(), nn.Conv2d(out_ch, out_ch, 1, padding=0))
-
         self.side1 = nn.Conv2d(64,out_ch,3,padding=1, padding_mode=padding_mode)
         self.side2 = nn.Conv2d(64,out_ch,3,padding=1, padding_mode=padding_mode)
         self.side3 = nn.Conv2d(128,out_ch,3,padding=1, padding_mode=padding_mode)
         self.side4 = nn.Conv2d(256,out_ch,3,padding=1, padding_mode=padding_mode)
         self.side5 = nn.Conv2d(512,out_ch,3,padding=1, padding_mode=padding_mode)
         self.side6 = nn.Conv2d(512,out_ch,3,padding=1, padding_mode=padding_mode)
-        
-        # self.outconv = nn.Conv2d(6*out_ch,out_ch,3)
 
     def compute_loss_kl(self, preds, targets, dfs, fs, mode='MSE'):
 
@@ -562,26 +562,32 @@ class ISNetDIS(nn.Module):
 
         #stage 1
         hx1 = self.stage1(hxin)
+        hx1 = self.attn_s1(hx1)
         hx = self.pool12(hx1)
 
         #stage 2
         hx2 = self.stage2(hx)
+        hx2 = self.attn_s2(hx2)
         hx = self.pool23(hx2)
 
         #stage 3
         hx3 = self.stage3(hx)
+        hx3 = self.attn_s3(hx3)
         hx = self.pool34(hx3)
 
         #stage 4
         hx4 = self.stage4(hx)
+        hx4 = self.attn_s4(hx4)
         hx = self.pool45(hx4)
 
         #stage 5
         hx5 = self.stage5(hx)
+        hx5 = self.attn_s5(hx5)
         hx = self.pool56(hx5)
 
         #stage 6
         hx6 = self.stage6(hx)
+        hx6 = self.attn_s6(hx6)
         hx6up = _upsample_like(hx6,hx5)
 
         #-------------------- decoder --------------------
@@ -624,8 +630,6 @@ class ISNetDIS(nn.Module):
         d6 = self.side6(hx6)
         if self.enable_upscale:
             d6 = _upsample_like(d6,x)
-
-        # d0 = self.outconv(torch.cat((d1,d2,d3,d4,d5,d6), 1))
 
         # Denormilize only RGB channels from -1..1 to 0..2
         d1[:, :3] = d1[:, :3] + 1
