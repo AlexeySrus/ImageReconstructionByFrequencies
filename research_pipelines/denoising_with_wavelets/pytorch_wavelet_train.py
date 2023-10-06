@@ -148,8 +148,8 @@ class CustomTrainingPipeline(object):
         self.dwt = DWT_2D('haar')
         self.iwt = IDWT_2D('haar')
         self.model = self.model.to(device)
-        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.001, nesterov=True, momentum=0.9)
-        self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=0.002, weight_decay=1E-9)
+        self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.00001, nesterov=True, momentum=0.9, weight_decay=1E-9)
+        # self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.002)
 
         if load_path is not None:
             load_data = torch.load(load_path, map_location=self.device)
@@ -162,8 +162,8 @@ class CustomTrainingPipeline(object):
 
         self.images_criterion = torch.nn.MSELoss(size_average=True)
         # self.ssim_loss = SSIMLoss()
-        # self.hist_loss = HistLoss(image_size=self.image_shape[0], device=self.device)
-        self.hist_loss = None
+        self.hist_loss = HistLoss(image_size=self.image_shape[0], device=self.device)
+        # self.hist_loss = None
         self.ssim_loss = None
         self.wavelets_criterion = torch.nn.SmoothL1Loss(size_average=True)
         self.accuracy_measure = TorchPSNR().to(device)

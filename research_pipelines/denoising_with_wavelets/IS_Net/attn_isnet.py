@@ -502,7 +502,6 @@ class ISNetDIS(nn.Module):
         self.enable_upscale: bool = False
 
         self.conv_in = nn.Conv2d(in_ch,64,3,stride=2,padding=1, padding_mode=padding_mode)
-        self.pool_in = nn.MaxPool2d(2,stride=2,ceil_mode=True)
 
         self.stage1 = RSU7(64,32,64)
         self.attn_s1 = CBAM(64)
@@ -643,6 +642,8 @@ class ISNetDIS(nn.Module):
 
 
 if __name__ == '__main__':
+    import numpy as np
+
     model = ISNetDIS()
     inp = torch.rand(1, 3, 512, 512)
 
@@ -656,3 +657,7 @@ if __name__ == '__main__':
 
     for block_output, block_name in zip(out[1], ('hx{}d'.format(i) for i in range(1, 6 + 1))):
         print('Shape of {}: {}'.format(block_name, block_output.shape))
+
+    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
+    params = sum([np.prod(p.size()) for p in model_parameters])
+    print('Params: {} params'.format(params))

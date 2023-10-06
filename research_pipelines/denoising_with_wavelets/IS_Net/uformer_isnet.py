@@ -366,6 +366,7 @@ class ISNetDIS(nn.Module):
 
         self.conv_in = nn.Conv2d(in_ch,16,3,stride=2,padding=1, padding_mode=padding_mode)
 
+
         self.stage1 = Uformer(
             dim = 4,
             stages = 2,
@@ -443,7 +444,6 @@ class ISNetDIS(nn.Module):
         #stage 2
         hx2 = self.stage2(hx)
         hx = self.pool23(hx2)
-        self.pool_in = nn.MaxPool2d(2,stride=2,ceil_mode=True)
 
         #stage 3
         hx3 = self.stage3(hx)
@@ -495,5 +495,3 @@ if __name__ == '__main__':
     model_parameters = filter(lambda p: p.requires_grad, model.parameters())
     params = sum([np.prod(p.size()) for p in model_parameters])
     print('Params: {} params'.format(params))
-
-        self.pool_in = nn.MaxPool2d(2,stride=2,ceil_mode=True)
