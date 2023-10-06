@@ -162,7 +162,11 @@ class CustomTrainingPipeline(object):
 
         self.images_criterion = torch.nn.MSELoss(size_average=True)
         # self.ssim_loss = SSIMLoss()
-        self.hist_loss = HistLoss(image_size=self.image_shape[0], device=self.device)
+        self.hist_loss = [
+            HistLoss(image_size=self.image_shape[0] // (2 ** i), device=self.device) 
+            if i > 0 and i < 3 else None
+            for i in range(6)
+        ]
         # self.hist_loss = None
         self.ssim_loss = None
         self.wavelets_criterion = torch.nn.SmoothL1Loss(size_average=True)
@@ -194,7 +198,7 @@ class CustomTrainingPipeline(object):
                 _loss += self.wavelets_criterion(pred_wavelets_pyramid[i], gt_wavelets) * _loss_scale
 
                 if i < 3 and self.hist_loss is not None:
-                    _h_loss += self.hist_loss(pred_wavelets_pyramid[i][:, :3] / 2, gt_ll / 2) * _loss_scale
+                    _h_loss += self.hist_loss[i](pred_wavelets_pyramid[i][:, :3] / 2, gt_ll / 2) * _loss_scale
 
             _loss_scale *= factor
 
