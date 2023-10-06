@@ -90,7 +90,7 @@ class CustomTrainingPipeline(object):
             clear_images_path=train_data_paths[1],
             need_crop=True,
             window_size=self.image_shape[0],
-            optional_dataset_size=100000,
+            optional_dataset_size=25000,
             preload=preload_data
         )
         # self.train_synth_dataset = SyntheticNoiseDataset(
@@ -144,15 +144,16 @@ class CustomTrainingPipeline(object):
                 legend=['val']
             )
 
-        self.model = ISNetDIS(in_ch=3, out_ch=4 * 3)
+        self.model = ISNetDIS(in_ch=3, out_ch=4 * 3, image_ch=3)
         self.dwt = DWT_2D('haar')
         self.iwt = IDWT_2D('haar')
         self.model = self.model.to(device)
-        self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.00001, nesterov=True, momentum=0.9, weight_decay=1E-9)
-        # self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.002)
+        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.001, nesterov=True, momentum=0.9, weight_decay=1E-9)
+        self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.002)
 
         if load_path is not None:
             load_data = torch.load(load_path, map_location=self.device)
+
             self.model.load_state_dict(load_data['model'])
             self.optimizer.load_state_dict(load_data['optimizer'])
 
@@ -161,13 +162,16 @@ class CustomTrainingPipeline(object):
             )
 
         self.images_criterion = torch.nn.MSELoss(size_average=True)
-        # self.ssim_loss = SSIMLoss()
+
         self.hist_loss = [
-            HistLoss(image_size=self.image_shape[0] // (2 ** i), device=self.device) 
-            if i > 0 and i < 3 else None
-            for i in range(6)
+            HistLoss(image_size=self.image_shape[0] // (2 ** (i + 1)), device=self.device) 
+            if i < 3 else None
+            for i in range(5)
         ]
+
+        # self.ssim_loss = SSIMLoss()
         # self.hist_loss = None
+
         self.ssim_loss = None
         self.wavelets_criterion = torch.nn.SmoothL1Loss(size_average=True)
         self.accuracy_measure = TorchPSNR().to(device)
@@ -184,7 +188,7 @@ class CustomTrainingPipeline(object):
 
     def _compute_wavelets_loss(self, pred_wavelets_pyramid, gt_image, factor: float = 0.9):
         gt_d0_ll = gt_image
-        _loss = None
+        _loss = 0.0
         _h_loss = 0.0
         _loss_scale = 1.0
 
@@ -192,13 +196,10 @@ class CustomTrainingPipeline(object):
             gt_ll, gt_lh, gt_hl, gt_hh = self.dwt(gt_d0_ll)
             gt_wavelets = torch.cat((gt_ll, gt_lh, gt_hl, gt_hh), dim=1)
 
-            if i == 0:
-                _loss = self.wavelets_criterion(pred_wavelets_pyramid[i], gt_wavelets) * _loss_scale * 0.5
-            else:
-                _loss += self.wavelets_criterion(pred_wavelets_pyramid[i], gt_wavelets) * _loss_scale
+            _loss += self.wavelets_criterion(pred_wavelets_pyramid[i], gt_wavelets) * _loss_scale
 
-                if i < 3 and self.hist_loss is not None:
-                    _h_loss += self.hist_loss[i](pred_wavelets_pyramid[i][:, :3] / 2, gt_ll / 2) * _loss_scale
+            if i < 3 and self.hist_loss is not None:
+                _h_loss += self.hist_loss[i](pred_wavelets_pyramid[i][:, :3] / 2, gt_ll / 2) * _loss_scale
 
             _loss_scale *= factor
 
@@ -216,19 +217,21 @@ class CustomTrainingPipeline(object):
                 clear_image = _clear_image.to(self.device)
 
                 self.optimizer.zero_grad()
-                pred_wavelets_pyramid, _ = self.model(noisy_image)
-                pred_ll, pred_lh, pred_hl, pred_hh = torch.split(pred_wavelets_pyramid[0], 3, dim=1)
+                output, _ = self.model(noisy_image)
+                pred_image = output[0]
+                pred_wavelets_pyramid = output[1:]
+                # pred_ll, pred_lh, pred_hl, pred_hh = torch.split(pred_wavelets_pyramid[0], 3, dim=1)
 
-                restored_image = self.iwt(pred_ll, pred_lh, pred_hl, pred_hh)
+                # restored_image = self.iwt(pred_ll, pred_lh, pred_hl, pred_hh)
 
-                loss = self.images_criterion(restored_image, clear_image)
+                loss = self.images_criterion(pred_image, clear_image)
 
                 if self.ssim_loss is not None:
-                    loss = loss / 2 + self.ssim_loss(restored_image, clear_image) / 2
+                    loss = loss / 2 + self.ssim_loss(pred_image, clear_image) / 2
                     
                 wloss, hist_loss = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image)
 
-                total_loss = loss + wloss + hist_loss * 0.01
+                total_loss = loss + wloss * 0.1 + hist_loss * 0.01
 
                 total_loss.backward()
                 self.optimizer.step()
@@ -252,7 +255,7 @@ class CustomTrainingPipeline(object):
                             {
                                 'input_img': noisy_image,
                                 'input_wavelets': wavelets_inp,
-                                'pred_image': restored_image.detach(),
+                                'pred_image': pred_image.detach(),
                                 'pred_wavelets': wavelets_pred.detach(),
                                 'gt_wavelets': wavelets_gt,
                                 'gt_image': clear_image
@@ -278,7 +281,7 @@ class CustomTrainingPipeline(object):
 
                 with torch.no_grad():
                     restored_image = denoise_inference(
-                        tensor_img=noisy_image, model=self.model, iwt=self.iwt, window_size=self.image_shape[0], 
+                        tensor_img=noisy_image, model=self.model, window_size=self.image_shape[0], 
                         batch_size=self.batch_size, crop_size=self.image_shape[0] // 32
                     ).unsqueeze(0)
 
@@ -340,7 +343,9 @@ class CustomTrainingPipeline(object):
         self.model.eval()
         save_state = {
             'model': self.model.state_dict(),
-            'optimizer': self.optimizer.state_dict()
+            'optimizer': self.optimizer.state_dict(),
+            'acc': avg_acc_rate,
+            'epoch': epoch
         }
 
         torch.save(

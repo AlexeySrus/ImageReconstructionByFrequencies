@@ -1,65 +1,12 @@
 import torch
 import torch.nn as nn
-from torchvision import models
-import torch.nn.functional as F
 
 # From third_party directory of repo: https://github.com/changzy00/pytorch-attention
 from attention_mechanisms.cbam import CBAM
 
 
-padding_mode: str = 'zeros'
+padding_mode: str = 'reflect'
 
-bce_loss = nn.BCELoss(size_average=True)
-def muti_loss_fusion(preds, target):
-    loss0 = 0.0
-    loss = 0.0
-
-    for i in range(0,len(preds)):
-        # print("i: ", i, preds[i].shape)
-        if(preds[i].shape[2]!=target.shape[2] or preds[i].shape[3]!=target.shape[3]):
-            # tmp_target = _upsample_like(target,preds[i])
-            tmp_target = F.interpolate(target, size=preds[i].size()[2:], mode='bilinear', align_corners=True)
-            loss = loss + bce_loss(preds[i],tmp_target)
-        else:
-            loss = loss + bce_loss(preds[i],target)
-        if(i==0):
-            loss0 = loss
-    return loss0, loss
-
-fea_loss = nn.MSELoss(size_average=True)
-kl_loss = nn.KLDivLoss(size_average=True)
-l1_loss = nn.L1Loss(size_average=True)
-smooth_l1_loss = nn.SmoothL1Loss(size_average=True)
-def muti_loss_fusion_kl(preds, target, dfs, fs, mode='MSE'):
-    loss0 = 0.0
-    loss = 0.0
-
-    for i in range(0,len(preds)):
-        # print("i: ", i, preds[i].shape)
-        if(preds[i].shape[2]!=target.shape[2] or preds[i].shape[3]!=target.shape[3]):
-            # tmp_target = _upsample_like(target,preds[i])
-            tmp_target = F.interpolate(target, size=preds[i].size()[2:], mode='bilinear', align_corners=True)
-            loss = loss + bce_loss(preds[i],tmp_target)
-        else:
-            loss = loss + bce_loss(preds[i],target)
-        if(i==0):
-            loss0 = loss
-
-    for i in range(0,len(dfs)):
-        if(mode=='MSE'):
-            loss = loss + fea_loss(dfs[i],fs[i]) ### add the mse loss of features as additional constraints
-            # print("fea_loss: ", fea_loss(dfs[i],fs[i]).item())
-        elif(mode=='KL'):
-            loss = loss + kl_loss(F.log_softmax(dfs[i],dim=1),F.softmax(fs[i],dim=1))
-            # print("kl_loss: ", kl_loss(F.log_softmax(dfs[i],dim=1),F.softmax(fs[i],dim=1)).item())
-        elif(mode=='MAE'):
-            loss = loss + l1_loss(dfs[i],fs[i])
-            # print("ls_loss: ", l1_loss(dfs[i],fs[i]))
-        elif(mode=='SmoothL1'):
-            loss = loss + smooth_l1_loss(dfs[i],fs[i])
-            # print("SmoothL1: ", smooth_l1_loss(dfs[i],fs[i]).item())
-
-    return loss0, loss
 
 class REBNCONV(nn.Module):
     def __init__(self,in_ch=3,out_ch=3,dirate=1,stride=1):
@@ -76,10 +23,11 @@ class REBNCONV(nn.Module):
 
         return xout
 
+
 ## upsample tensor 'src' to have the same spatial size with tensor 'tar'
 def _upsample_like(src,tar):
 
-    src = F.upsample(src,size=tar.shape[2:],mode='bilinear')
+    src = nn.functional.interpolate(src, size=tar.shape[2:], mode='bilinear', align_corners=True)
 
     return src
 
@@ -165,7 +113,7 @@ class RSU7(nn.Module):
         hx1d = self.rebnconv1d(torch.cat((hx2dup,hx1),1))
 
         return hx1d + hxin
-
+    
 
 ### RSU-6 ###
 class RSU6(nn.Module):
@@ -403,105 +351,15 @@ class myrebnconv(nn.Module):
     def forward(self,x):
         return self.rl(self.bn(self.conv(x)))
 
-
-class ISNetGTEncoder(nn.Module):
-
-    def __init__(self,in_ch=1,out_ch=1):
-        super(ISNetGTEncoder,self).__init__()
-
-        self.conv_in = myrebnconv(in_ch,16,3,stride=2,padding=1) # nn.Conv2d(in_ch,64,3,stride=2,padding=1)
-
-        self.stage1 = RSU7(16,16,64)
-        self.pool12 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
-
-        self.stage2 = RSU6(64,16,64)
-        self.pool23 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
-
-        self.stage3 = RSU5(64,32,128)
-        self.pool34 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
-
-        self.stage4 = RSU4(128,32,256)
-        self.pool45 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
-
-        self.stage5 = RSU4F(256,64,512)
-        self.pool56 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
-
-        self.stage6 = RSU4F(512,64,512)
-
-
-        self.side1 = nn.Conv2d(64,out_ch,3,padding=1, padding_mode=padding_mode)
-        self.side2 = nn.Conv2d(64,out_ch,3,padding=1, padding_mode=padding_mode)
-        self.side3 = nn.Conv2d(128,out_ch,3,padding=1, padding_mode=padding_mode)
-        self.side4 = nn.Conv2d(256,out_ch,3,padding=1, padding_mode=padding_mode)
-        self.side5 = nn.Conv2d(512,out_ch,3,padding=1, padding_mode=padding_mode)
-        self.side6 = nn.Conv2d(512,out_ch,3,padding=1, padding_mode=padding_mode)
-
-    def compute_loss(self, preds, targets):
-
-        return muti_loss_fusion(preds,targets)
-
-    def forward(self,x):
-
-        hx = x
-
-        hxin = self.conv_in(hx)
-        # hx = self.pool_in(hxin)
-
-        #stage 1
-        hx1 = self.stage1(hxin)
-        hx = self.pool12(hx1)
-
-        #stage 2
-        hx2 = self.stage2(hx)
-        hx = self.pool23(hx2)
-
-        #stage 3
-        hx3 = self.stage3(hx)
-        hx = self.pool34(hx3)
-
-        #stage 4
-        hx4 = self.stage4(hx)
-        hx = self.pool45(hx4)
-
-        #stage 5
-        hx5 = self.stage5(hx)
-        hx = self.pool56(hx5)
-
-        #stage 6
-        hx6 = self.stage6(hx)
-
-
-        #side output
-        d1 = self.side1(hx1)
-        d1 = _upsample_like(d1,x)
-
-        d2 = self.side2(hx2)
-        d2 = _upsample_like(d2,x)
-
-        d3 = self.side3(hx3)
-        d3 = _upsample_like(d3,x)
-
-        d4 = self.side4(hx4)
-        d4 = _upsample_like(d4,x)
-
-        d5 = self.side5(hx5)
-        d5 = _upsample_like(d5,x)
-
-        d6 = self.side6(hx6)
-        d6 = _upsample_like(d6,x)
-
-        # d0 = self.outconv(torch.cat((d1,d2,d3,d4,d5,d6),1))
-
-        return [F.sigmoid(d1), F.sigmoid(d2), F.sigmoid(d3), F.sigmoid(d4), F.sigmoid(d5), F.sigmoid(d6)], [hx1,hx2,hx3,hx4,hx5,hx6]
-
+    
 class ISNetDIS(nn.Module):
 
-    def __init__(self, in_ch=3, out_ch=1):
+    def __init__(self, in_ch=3, out_ch=1, image_ch=3):
         super(ISNetDIS,self).__init__()
 
         self.enable_upscale: bool = False
 
-        self.conv_in = nn.Conv2d(in_ch,64,3,stride=2,padding=1, padding_mode=padding_mode)
+        self.conv_in = nn.Conv2d(in_ch,64,3,stride=1,padding=1, padding_mode=padding_mode)
 
         self.stage1 = RSU7(64,32,64)
         self.attn_s1 = CBAM(64)
@@ -533,22 +391,12 @@ class ISNetDIS(nn.Module):
         self.stage2d = RSU6(256,32,64)
         self.stage1d = RSU7(128,16,64)
 
-        self.side1 = nn.Conv2d(64,out_ch,3,padding=1, padding_mode=padding_mode)
+        self.side1 = nn.Conv2d(64,image_ch,3,padding=1, padding_mode=padding_mode)
         self.side2 = nn.Conv2d(64,out_ch,3,padding=1, padding_mode=padding_mode)
         self.side3 = nn.Conv2d(128,out_ch,3,padding=1, padding_mode=padding_mode)
         self.side4 = nn.Conv2d(256,out_ch,3,padding=1, padding_mode=padding_mode)
         self.side5 = nn.Conv2d(512,out_ch,3,padding=1, padding_mode=padding_mode)
         self.side6 = nn.Conv2d(512,out_ch,3,padding=1, padding_mode=padding_mode)
-
-    def compute_loss_kl(self, preds, targets, dfs, fs, mode='MSE'):
-
-        # return muti_loss_fusion(preds,targets)
-        return muti_loss_fusion_kl(preds, targets, dfs, fs, mode=mode)
-
-    def compute_loss(self, preds, targets):
-
-        # return muti_loss_fusion(preds,targets)
-        return muti_loss_fusion(preds, targets)
 
     def forward(self, x):
         # Normilize from 0..1 to -1..1
@@ -557,7 +405,7 @@ class ISNetDIS(nn.Module):
         hx = x
 
         hxin = self.conv_in(hx)
-        #hx = self.pool_in(hxin)
+        
 
         #stage 1
         hx1 = self.stage1(hxin)
@@ -607,31 +455,16 @@ class ISNetDIS(nn.Module):
 
         #side output
         d1 = self.side1(hx1d)
-        if self.enable_upscale:
-            d1 = _upsample_like(d1,x)
-
         d2 = self.side2(hx2d)
-        if self.enable_upscale:
-            d2 = _upsample_like(d2,x)
-
         d3 = self.side3(hx3d)
-        if self.enable_upscale:
-            d3 = _upsample_like(d3,x)
-
         d4 = self.side4(hx4d)
-        if self.enable_upscale:
-            d4 = _upsample_like(d4,x)
-
         d5 = self.side5(hx5d)
-        if self.enable_upscale:
-            d5 = _upsample_like(d5,x)
-
         d6 = self.side6(hx6)
-        if self.enable_upscale:
-            d6 = _upsample_like(d6,x)
 
-        # Denormilize only RGB channels from -1..1 to 0..2
-        d1[:, :3] = d1[:, :3] + 1
+        # Denormilize RGB channels of image from -1..1 to 0..1
+        d1[:, :3] = d1[:, :3] / 2 + 0.5
+
+        # Denormilize only RGB channels of Wavelets outputs from -1..1 to 0..2
         d2[:, :3] = d2[:, :3] + 1
         d3[:, :3] = d3[:, :3] + 1
         d4[:, :3] = d4[:, :3] + 1
@@ -655,8 +488,8 @@ if __name__ == '__main__':
 
     print()
 
-    for block_output, block_name in zip(out[1], ('hx{}d'.format(i) for i in range(1, 6 + 1))):
-        print('Shape of {}: {}'.format(block_name, block_output.shape))
+    # for block_output, block_name in zip(out[1], ('hx{}d'.format(i) for i in range(1, 6 + 1))):
+    #     print('Shape of {}: {}'.format(block_name, block_output.shape))
 
     model_parameters = filter(lambda p: p.requires_grad, model.parameters())
     params = sum([np.prod(p.size()) for p in model_parameters])
