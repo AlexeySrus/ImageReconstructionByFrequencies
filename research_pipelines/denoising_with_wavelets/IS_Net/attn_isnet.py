@@ -4,13 +4,15 @@ import torch.nn as nn
 # From third_party directory of repo: https://github.com/changzy00/pytorch-attention
 from attention_mechanisms.cbam import CBAM
 
+from DWT_IDWT.DWT_IDWT_layer import DWT_2D, IDWT_2D
+
 
 padding_mode: str = 'reflect'
 
 
 class REBNCONV(nn.Module):
-    def __init__(self,in_ch=3,out_ch=3,dirate=1,stride=1):
-        super(REBNCONV,self).__init__()
+    def __init__(self, in_ch=3, out_ch=3, dirate=1, stride=1):
+        super(REBNCONV, self).__init__()
 
         self.conv_s1 = nn.Conv2d(in_ch,out_ch,3,padding=1*dirate,dilation=1*dirate,stride=stride, padding_mode=padding_mode)
         self.bn_s1 = nn.BatchNorm2d(out_ch)
@@ -30,6 +32,21 @@ def _upsample_like(src,tar):
     src = nn.functional.interpolate(src, size=tar.shape[2:], mode='bilinear', align_corners=True)
 
     return src
+
+
+class UpscaleByWaveletes(nn.Module):
+    def __init__(self, in_ch: int, wavename: str = 'haar') -> None:
+        super().__init__()
+
+        self.iwt = IDWT_2D(wavename)
+
+        self.reparam_conv = nn.Conv2d(in_ch // 4, in_ch, 3, padding=1, padding_mode=padding_mode)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x_ll, x_lh, x_hl, x_hh = torch.split(x, x.size(1) // 4, dim=1)
+        out = self.iwt(x_ll, x_lh, x_hl, x_hh)
+        out = self.reparam_conv(out)
+        return out
 
 
 ### RSU-7 ###
@@ -391,6 +408,12 @@ class ISNetDIS(nn.Module):
         self.stage2d = RSU6(256,32,64)
         self.stage1d = RSU7(128,16,64)
 
+        self.up6 = UpscaleByWaveletes(512)
+        self.up5 = UpscaleByWaveletes(512)
+        self.up4 = UpscaleByWaveletes(256)
+        self.up3 = UpscaleByWaveletes(128)
+        self.up2 = UpscaleByWaveletes(64)
+
         self.side1 = nn.Conv2d(64,image_ch,3,padding=1, padding_mode=padding_mode)
         self.side2 = nn.Conv2d(64,out_ch,3,padding=1, padding_mode=padding_mode)
         self.side3 = nn.Conv2d(128,out_ch,3,padding=1, padding_mode=padding_mode)
@@ -405,7 +428,6 @@ class ISNetDIS(nn.Module):
         hx = x
 
         hxin = self.conv_in(hx)
-        
 
         #stage 1
         hx1 = self.stage1(hxin)
@@ -435,23 +457,27 @@ class ISNetDIS(nn.Module):
         #stage 6
         hx6 = self.stage6(hx)
         hx6 = self.attn_s6(hx6)
-        hx6up = _upsample_like(hx6,hx5)
+        hx6up = self.up6(hx6)
+        # hx6up = _upsample_like(hx6,hx5)
 
         #-------------------- decoder --------------------
         hx5d = self.stage5d(torch.cat((hx6up,hx5),1))
-        hx5dup = _upsample_like(hx5d,hx4)
+        hx5dup = self.up5(hx5d)
+        # hx5dup = _upsample_like(hx5d,hx4)
 
         hx4d = self.stage4d(torch.cat((hx5dup,hx4),1))
-        hx4dup = _upsample_like(hx4d,hx3)
+        hx4dup = self.up4(hx4d)
+        # hx4dup = _upsample_like(hx4d,hx3)
 
         hx3d = self.stage3d(torch.cat((hx4dup,hx3),1))
-        hx3dup = _upsample_like(hx3d,hx2)
+        hx3dup = self.up3(hx3d)
+        # hx3dup = _upsample_like(hx3d,hx2)
 
         hx2d = self.stage2d(torch.cat((hx3dup,hx2),1))
-        hx2dup = _upsample_like(hx2d,hx1)
+        hx2dup = self.up2(hx2d)
+        # hx2dup = _upsample_like(hx2d,hx1)
 
         hx1d = self.stage1d(torch.cat((hx2dup,hx1),1))
-
 
         #side output
         d1 = self.side1(hx1d)
@@ -477,8 +503,8 @@ class ISNetDIS(nn.Module):
 if __name__ == '__main__':
     import numpy as np
 
-    model = ISNetDIS()
-    inp = torch.rand(1, 3, 512, 512)
+    model = ISNetDIS().to('cuda')
+    inp = torch.rand(1, 3, 512, 512).to('cuda')
 
     with torch.no_grad():
         out = model(inp)
