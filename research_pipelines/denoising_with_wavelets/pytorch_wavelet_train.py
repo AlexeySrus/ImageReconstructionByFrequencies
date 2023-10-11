@@ -14,6 +14,7 @@ from PIL import Image
 import os
 from torchmetrics.image import PeakSignalNoiseRatio as TorchPSNR
 from pytorch_msssim import SSIM
+from piq import DISTS
 
 from dataloader import SeriesAndComputingClearDataset, PairedDenoiseDataset, SyntheticNoiseDataset
 from callbacks import VisImage, VisPlot
@@ -148,7 +149,7 @@ class CustomTrainingPipeline(object):
         self.dwt = DWT_2D('haar')
         self.iwt = IDWT_2D('haar')
         self.model = self.model.to(device)
-        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.001, nesterov=True, momentum=0.9, weight_decay=1E-9)
+        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.0001, nesterov=True, momentum=0.9, weight_decay=1E-9)
         self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.002)
 
         if load_path is not None:
@@ -169,11 +170,12 @@ class CustomTrainingPipeline(object):
             for i in range(5)
         ]
 
-        # self.ssim_loss = SSIMLoss()
+        self.perceptual_loss = DISTS(mean=[0, 0, 0], std=[1, 1, 1])
         # self.hist_loss = None
 
         self.ssim_loss = None
         self.wavelets_criterion = torch.nn.SmoothL1Loss(size_average=True)
+        # self.wavelets_criterion = torch.nn.MSELoss(size_average=True)
         self.accuracy_measure = TorchPSNR().to(device)
 
         self.scheduler = torch.optim.lr_scheduler.MultiStepLR(
@@ -197,6 +199,9 @@ class CustomTrainingPipeline(object):
             gt_wavelets = torch.cat((gt_ll, gt_lh, gt_hl, gt_hh), dim=1)
 
             _loss += self.wavelets_criterion(pred_wavelets_pyramid[i], gt_wavelets) * _loss_scale
+
+            # _loss += self.wavelets_criterion(pred_wavelets_pyramid[i][:, 3:], gt_wavelets[:, 3:]) * _loss_scale * 0.5
+            # _loss += self.images_criterion(pred_wavelets_pyramid[i][:, :3] / 2, gt_ll / 2) * _loss_scale * 0.5
 
             if i < 3 and self.hist_loss is not None:
                 _h_loss += self.hist_loss[i](pred_wavelets_pyramid[i][:, :3] / 2, gt_ll / 2) * _loss_scale
@@ -226,14 +231,15 @@ class CustomTrainingPipeline(object):
 
                 loss = self.images_criterion(pred_image, clear_image)
 
-                if self.ssim_loss is not None:
-                    loss = loss / 2 + self.ssim_loss(pred_image, clear_image) / 2
+                if self.perceptual_loss is not None:
+                    loss = loss / 2 + self.perceptual_loss(pred_image, clear_image)
                     
                 wloss, hist_loss = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image)
 
-                total_loss = loss + wloss * 0.1 + hist_loss * 0.01
+                total_loss = loss + wloss + hist_loss * 0.01
 
                 total_loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                 self.optimizer.step()
 
                 pbar.postfix = \
@@ -286,9 +292,6 @@ class CustomTrainingPipeline(object):
                     ).unsqueeze(0)
 
                     loss = self.images_criterion(restored_image, clear_image.unsqueeze(0))
-
-                    if self.ssim_loss is not None:
-                        loss = loss / 2 + self.ssim_loss(restored_image, clear_image) / 2
                     
                     avg_loss_rate += loss.item()
 
