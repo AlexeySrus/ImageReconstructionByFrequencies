@@ -1,5 +1,5 @@
+from typing import Optional
 import os
-
 import cv2
 import torch
 import random
@@ -326,9 +326,10 @@ class VisImage(VisImageForWavelets):
                  vis_step=1, scale=10):
         super().__init__(title, server, port, vis_step, scale)
 
-    def per_batch(self, args, label=1):
+    def per_batch(self, args, label=1, i: Optional[int] = None) -> Optional[int]:
         if self.n % self.step == 0:
-            i = random.randint(0, args['gt_image'].size(0) - 1)
+            if i is None:
+                i = random.randint(0, args['gt_image'].size(0) - 1)
 
             for win in self.windows.keys():
                 if win == label:
@@ -405,6 +406,66 @@ class VisImage(VisImageForWavelets):
         self.n += 1
         if self.n >= 1000000000:
             self.n = 0
+
+        return i
+
+    def per_epoch(self, args):
+        pass
+
+    def early_stopping(self, args):
+        pass
+
+    def add_window(self, label):
+        self.windows[label] = None
+
+
+class VisAttentionMaps(AbstractCallback):
+    def __init__(self, title, server='http://localhost', port=8080,
+                 vis_step=1, scale=10, maps_count: int = 6):
+        self.viz = Visdom(server=server, port=port)
+        self.title = title
+        for i in range(maps_count):
+            self.title += ' | SA {}'.format(i + 1)
+        self.windows = {1: None}
+        self.n = 0
+        self.step = vis_step
+        self.scale = scale
+
+        random.seed()
+
+    def per_batch(self, args, label=1, i: Optional[int] = None) -> Optional[int]:
+        if self.n % self.step == 0:
+            if i is None:
+                i = random.randint(0, args['sa_list'][0].size(0) - 1)
+
+            for win in self.windows.keys():
+                if win == label:
+                    # """
+                    # 'sa_list': sa_list
+                    # """
+                    sa_list = [sa[i] for sa in args['sa_list']]
+
+                    x = torch.cat(
+                        sa_list,
+                        dim=2
+                    )
+                    x = x.repeat(3, 1, 1)
+                    x = torch.clamp(x, 0, 1)
+
+                    self.windows[win] = self.viz.image(
+                        F.interpolate(
+                            x.unsqueeze(0),
+                            scale_factor=(self.scale, self.scale)
+                        ).squeeze(),
+                        win=self.windows[win],
+                        opts=dict(title=self.title)
+                    )
+
+        self.n += 1
+        if self.n >= 1000000000:
+            self.n = 0
+
+        return i
 
     def per_epoch(self, args):
         pass
