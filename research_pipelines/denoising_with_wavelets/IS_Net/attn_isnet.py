@@ -1,9 +1,7 @@
 import torch
 import torch.nn as nn
 
-# From third_party directory of repo: https://github.com/changzy00/pytorch-attention
-from attention_mechanisms.cbam import CBAM
-
+from IS_Net.cbam import CBAM
 from DWT_IDWT.DWT_IDWT_layer import DWT_2D, IDWT_2D
 
 
@@ -27,11 +25,26 @@ class REBNCONV(nn.Module):
 
 
 ## upsample tensor 'src' to have the same spatial size with tensor 'tar'
-def _upsample_like(src,tar):
+def _upsample_like(src, tar):
 
     src = nn.functional.interpolate(src, size=tar.shape[2:], mode='bilinear', align_corners=True)
 
     return src
+
+
+class DownscaleByWaveletes(nn.Module):
+    def __init__(self, in_ch: int, wavename: str = 'haar') -> None:
+        super().__init__()
+
+        self.dwt = DWT_2D(wavename)
+
+        self.reparam_conv = nn.Conv2d(in_ch * 4, in_ch, 3, padding=1, padding_mode=padding_mode)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x_ll, x_lh, x_hl, x_hh = self.dwt(x)
+        out = torch.cat((x_ll, x_lh, x_hl, x_hh), dim=1)
+        out = self.reparam_conv(out)
+        return out
 
 
 class UpscaleByWaveletes(nn.Module):
@@ -52,14 +65,17 @@ class UpscaleByWaveletes(nn.Module):
 ### RSU-7 ###
 class RSU7(nn.Module):
 
-    def __init__(self, in_ch=3, mid_ch=12, out_ch=3, img_size=512):
+    def __init__(self, in_ch=3, mid_ch=12, out_ch=3, img_size=512, use_attention: bool = False):
         super(RSU7,self).__init__()
+        self.use_attention = use_attention
 
         self.in_ch = in_ch
         self.mid_ch = mid_ch
         self.out_ch = out_ch
 
         self.rebnconvin = REBNCONV(in_ch,out_ch,dirate=1) ## 1 -> 1/2
+        if self.use_attention:
+            self.attention_layer = CBAM(out_ch)
 
         self.rebnconv1 = REBNCONV(out_ch,mid_ch,dirate=1)
         self.pool1 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
@@ -92,6 +108,10 @@ class RSU7(nn.Module):
 
         hx = x
         hxin = self.rebnconvin(hx)
+        if self.use_attention:
+            hxin, _, sa_hx = self.attention_layer(hxin)
+        else:
+            sa_hx = hxin
 
         hx1 = self.rebnconv1(hxin)
         hx = self.pool1(hx1)
@@ -129,16 +149,18 @@ class RSU7(nn.Module):
 
         hx1d = self.rebnconv1d(torch.cat((hx2dup,hx1),1))
 
-        return hx1d + hxin
+        return hx1d + hxin, sa_hx
     
 
 ### RSU-6 ###
 class RSU6(nn.Module):
 
-    def __init__(self, in_ch=3, mid_ch=12, out_ch=3):
+    def __init__(self, in_ch=3, mid_ch=12, out_ch=3, use_attention: bool = False):
         super(RSU6,self).__init__()
+        self.use_attention = use_attention
 
         self.rebnconvin = REBNCONV(in_ch,out_ch,dirate=1)
+        self.attention_layer = CBAM(out_ch)
 
         self.rebnconv1 = REBNCONV(out_ch,mid_ch,dirate=1)
         self.pool1 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
@@ -167,6 +189,10 @@ class RSU6(nn.Module):
         hx = x
 
         hxin = self.rebnconvin(hx)
+        if self.use_attention:
+            hxin, _, sa_hx = self.attention_layer(hxin)
+        else:
+            sa_hx = hxin
 
         hx1 = self.rebnconv1(hxin)
         hx = self.pool1(hx1)
@@ -199,15 +225,17 @@ class RSU6(nn.Module):
 
         hx1d = self.rebnconv1d(torch.cat((hx2dup,hx1),1))
 
-        return hx1d + hxin
+        return hx1d + hxin, sa_hx
 
 ### RSU-5 ###
 class RSU5(nn.Module):
 
-    def __init__(self, in_ch=3, mid_ch=12, out_ch=3):
+    def __init__(self, in_ch=3, mid_ch=12, out_ch=3, use_attention: bool = False):
         super(RSU5,self).__init__()
+        self.use_attention = use_attention
 
         self.rebnconvin = REBNCONV(in_ch,out_ch,dirate=1)
+        self.attention_layer = CBAM(out_ch)
 
         self.rebnconv1 = REBNCONV(out_ch,mid_ch,dirate=1)
         self.pool1 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
@@ -232,6 +260,10 @@ class RSU5(nn.Module):
         hx = x
 
         hxin = self.rebnconvin(hx)
+        if self.use_attention:
+            hxin, _, sa_hx = self.attention_layer(hxin)
+        else:
+            sa_hx = hxin
 
         hx1 = self.rebnconv1(hxin)
         hx = self.pool1(hx1)
@@ -257,15 +289,17 @@ class RSU5(nn.Module):
 
         hx1d = self.rebnconv1d(torch.cat((hx2dup,hx1),1))
 
-        return hx1d + hxin
+        return hx1d + hxin, sa_hx
 
 ### RSU-4 ###
 class RSU4(nn.Module):
 
-    def __init__(self, in_ch=3, mid_ch=12, out_ch=3):
+    def __init__(self, in_ch=3, mid_ch=12, out_ch=3, use_attention: bool = False):
         super(RSU4,self).__init__()
+        self.use_attention = use_attention
 
         self.rebnconvin = REBNCONV(in_ch,out_ch,dirate=1)
+        self.attention_layer = CBAM(out_ch)
 
         self.rebnconv1 = REBNCONV(out_ch,mid_ch,dirate=1)
         self.pool1 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
@@ -286,6 +320,10 @@ class RSU4(nn.Module):
         hx = x
 
         hxin = self.rebnconvin(hx)
+        if self.use_attention:
+            hxin, _, sa_hx = self.attention_layer(hxin)
+        else:
+            sa_hx = hxin
 
         hx1 = self.rebnconv1(hxin)
         hx = self.pool1(hx1)
@@ -305,15 +343,17 @@ class RSU4(nn.Module):
 
         hx1d = self.rebnconv1d(torch.cat((hx2dup,hx1),1))
 
-        return hx1d + hxin
+        return hx1d + hxin, sa_hx
 
 ### RSU-4F ###
 class RSU4F(nn.Module):
 
-    def __init__(self, in_ch=3, mid_ch=12, out_ch=3):
+    def __init__(self, in_ch=3, mid_ch=12, out_ch=3, use_attention: bool = False):
         super(RSU4F,self).__init__()
+        self.use_attention = use_attention
 
         self.rebnconvin = REBNCONV(in_ch,out_ch,dirate=1)
+        self.attention_layer = CBAM(out_ch)
 
         self.rebnconv1 = REBNCONV(out_ch,mid_ch,dirate=1)
         self.rebnconv2 = REBNCONV(mid_ch,mid_ch,dirate=2)
@@ -330,6 +370,10 @@ class RSU4F(nn.Module):
         hx = x
 
         hxin = self.rebnconvin(hx)
+        if self.use_attention:
+            hxin, _, sa_hx = self.attention_layer(hxin)
+        else:
+            sa_hx = hxin
 
         hx1 = self.rebnconv1(hxin)
         hx2 = self.rebnconv2(hx1)
@@ -341,7 +385,7 @@ class RSU4F(nn.Module):
         hx2d = self.rebnconv2d(torch.cat((hx3d,hx2),1))
         hx1d = self.rebnconv1d(torch.cat((hx2d,hx1),1))
 
-        return hx1d + hxin
+        return hx1d + hxin, sa_hx
 
 
 class myrebnconv(nn.Module):
@@ -378,28 +422,28 @@ class ISNetDIS(nn.Module):
 
         self.conv_in = nn.Conv2d(in_ch,64,3,stride=1,padding=1, padding_mode=padding_mode)
 
-        self.stage1 = RSU7(64,32,64)
-        self.attn_s1 = CBAM(64)
-        self.pool12 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
+        # self.attn_s1 = CBAM(64)
+        self.stage1 = RSU7(64,32,64, use_attention=True)
+        self.pool12 = DownscaleByWaveletes(64)
 
-        self.stage2 = RSU6(64,32,128)
-        self.attn_s2 = CBAM(128)
-        self.pool23 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
+        # self.attn_s2 = CBAM(64)
+        self.stage2 = RSU6(64,32,128, use_attention=True)
+        self.pool23 = DownscaleByWaveletes(128)
 
-        self.stage3 = RSU5(128,64,256)
-        self.attn_s3 = CBAM(256)
-        self.pool34 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
+        # self.attn_s3 = CBAM(128)
+        self.stage3 = RSU5(128,64,256, use_attention=True)
+        self.pool34 =  DownscaleByWaveletes(256)
 
-        self.stage4 = RSU4(256,128,512)
-        self.attn_s4 = CBAM(512)
-        self.pool45 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
+        # self.attn_s4 = CBAM(256)
+        self.stage4 = RSU4(256,128,512, use_attention=True)
+        self.pool45 = DownscaleByWaveletes(512)
 
-        self.stage5 = RSU4F(512,256,512)
-        self.attn_s5 = CBAM(512)
-        self.pool56 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
+        # self.attn_s5 = CBAM(512)
+        self.stage5 = RSU4F(512,256,512, use_attention=True)
+        self.pool56 = DownscaleByWaveletes(512)
 
-        self.stage6 = RSU4F(512,256,512)
-        self.attn_s6 = CBAM(512)
+        # self.attn_s6 = CBAM(512)
+        self.stage6 = RSU4F(512,256,512, use_attention=True)
 
         # decoder
         self.stage5d = RSU4F(1024,256,512)
@@ -430,54 +474,49 @@ class ISNetDIS(nn.Module):
         hxin = self.conv_in(hx)
 
         #stage 1
-        hx1 = self.stage1(hxin)
-        hx1 = self.attn_s1(hx1)
+        # hxin, ca_hx1, sa_hx1 = self.attn_s1(hxin)
+        hx1, sa_hx1 = self.stage1(hxin)
         hx = self.pool12(hx1)
 
         #stage 2
-        hx2 = self.stage2(hx)
-        hx2 = self.attn_s2(hx2)
+        # hx, ca_hx2, sa_hx2 = self.attn_s2(hx)
+        hx2, sa_hx2 = self.stage2(hx)
         hx = self.pool23(hx2)
 
         #stage 3
-        hx3 = self.stage3(hx)
-        hx3 = self.attn_s3(hx3)
+        # hx, ca_hx3, sa_hx3 = self.attn_s3(hx)
+        hx3, sa_hx3 = self.stage3(hx)
         hx = self.pool34(hx3)
 
         #stage 4
-        hx4 = self.stage4(hx)
-        hx4 = self.attn_s4(hx4)
+        # hx, ca_hx4, sa_hx4 = self.attn_s4(hx)
+        hx4, sa_hx4 = self.stage4(hx)
         hx = self.pool45(hx4)
 
         #stage 5
-        hx5 = self.stage5(hx)
-        hx5 = self.attn_s5(hx5)
+        # hx, ca_hx5, sa_hx5 = self.attn_s5(hx)
+        hx5, sa_hx5 = self.stage5(hx)
         hx = self.pool56(hx5)
 
         #stage 6
-        hx6 = self.stage6(hx)
-        hx6 = self.attn_s6(hx6)
+        # hx, ca_hx6, sa_hx6 = self.attn_s6(hx)
+        hx6, sa_hx6 = self.stage6(hx)
         hx6up = self.up6(hx6)
-        # hx6up = _upsample_like(hx6,hx5)
 
         #-------------------- decoder --------------------
-        hx5d = self.stage5d(torch.cat((hx6up,hx5),1))
+        hx5d, _ = self.stage5d(torch.cat((hx6up,hx5),1))
         hx5dup = self.up5(hx5d)
-        # hx5dup = _upsample_like(hx5d,hx4)
 
-        hx4d = self.stage4d(torch.cat((hx5dup,hx4),1))
+        hx4d, _ = self.stage4d(torch.cat((hx5dup,hx4),1))
         hx4dup = self.up4(hx4d)
-        # hx4dup = _upsample_like(hx4d,hx3)
 
-        hx3d = self.stage3d(torch.cat((hx4dup,hx3),1))
+        hx3d, _ = self.stage3d(torch.cat((hx4dup,hx3),1))
         hx3dup = self.up3(hx3d)
-        # hx3dup = _upsample_like(hx3d,hx2)
 
-        hx2d = self.stage2d(torch.cat((hx3dup,hx2),1))
+        hx2d, _ = self.stage2d(torch.cat((hx3dup,hx2),1))
         hx2dup = self.up2(hx2d)
-        # hx2dup = _upsample_like(hx2d,hx1)
 
-        hx1d = self.stage1d(torch.cat((hx2dup,hx1),1))
+        hx1d, _ = self.stage1d(torch.cat((hx2dup,hx1),1))
 
         #side output
         d1 = self.side1(hx1d)
@@ -497,14 +536,22 @@ class ISNetDIS(nn.Module):
         d5[:, :3] = d5[:, :3] + 1
         d6[:, :3] = d6[:, :3] + 1
 
-        return [d1, d2, d3, d4, d5, d6], [hx1d,hx2d,hx3d,hx4d,hx5d,hx6]
+        sa_hx2 = _upsample_like(sa_hx2, x)
+        sa_hx3 = _upsample_like(sa_hx3, x)
+        sa_hx4 = _upsample_like(sa_hx4, x)
+        sa_hx5 = _upsample_like(sa_hx5, x)
+        sa_hx6 = _upsample_like(sa_hx6, x)
+
+        return [d1, d2, d3, d4, d5, d6], [sa_hx1, sa_hx2, sa_hx3, sa_hx4, sa_hx5, sa_hx6]
 
 
 if __name__ == '__main__':
     import numpy as np
 
-    model = ISNetDIS().to('cuda')
-    inp = torch.rand(1, 3, 512, 512).to('cuda')
+    device = 'cpu'
+
+    model = ISNetDIS().to(device)
+    inp = torch.rand(1, 3, 512, 512).to(device)
 
     with torch.no_grad():
         out = model(inp)
@@ -514,8 +561,8 @@ if __name__ == '__main__':
 
     print()
 
-    # for block_output, block_name in zip(out[1], ('hx{}d'.format(i) for i in range(1, 6 + 1))):
-    #     print('Shape of {}: {}'.format(block_name, block_output.shape))
+    for block_output, block_name in zip(out[1], ('sa_hx{}d'.format(i) for i in range(1, 6 + 1))):
+        print('Shape of {}: {}'.format(block_name, block_output.shape))
 
     model_parameters = filter(lambda p: p.requires_grad, model.parameters())
     params = sum([np.prod(p.size()) for p in model_parameters])
