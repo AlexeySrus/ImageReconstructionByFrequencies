@@ -17,7 +17,7 @@ from pytorch_msssim import SSIM
 from piq import DISTS
 
 from dataloader import SeriesAndComputingClearDataset, PairedDenoiseDataset, SyntheticNoiseDataset
-from callbacks import VisImage, VisPlot
+from callbacks import VisImage, VisAttentionMaps, VisPlot
 from DWT_IDWT.DWT_IDWT_layer import DWT_2D, IDWT_2D
 from IS_Net.attn_isnet import ISNetDIS
 from utils.window_inference import denoise_inference
@@ -118,11 +118,19 @@ class CustomTrainingPipeline(object):
             num_workers=train_workers
         )
 
-        self.batch_visualizer = None if visdom_port is None else VisImage(
+        self.images_visualizer = None if visdom_port is None else VisImage(
             title='Denoising',
             port=visdom_port,
             vis_step=150,
             scale=1
+        )
+
+        self.attention_visualizer = None if visdom_port is None else VisAttentionMaps(
+            title='Denoising',
+            port=visdom_port,
+            vis_step=150,
+            scale=0.5,
+            maps_count=6
         )
 
         self.plot_visualizer = None if visdom_port is None else VisPlot(
@@ -149,7 +157,7 @@ class CustomTrainingPipeline(object):
         self.dwt = DWT_2D('haar')
         self.iwt = IDWT_2D('haar')
         self.model = self.model.to(device)
-        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.0001, nesterov=True, momentum=0.9, weight_decay=1E-9)
+        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.001, nesterov=True, momentum=0.9, weight_decay=1E-9)
         self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.002)
 
         if load_path is not None:
@@ -162,7 +170,7 @@ class CustomTrainingPipeline(object):
                 'Model and optimizer have been loaded by path: {}'.format(load_path)
             )
 
-        self.images_criterion = torch.nn.MSELoss(size_average=True)
+        self.images_criterion = torch.nn.MSELoss(reduce=True)
 
         self.hist_loss = [
             HistLoss(image_size=self.image_shape[0] // (2 ** (i + 1)), device=self.device) 
@@ -174,8 +182,8 @@ class CustomTrainingPipeline(object):
         # self.hist_loss = None
 
         self.ssim_loss = None
-        self.wavelets_criterion = torch.nn.SmoothL1Loss(size_average=True)
-        # self.wavelets_criterion = torch.nn.MSELoss(size_average=True)
+        self.wavelets_criterion = torch.nn.SmoothL1Loss(reduce=True)
+        # self.wavelets_criterion = torch.nn.MSELoss()
         self.accuracy_measure = TorchPSNR().to(device)
 
         self.scheduler = torch.optim.lr_scheduler.MultiStepLR(
@@ -222,7 +230,7 @@ class CustomTrainingPipeline(object):
                 clear_image = _clear_image.to(self.device)
 
                 self.optimizer.zero_grad()
-                output, _ = self.model(noisy_image)
+                output, spatial_attention_maps = self.model(noisy_image)
                 pred_image = output[0]
                 pred_wavelets_pyramid = output[1:]
                 # pred_ll, pred_lh, pred_hl, pred_hh = torch.split(pred_wavelets_pyramid[0], 3, dim=1)
@@ -252,12 +260,13 @@ class CustomTrainingPipeline(object):
                     )
                 avg_epoch_loss += loss.item() / len(self.train_dataloader)
 
-                if self.batch_visualizer is not None:
+                if self.images_visualizer is not None:
                     wavelets_pred = pred_wavelets_pyramid[0].detach()
                     with torch.no_grad():
                         wavelets_gt = self.dwt(clear_image)
                         wavelets_inp = self.dwt(noisy_image)
-                        self.batch_visualizer.per_batch(
+
+                        vis_idx = self.images_visualizer.per_batch(
                             {
                                 'input_img': noisy_image,
                                 'input_wavelets': wavelets_inp,
@@ -266,6 +275,13 @@ class CustomTrainingPipeline(object):
                                 'gt_wavelets': wavelets_gt,
                                 'gt_image': clear_image
                             }
+                        )
+
+                        self.attention_visualizer.per_batch(
+                            {
+                                'sa_list': spatial_attention_maps
+                            },
+                            i=vis_idx
                         )
 
                 pbar.update(1)
@@ -292,6 +308,9 @@ class CustomTrainingPipeline(object):
                     ).unsqueeze(0)
 
                     loss = self.images_criterion(restored_image, clear_image.unsqueeze(0))
+
+                    if self.perceptual_loss is not None:
+                        loss = loss / 2 + self.perceptual_loss(restored_image, clear_image.unsqueeze(0))
                     
                     avg_loss_rate += loss.item()
 
