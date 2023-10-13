@@ -421,9 +421,10 @@ class ISNetDIS(nn.Module):
         self.enable_upscale: bool = False
 
         self.conv_in = nn.Conv2d(in_ch,64,3,stride=1,padding=1, padding_mode=padding_mode)
+        self.init_attention_layer = CBAM(64)
 
         # self.attn_s1 = CBAM(64)
-        self.stage1 = RSU7(64,32,64, use_attention=True)
+        self.stage1 = RSU7(64,32,64, use_attention=False)
         self.pool12 = DownscaleByWaveletes(64)
 
         # self.attn_s2 = CBAM(64)
@@ -474,32 +475,27 @@ class ISNetDIS(nn.Module):
         hxin = self.conv_in(hx)
 
         #stage 1
-        # hxin, ca_hx1, sa_hx1 = self.attn_s1(hxin)
-        hx1, sa_hx1 = self.stage1(hxin)
+        hxin, ca_hx1, sa_hx1 = self.init_attention_layer(hxin)
+        hx1, _ = self.stage1(hxin)
         hx = self.pool12(hx1)
 
         #stage 2
-        # hx, ca_hx2, sa_hx2 = self.attn_s2(hx)
         hx2, sa_hx2 = self.stage2(hx)
         hx = self.pool23(hx2)
 
         #stage 3
-        # hx, ca_hx3, sa_hx3 = self.attn_s3(hx)
         hx3, sa_hx3 = self.stage3(hx)
         hx = self.pool34(hx3)
 
         #stage 4
-        # hx, ca_hx4, sa_hx4 = self.attn_s4(hx)
         hx4, sa_hx4 = self.stage4(hx)
         hx = self.pool45(hx4)
 
         #stage 5
-        # hx, ca_hx5, sa_hx5 = self.attn_s5(hx)
         hx5, sa_hx5 = self.stage5(hx)
         hx = self.pool56(hx5)
 
         #stage 6
-        # hx, ca_hx6, sa_hx6 = self.attn_s6(hx)
         hx6, sa_hx6 = self.stage6(hx)
         hx6up = self.up6(hx6)
 
