@@ -453,7 +453,7 @@ class ISNetDIS(nn.Module):
         self.pool56 = DownscaleByWaveletes(512)
 
         # self.attn_s6 = CBAM(512)
-        self.stage6 = RSU4F(512,256,512, use_attention=False)
+        self.stage6 = RSU4F(512,256,512, use_attention=True)
 
         # decoder
         self.stage5d = RSU4F(1024,256,512, use_attention=True)
