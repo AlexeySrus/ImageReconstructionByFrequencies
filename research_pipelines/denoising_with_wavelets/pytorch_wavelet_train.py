@@ -157,8 +157,8 @@ class CustomTrainingPipeline(object):
         self.dwt = DWT_2D('haar')
         self.iwt = IDWT_2D('haar')
         self.model = self.model.to(device)
-        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.001, nesterov=True, momentum=0.9, weight_decay=1E-9)
-        self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.002)
+        self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.001, nesterov=True, momentum=0.9, weight_decay=1E-9)
+        # self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.002)
 
         if load_path is not None:
             load_data = torch.load(load_path, map_location=self.device)
@@ -207,9 +207,6 @@ class CustomTrainingPipeline(object):
             gt_wavelets = torch.cat((gt_ll, gt_lh, gt_hl, gt_hh), dim=1)
 
             _loss += self.wavelets_criterion(pred_wavelets_pyramid[i], gt_wavelets) * _loss_scale
-
-            # _loss += self.wavelets_criterion(pred_wavelets_pyramid[i][:, 3:], gt_wavelets[:, 3:]) * _loss_scale * 0.5
-            # _loss += self.images_criterion(pred_wavelets_pyramid[i][:, :3] / 2, gt_ll / 2) * _loss_scale * 0.5
 
             if i < 3 and self.hist_loss is not None:
                 _h_loss += self.hist_loss[i](pred_wavelets_pyramid[i][:, :3] / 2, gt_ll / 2) * _loss_scale
