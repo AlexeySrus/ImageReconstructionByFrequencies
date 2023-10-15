@@ -75,7 +75,7 @@ class RSU7(nn.Module):
 
         self.rebnconvin = REBNCONV(in_ch,out_ch,dirate=1) ## 1 -> 1/2
         if self.use_attention:
-            self.attention_layer = CBAM(out_ch)
+            self.attention_layer = CBAM(in_ch)
 
         self.rebnconv1 = REBNCONV(out_ch,mid_ch,dirate=1)
         self.pool1 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
@@ -107,11 +107,13 @@ class RSU7(nn.Module):
         b, c, h, w = x.shape
 
         hx = x
-        hxin = self.rebnconvin(hx)
+
         if self.use_attention:
-            hxin, _, sa_hx = self.attention_layer(hxin)
+            hx, _, sa_hx = self.attention_layer(hx)
         else:
-            sa_hx = hxin
+            sa_hx = hx
+
+        hxin = self.rebnconvin(hx)
 
         hx1 = self.rebnconv1(hxin)
         hx = self.pool1(hx1)
@@ -160,7 +162,8 @@ class RSU6(nn.Module):
         self.use_attention = use_attention
 
         self.rebnconvin = REBNCONV(in_ch,out_ch,dirate=1)
-        self.attention_layer = CBAM(out_ch)
+        if self.use_attention:
+            self.attention_layer = CBAM(in_ch)
 
         self.rebnconv1 = REBNCONV(out_ch,mid_ch,dirate=1)
         self.pool1 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
@@ -188,11 +191,12 @@ class RSU6(nn.Module):
 
         hx = x
 
-        hxin = self.rebnconvin(hx)
         if self.use_attention:
-            hxin, _, sa_hx = self.attention_layer(hxin)
+            hx, _, sa_hx = self.attention_layer(hx)
         else:
-            sa_hx = hxin
+            sa_hx = hx
+
+        hxin = self.rebnconvin(hx)
 
         hx1 = self.rebnconv1(hxin)
         hx = self.pool1(hx1)
@@ -235,7 +239,8 @@ class RSU5(nn.Module):
         self.use_attention = use_attention
 
         self.rebnconvin = REBNCONV(in_ch,out_ch,dirate=1)
-        self.attention_layer = CBAM(out_ch)
+        if self.use_attention:
+            self.attention_layer = CBAM(in_ch)
 
         self.rebnconv1 = REBNCONV(out_ch,mid_ch,dirate=1)
         self.pool1 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
@@ -259,11 +264,12 @@ class RSU5(nn.Module):
 
         hx = x
 
-        hxin = self.rebnconvin(hx)
         if self.use_attention:
-            hxin, _, sa_hx = self.attention_layer(hxin)
+            hx, _, sa_hx = self.attention_layer(hx)
         else:
-            sa_hx = hxin
+            sa_hx = hx
+
+        hxin = self.rebnconvin(hx)
 
         hx1 = self.rebnconv1(hxin)
         hx = self.pool1(hx1)
@@ -299,7 +305,8 @@ class RSU4(nn.Module):
         self.use_attention = use_attention
 
         self.rebnconvin = REBNCONV(in_ch,out_ch,dirate=1)
-        self.attention_layer = CBAM(out_ch)
+        if self.use_attention:
+            self.attention_layer = CBAM(in_ch)
 
         self.rebnconv1 = REBNCONV(out_ch,mid_ch,dirate=1)
         self.pool1 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
@@ -319,11 +326,12 @@ class RSU4(nn.Module):
 
         hx = x
 
-        hxin = self.rebnconvin(hx)
         if self.use_attention:
-            hxin, _, sa_hx = self.attention_layer(hxin)
+            hx, _, sa_hx = self.attention_layer(hx)
         else:
-            sa_hx = hxin
+            sa_hx = hx
+
+        hxin = self.rebnconvin(hx)
 
         hx1 = self.rebnconv1(hxin)
         hx = self.pool1(hx1)
@@ -353,7 +361,8 @@ class RSU4F(nn.Module):
         self.use_attention = use_attention
 
         self.rebnconvin = REBNCONV(in_ch,out_ch,dirate=1)
-        self.attention_layer = CBAM(out_ch)
+        if self.use_attention:
+            self.attention_layer = CBAM(in_ch)
 
         self.rebnconv1 = REBNCONV(out_ch,mid_ch,dirate=1)
         self.rebnconv2 = REBNCONV(mid_ch,mid_ch,dirate=2)
@@ -369,11 +378,12 @@ class RSU4F(nn.Module):
 
         hx = x
 
-        hxin = self.rebnconvin(hx)
         if self.use_attention:
-            hxin, _, sa_hx = self.attention_layer(hxin)
+            hx, _, sa_hx = self.attention_layer(hx)
         else:
-            sa_hx = hxin
+            sa_hx = hx
+
+        hxin = self.rebnconvin(hx)
 
         hx1 = self.rebnconv1(hxin)
         hx2 = self.rebnconv2(hx1)
@@ -423,34 +433,34 @@ class ISNetDIS(nn.Module):
         self.conv_in = nn.Conv2d(in_ch,64,3,stride=1,padding=1, padding_mode=padding_mode)
 
         # self.attn_s1 = CBAM(64)
-        self.stage1 = RSU7(64,32,64, use_attention=True)
+        self.stage1 = RSU7(64,32,64, use_attention=False)
         self.pool12 = DownscaleByWaveletes(64)
 
         # self.attn_s2 = CBAM(64)
-        self.stage2 = RSU6(64,32,128, use_attention=True)
+        self.stage2 = RSU6(64,32,128, use_attention=False)
         self.pool23 = DownscaleByWaveletes(128)
 
         # self.attn_s3 = CBAM(128)
-        self.stage3 = RSU5(128,64,256, use_attention=True)
+        self.stage3 = RSU5(128,64,256, use_attention=False)
         self.pool34 =  DownscaleByWaveletes(256)
 
         # self.attn_s4 = CBAM(256)
-        self.stage4 = RSU4(256,128,512, use_attention=True)
+        self.stage4 = RSU4(256,128,512, use_attention=False)
         self.pool45 = DownscaleByWaveletes(512)
 
         # self.attn_s5 = CBAM(512)
-        self.stage5 = RSU4F(512,256,512, use_attention=True)
+        self.stage5 = RSU4F(512,256,512, use_attention=False)
         self.pool56 = DownscaleByWaveletes(512)
 
         # self.attn_s6 = CBAM(512)
-        self.stage6 = RSU4F(512,256,512, use_attention=True)
+        self.stage6 = RSU4F(512,256,512, use_attention=False)
 
         # decoder
-        self.stage5d = RSU4F(1024,256,512)
-        self.stage4d = RSU4(1024,128,256)
-        self.stage3d = RSU5(512,64,128)
-        self.stage2d = RSU6(256,32,64)
-        self.stage1d = RSU7(128,16,64)
+        self.stage5d = RSU4F(1024,256,512, use_attention=True)
+        self.stage4d = RSU4(1024,128,256, use_attention=True)
+        self.stage3d = RSU5(512,64,128, use_attention=True)
+        self.stage2d = RSU6(256,32,64, use_attention=True)
+        self.stage1d = RSU7(128,16,64, use_attention=True)
 
         self.up6 = UpscaleByWaveletes(512)
         self.up5 = UpscaleByWaveletes(512)
@@ -474,23 +484,23 @@ class ISNetDIS(nn.Module):
         hxin = self.conv_in(hx)
 
         #stage 1
-        hx1, sa_hx1 = self.stage1(hxin)
+        hx1, _ = self.stage1(hxin)
         hx = self.pool12(hx1)
 
         #stage 2
-        hx2, sa_hx2 = self.stage2(hx)
+        hx2, _ = self.stage2(hx)
         hx = self.pool23(hx2)
 
         #stage 3
-        hx3, sa_hx3 = self.stage3(hx)
+        hx3, _ = self.stage3(hx)
         hx = self.pool34(hx3)
 
         #stage 4
-        hx4, sa_hx4 = self.stage4(hx)
+        hx4, _ = self.stage4(hx)
         hx = self.pool45(hx4)
 
         #stage 5
-        hx5, sa_hx5 = self.stage5(hx)
+        hx5, _ = self.stage5(hx)
         hx = self.pool56(hx5)
 
         #stage 6
@@ -498,19 +508,19 @@ class ISNetDIS(nn.Module):
         hx6up = self.up6(hx6)
 
         #-------------------- decoder --------------------
-        hx5d, _ = self.stage5d(torch.cat((hx6up,hx5),1))
+        hx5d, sa_hx5 = self.stage5d(torch.cat((hx6up,hx5),1))
         hx5dup = self.up5(hx5d)
 
-        hx4d, _ = self.stage4d(torch.cat((hx5dup,hx4),1))
+        hx4d, sa_hx4 = self.stage4d(torch.cat((hx5dup,hx4),1))
         hx4dup = self.up4(hx4d)
 
-        hx3d, _ = self.stage3d(torch.cat((hx4dup,hx3),1))
+        hx3d, sa_hx3 = self.stage3d(torch.cat((hx4dup,hx3),1))
         hx3dup = self.up3(hx3d)
 
-        hx2d, _ = self.stage2d(torch.cat((hx3dup,hx2),1))
+        hx2d, sa_hx2 = self.stage2d(torch.cat((hx3dup,hx2),1))
         hx2dup = self.up2(hx2d)
 
-        hx1d, _ = self.stage1d(torch.cat((hx2dup,hx1),1))
+        hx1d, sa_hx1 = self.stage1d(torch.cat((hx2dup,hx1),1))
 
         #side output
         d1 = self.side1(hx1d)
