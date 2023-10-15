@@ -3,7 +3,7 @@ from argparse import ArgumentParser, Namespace
 
 import cv2
 import numpy as np
-from typing import Tuple
+from typing import Tuple, Optional
 import tqdm
 import torch
 from torch.utils import data
@@ -33,9 +33,9 @@ class CustomTrainingPipeline(object):
     def __init__(self,
                  train_data_paths: Tuple[str, str],
                  val_data_paths: Tuple[str, str],
-                 synth_data_paths: str,
+                 synth_data_paths: Optional[str],
                  experiment_folder: str,
-                 load_path: str = None,
+                 load_path: Optional[str] = None,
                  visdom_port: int = 9000,
                  batch_size: int = 32,
                  epochs: int = 200,
@@ -44,20 +44,27 @@ class CustomTrainingPipeline(object):
                  device: str = 'cuda',
                  image_size: int = 512,
                  train_workers: int = 0,
-                 preload_data: bool = False):
+                 preload_data: bool = False,
+                 lr_steps: int = 4):
         """
-        Train model
+        Train U-Net denoising model
+
         Args:
-            data_tar_path: Path to training data tar archive
-            val_split: Validation part rate
-            experiment_folder: Path to folder with checkpoints and experiments data
-            load_path: Path to model weights to load
-            visdom_port: Port of visualization
-            batch_size: Training batch size
-            epochs: Count of epoch
-            stop_criteria: criteria to stop of training process
-            device: Target device to train
-            image_size: Input image size
+            train_data_paths (Tuple[str, str]): Pair of paths to noisy images and clear images
+            val_data_paths (Tuple[str, str]): Pair of paths to noisy images and clear images
+            synth_data_paths (str, optional): Deprecated parameter, need set as None
+            experiment_folder (str): Path to folder with checkpoints and experiments data
+            load_path (str, optional): Path to model weights to load. Defaults to None.
+            visdom_port (int, optional): Port of visualization. Defaults to 9000.
+            batch_size (int, optional): Training batch size. Defaults to 32.
+            epochs (int, optional): Count of epoch. Defaults to 200.
+            resume_epoch (int, optional): Epoch number to resume training. Defaults to 1.
+            stop_criteria (float, optional): Criteria to stop of training process. Defaults to 1E-7.
+            device (str, optional): Target device to train. Defaults to 'cuda'.
+            image_size (int, optional): Input image size. Defaults to 512.
+            train_workers (int, optional): Count of parallel dataloaders. Defaults to 0.
+            preload_data (bool, optional): Load training and validation data to RAM. Defaults to False.
+            lr_steps (int, optional): Count of uniformed LR steps. Defaults to 4.
         """
         self.device = device
         self.experiment_folder = experiment_folder
@@ -186,10 +193,15 @@ class CustomTrainingPipeline(object):
         # self.wavelets_criterion = torch.nn.MSELoss()
         self.accuracy_measure = TorchPSNR().to(device)
 
+        _lr_steps = lr_steps + 1
+        lr_milestones = [
+            int(i * (epochs / _lr_steps))
+            for i in range(1, _lr_steps)
+        ]
         self.scheduler = torch.optim.lr_scheduler.MultiStepLR(
             self.optimizer,
-            milestones=[epochs // 5, epochs // 2, 2 * epochs // 3],
-            gamma=0.5
+            milestones=lr_milestones,
+            gamma=0.1
         )
 
     def get_lr(self):
@@ -434,6 +446,10 @@ def parse_args() -> Namespace:
         help='Training batch size.'
     )
     parser.add_argument(
+        '--lr_milestones', type=int, required=False, default=3,
+        help='Count or learning rate scheduler milestones.'
+    )
+    parser.add_argument(
         '--preload_datasets', action='store_true',
         help='Load images from datasaets into memory.'
     )
@@ -464,7 +480,8 @@ if __name__ == '__main__':
         batch_size=args.batch_size,
         image_size=args.image_size,
         train_workers=args.njobs,
-        preload_data=args.preload_datasets
+        preload_data=args.preload_datasets,
+        lr_steps=args.lr_milestones
     ).fit()
 
     exit(0)
