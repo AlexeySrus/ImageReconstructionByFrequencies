@@ -67,3 +67,23 @@ python3 pytorch_wavelet_train.py \
     --exp $PATH_TO_EXPERIMENT_FOLDER/ \
     --preload_datasets
 ```
+
+### Визулизация коэффициентов вейвлет-преобразований
+Для отрисовки матриц с коэффициентами ДВП подготовлен следующий скрипт:
+`research_pipelines/denoising_with_wavelets/scripts/plot_wavelets_pyramid.py`
+```shell
+usage: plot_wavelets_pyramid.py [-h] -m MODEL [-i IMAGE] [-o OUTPUT] [-g GAMMA_CORRECTION]
+
+Plot wavelets
+
+options:
+  -h, --help            show this help message and exit
+  -m MODEL, --model MODEL
+                        Path to model checkpoint file
+  -i IMAGE, --image IMAGE
+                        Path to input image (optional)
+  -o OUTPUT, --output OUTPUT
+                        Path to folder with output visualizations (optional)
+  -g GAMMA_CORRECTION, --gamma_correction GAMMA_CORRECTION
+                        Coefficient to adjust gamma of wavelets coefficients visualization (optional)
+```
