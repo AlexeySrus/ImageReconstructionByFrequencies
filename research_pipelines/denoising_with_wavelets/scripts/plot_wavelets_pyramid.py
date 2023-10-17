@@ -153,32 +153,21 @@ if __name__ == '__main__':
 
         final_vis_grid.append(vis_img)
 
+    for i in range(len(final_vis_grid)):
+        final_vis_grid[i] = add_alpha_channel(final_vis_grid[i])
+        w = final_vis_grid[i].shape[1]
 
-    
-
-    final_vis_grid_1 = np.concatenate(final_vis_grid[:2], axis=1)
-    final_vis_grid_2 = np.concatenate(final_vis_grid[2:4], axis=1)
-
-    final_vis_grid_1 = add_alpha_channel(final_vis_grid_1)
-    final_vis_grid_2 = add_alpha_channel(final_vis_grid_2)
-
-    final_vis_grid_1 = np.pad(
-        final_vis_grid_1, 
-        ((0, 200), (0, 0), (0, 0)), 
-        mode='constant', constant_values=255
-    )
-    final_vis_grid_2 = np.pad(
-        final_vis_grid_2, 
-        ((0, 200), (0, 0), (0, 0)), 
-        mode='constant', constant_values=255
-    )
-
-    final_vis_grid_1[final_vis_grid[0].shape[0]:, :, 3] = 0
-    final_vis_grid_2[final_vis_grid[0].shape[0]:, :, 3] = 0
+        if i < len(final_vis_grid) - 1:
+            final_vis_grid[i] = np.pad(
+                final_vis_grid[i], 
+                ((0, 0), (0, 50), (0, 0)), 
+                mode='constant', constant_values=255
+            )
+            final_vis_grid[i][:, w:, 3] = 0
 
     final_vis_grid = np.concatenate(
-        (final_vis_grid_1, final_vis_grid_2),
-        axis=0
+        final_vis_grid[:4],
+        axis=1
     )
 
     cv2.imwrite(
