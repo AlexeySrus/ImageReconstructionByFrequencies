@@ -45,7 +45,8 @@ class CustomTrainingPipeline(object):
                  image_size: int = 512,
                  train_workers: int = 0,
                  preload_data: bool = False,
-                 lr_steps: int = 4):
+                 lr_steps: int = 4,
+                 no_load_optim: bool = False):
         """
         Train U-Net denoising model
 
@@ -65,6 +66,7 @@ class CustomTrainingPipeline(object):
             train_workers (int, optional): Count of parallel dataloaders. Defaults to 0.
             preload_data (bool, optional): Load training and validation data to RAM. Defaults to False.
             lr_steps (int, optional): Count of uniformed LR steps. Defaults to 4.
+            no_load_optim (bool, optional): Disable load optimizer from checkpoint. Defaults to False.
         """
         self.device = device
         self.experiment_folder = experiment_folder
@@ -164,18 +166,22 @@ class CustomTrainingPipeline(object):
         self.dwt = DWT_2D('haar')
         self.iwt = IDWT_2D('haar')
         self.model = self.model.to(device)
-        self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.001, nesterov=True, momentum=0.9, weight_decay=1E-9)
-        # self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.002)
+        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.001, nesterov=True, momentum=0.9, weight_decay=1E-9)
+        self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.002)
 
         if load_path is not None:
             load_data = torch.load(load_path, map_location=self.device)
 
             self.model.load_state_dict(load_data['model'])
-            self.optimizer.load_state_dict(load_data['optimizer'])
-
             print(
-                'Model and optimizer have been loaded by path: {}'.format(load_path)
+                'Model has been loaded by path: {}'.format(load_path)
             )
+
+            if not no_load_optim:
+                self.optimizer.load_state_dict(load_data['optimizer'])
+                print(
+                    'Optimizer has been loaded by path: {}'.format(load_path)
+                )
 
         self.images_criterion = torch.nn.MSELoss(reduce=True)
 
@@ -202,7 +208,8 @@ class CustomTrainingPipeline(object):
         self.scheduler = torch.optim.lr_scheduler.MultiStepLR(
             self.optimizer,
             milestones=lr_milestones,
-            gamma=0.1
+            gamma=0.1,
+            verbose=True
         )
 
     def get_lr(self):
@@ -454,6 +461,10 @@ def parse_args() -> Namespace:
         '--preload_datasets', action='store_true',
         help='Load images from datasaets into memory.'
     )
+    parser.add_argument(
+        '--no_load_optim', action='store_true',
+        help='Disable optimizer parameters loading from checkpoint.'
+    )
     return parser.parse_args()
 
 
@@ -482,7 +493,8 @@ if __name__ == '__main__':
         image_size=args.image_size,
         train_workers=args.njobs,
         preload_data=args.preload_datasets,
-        lr_steps=args.lr_milestones
+        lr_steps=args.lr_milestones,
+        no_load_optim=args.no_load_optim
     ).fit()
 
     exit(0)
