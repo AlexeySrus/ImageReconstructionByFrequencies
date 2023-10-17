@@ -397,7 +397,8 @@ class VisImage(VisImageForWavelets):
                     self.windows[win] = self.viz.image(
                         F.interpolate(
                             x.unsqueeze(0),
-                            scale_factor=(self.scale, self.scale)
+                            scale_factor=(self.scale, self.scale),
+                            mode='area'
                         ).squeeze(),
                         win=self.windows[win],
                         opts=dict(title=self.title)
