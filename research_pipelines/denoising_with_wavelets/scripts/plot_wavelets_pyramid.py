@@ -66,6 +66,12 @@ def build_wavelets_visualization(wavelets_parts: Tuple[np.ndarray, np.ndarray, n
     return res
 
 
+def add_alpha_channel(image: np.ndarray) -> np.ndarray:
+    a_channel = np.ones((*image.shape[:2], 1), dtype=image.dtype) * 255
+    res = np.concatenate((image, a_channel), axis=2)
+    return res
+
+
 if __name__ == '__main__':
     args = parse_args()
 
@@ -148,7 +154,33 @@ if __name__ == '__main__':
         final_vis_grid.append(vis_img)
 
 
-    final_vis_grid = np.concatenate(final_vis_grid, axis=1)
+    
+
+    final_vis_grid_1 = np.concatenate(final_vis_grid[:2], axis=1)
+    final_vis_grid_2 = np.concatenate(final_vis_grid[2:4], axis=1)
+
+    final_vis_grid_1 = add_alpha_channel(final_vis_grid_1)
+    final_vis_grid_2 = add_alpha_channel(final_vis_grid_2)
+
+    final_vis_grid_1 = np.pad(
+        final_vis_grid_1, 
+        ((0, 200), (0, 0), (0, 0)), 
+        mode='constant', constant_values=255
+    )
+    final_vis_grid_2 = np.pad(
+        final_vis_grid_2, 
+        ((0, 200), (0, 0), (0, 0)), 
+        mode='constant', constant_values=255
+    )
+
+    final_vis_grid_1[final_vis_grid[0].shape[0]:, :, 3] = 0
+    final_vis_grid_2[final_vis_grid[0].shape[0]:, :, 3] = 0
+
+    final_vis_grid = np.concatenate(
+        (final_vis_grid_1, final_vis_grid_2),
+        axis=0
+    )
+
     cv2.imwrite(
         os.path.join(output_folder, 'final_grid.png'),
         final_vis_grid
