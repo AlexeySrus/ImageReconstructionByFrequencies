@@ -170,12 +170,14 @@ if __name__ == '__main__':
         axis=1
     )
 
+    h = final_vis_grid.shape[0]
+
     final_vis_grid = np.pad(
         final_vis_grid, 
         ((0, 100), (0, 0), (0, 0)), 
         mode='constant', constant_values=255
     )
-    final_vis_grid[final_vis_grid[0].shape[0]:, :, 3] = 0
+    final_vis_grid[h:, :, 3] = 0
 
     cv2.imwrite(
         os.path.join(output_folder, 'final_grid.png'),
