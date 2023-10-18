@@ -77,8 +77,7 @@ if __name__ == '__main__':
         with torch.no_grad():
             restored_image = denoise_inference(
                 tensor_img=input_tensor, model=model, window_size=imgsz, 
-                batch_size=4, crop_size=imgsz // 32, use_tta=True,
-                device=device
+                batch_size=4, crop_size=imgsz // 32, use_tta=True
             )
 
         input_tensor = input_tensor.to('cpu')
