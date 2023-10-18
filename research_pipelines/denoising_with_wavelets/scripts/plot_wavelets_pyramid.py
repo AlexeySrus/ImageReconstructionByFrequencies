@@ -81,7 +81,7 @@ if __name__ == '__main__':
     load_data = torch.load(load_path, map_location='cpu')
     model.load_state_dict(load_data['model'])
 
-    print('Best PSNR: {:.2f}'.format(load_data['acc']))
+    print('Best torchmetric PSNR: {:.2f}'.format(load_data['acc']))
 
     if args.output is None:
         output_folder = os.path.join(CURRENT_PATH, '../../../materials/results/')
@@ -165,7 +165,7 @@ if __name__ == '__main__':
         final_vis_grid[i][:, w:, 3] = 0
 
     final_vis_grid = np.concatenate(
-        final_vis_grid[:4],
+        final_vis_grid[:4],last
         axis=1
     )
 

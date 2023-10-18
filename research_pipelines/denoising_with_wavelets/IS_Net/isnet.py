@@ -639,6 +639,7 @@ class ISNetDIS(nn.Module):
 
 
 if __name__ == '__main__':
+    import numpy as np
     model = ISNetDIS()
     inp = torch.rand(1, 3, 512, 512)
 
@@ -652,3 +653,7 @@ if __name__ == '__main__':
 
     for block_output, block_name in zip(out[1], ('hx{}d'.format(i) for i in range(1, 6 + 1))):
         print('Shape of {}: {}'.format(block_name, block_output.shape))
+
+    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
+    params = sum([np.prod(p.size()) for p in model_parameters])
+    print('Params: {} params'.format(params))
