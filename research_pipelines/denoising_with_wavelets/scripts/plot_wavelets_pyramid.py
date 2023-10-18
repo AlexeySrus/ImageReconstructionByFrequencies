@@ -130,25 +130,25 @@ if __name__ == '__main__':
 
         cv2.imwrite(
             os.path.join(output_folder, 'LL_{}.png'.format(wavelets_level + 1)),
-            ll
+            cv2.cvtColor(ll, cv2.COLOR_RGB2BGR)
         )
         cv2.imwrite(
             os.path.join(output_folder, 'LH_{}.png'.format(wavelets_level + 1)),
-            lh
+            cv2.cvtColor(lh, cv2.COLOR_RGB2BGR)
         )
         cv2.imwrite(
             os.path.join(output_folder, 'HL_{}.png'.format(wavelets_level + 1)),
-            hl
+            cv2.cvtColor(hl, cv2.COLOR_RGB2BGR)
         )
         cv2.imwrite(
             os.path.join(output_folder, 'HH_{}.png'.format(wavelets_level + 1)),
-            hh
+            cv2.cvtColor(hh, cv2.COLOR_RGB2BGR)
         )
 
         vis_img = build_wavelets_visualization((ll, lh, hl, hh))
         cv2.imwrite(
             os.path.join(output_folder, 'full_{}.png'.format(wavelets_level + 1)),
-            vis_img
+            cv2.cvtColor(vis_img, cv2.COLOR_RGB2BGR)
         )
 
         final_vis_grid.append(vis_img)
@@ -177,9 +177,9 @@ if __name__ == '__main__':
         mode='constant', constant_values=255
     )
     final_vis_grid[h:, :, 3] = 0
-    final_vis_grid = final_vis_grid[:, :-50]
+    final_vis_grid = final_vis_grid[:, :-50, :]
 
     cv2.imwrite(
         os.path.join(output_folder, 'final_grid.png'),
-        final_vis_grid
+        cv2.cvtColor(final_vis_grid, cv2.COLOR_RGBA2BGRA)
     )
