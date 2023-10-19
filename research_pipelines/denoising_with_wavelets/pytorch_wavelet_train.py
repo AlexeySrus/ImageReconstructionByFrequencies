@@ -19,9 +19,10 @@ from piq import DISTS
 from dataloader import SeriesAndComputingClearDataset, PairedDenoiseDataset, SyntheticNoiseDataset
 from callbacks import VisImage, VisAttentionMaps, VisPlot
 from DWT_IDWT.DWT_IDWT_layer import DWT_2D, IDWT_2D
-from IS_Net.attn_isnet import ISNetDIS
+from IS_Net.wt_attn_isnet import ISNetWT
 from utils.window_inference import denoise_inference
 from utils.hist_loss import HistLoss
+from pytorch_optimizer import AdaSmooth
 
 
 class SSIMLoss(SSIM):
@@ -162,55 +163,58 @@ class CustomTrainingPipeline(object):
                 legend=['val']
             )
 
-        self.model = ISNetDIS(in_ch=3, out_ch=4 * 3, image_ch=3)
+        self.model = ISNetWT(in_ch=3, out_ch=4 * 3, image_ch=3)
         self.dwt = DWT_2D('haar')
         self.iwt = IDWT_2D('haar')
         self.model = self.model.to(device)
-        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.001, nesterov=True, momentum=0.9, weight_decay=1E-9)
-        self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.002)
+        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=0.001)
+        self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001)
 
         if load_path is not None:
             load_data = torch.load(load_path, map_location=self.device)
 
             self.model.load_state_dict(load_data['model'])
             print(
-                'Model has been loaded by path: {}'.format(load_path)
+                '#' * 5 + ' Model has been loaded by path: {} '.format(load_path) +  '#' * 5
             )
 
             if not no_load_optim:
                 self.optimizer.load_state_dict(load_data['optimizer'])
                 print(
-                    'Optimizer has been loaded by path: {}'.format(load_path)
+                    '#' * 5 + 'Optimizer has been loaded by path: {}'.format(load_path) + '#' * 5
                 )
 
-        self.images_criterion = torch.nn.MSELoss(reduce=True)
+        self.images_criterion = torch.nn.MSELoss()
 
-        self.hist_loss = [
-            HistLoss(image_size=self.image_shape[0] // (2 ** (i + 1)), device=self.device) 
-            if i < 3 else None
-            for i in range(5)
-        ]
+        # self.hist_loss = [
+        #     HistLoss(image_size=self.image_shape[0] // (2 ** (i + 1)), device=self.device) 
+        #     if i < 3 else None
+        #     for i in range(5)
+        # ]
 
-        self.perceptual_loss = DISTS(mean=[0, 0, 0], std=[1, 1, 1])
-        # self.hist_loss = None
+        # self.perceptual_loss = DISTS()
+        self.perceptual_loss = None
+        self.hist_loss = None
 
-        self.ssim_loss = None
-        self.wavelets_criterion = torch.nn.SmoothL1Loss(reduce=True)
-        # self.wavelets_criterion = torch.nn.MSELoss()
+        # self.ssim_loss = None
+        self.wavelets_criterion = torch.nn.L1Loss()
         self.accuracy_measure = TorchPSNR().to(device)
 
-        _lr_steps = lr_steps + 1
-        lr_milestones = [
-            int(i * (epochs / _lr_steps))
-            for i in range(1, _lr_steps)
-        ]
-        print('Leaning rate milestone epochs: {}'.format(lr_milestones))
-        self.scheduler = torch.optim.lr_scheduler.MultiStepLR(
-            self.optimizer,
-            milestones=lr_milestones,
-            gamma=0.1,
-            verbose=True
-        )
+        if lr_steps > 0:
+            _lr_steps = lr_steps + 1
+            lr_milestones = [
+                int(i * (epochs / _lr_steps))
+                for i in range(1, _lr_steps)
+            ]
+            print('Leaning rate milestone epochs: {}'.format(lr_milestones))
+            self.scheduler = torch.optim.lr_scheduler.MultiStepLR(
+                self.optimizer,
+                milestones=lr_milestones,
+                gamma=0.1,
+                verbose=True
+            )
+        else:
+            self.scheduler = None
 
     def get_lr(self):
         for param_group in self.optimizer.param_groups:
@@ -237,6 +241,17 @@ class CustomTrainingPipeline(object):
 
         return _loss, _h_loss
 
+    def _compute_deep_iwt_loss(self, pred_wavelets_pyramid, gt_image):
+        composed_image = pred_wavelets_pyramid[-1][:, :3]
+
+        for i in range(len(pred_wavelets_pyramid) - 1, -1, -1):
+            _, lh, hl, hh = torch.split(pred_wavelets_pyramid[i], 3, dim=1)
+            composed_image = self.iwt(composed_image, lh, hl, hh) * 2
+
+        _loss = self.images_criterion(composed_image, gt_image)
+
+        return _loss
+
     def _train_step(self, epoch) -> float:
         self.model.train()
         avg_epoch_loss = 0
@@ -250,9 +265,6 @@ class CustomTrainingPipeline(object):
                 output, spatial_attention_maps = self.model(noisy_image)
                 pred_image = output[0]
                 pred_wavelets_pyramid = output[1:]
-                # pred_ll, pred_lh, pred_hl, pred_hh = torch.split(pred_wavelets_pyramid[0], 3, dim=1)
-
-                # restored_image = self.iwt(pred_ll, pred_lh, pred_hl, pred_hh)
 
                 loss = self.images_criterion(pred_image, clear_image)
 
@@ -260,11 +272,13 @@ class CustomTrainingPipeline(object):
                     loss = loss / 2 + self.perceptual_loss(pred_image, clear_image)
                     
                 wloss, hist_loss = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image)
+                deep_wavelets_loss = self._compute_deep_iwt_loss(pred_wavelets_pyramid, clear_image)
+                wloss += deep_wavelets_loss
 
                 total_loss = loss + wloss + hist_loss * 0.01
 
                 total_loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 2.0)
                 self.optimizer.step()
 
                 pbar.postfix = \
@@ -350,7 +364,8 @@ class CustomTrainingPipeline(object):
             avg_acc_rate /= test_len
             avg_loss_rate /= test_len
 
-        self.scheduler.step()
+        if self.scheduler is not None:
+            self.scheduler.step()
 
         return avg_loss_rate, avg_acc_rate
 
@@ -410,7 +425,7 @@ class CustomTrainingPipeline(object):
             self._plot_values(epoch_num, epoch_train_loss, val_loss, val_acc)
             self._save_best_checkpoint(epoch_num, val_acc)
 
-            if self._check_stop_criteria():
+            if self.scheduler is not None and self._check_stop_criteria():
                 break
 
 

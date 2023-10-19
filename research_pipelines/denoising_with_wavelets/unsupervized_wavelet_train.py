@@ -19,7 +19,7 @@ from piq import DISTS
 from dataloader import SeriesAndComputingClearDataset, PairedDenoiseDataset, SyntheticNoiseDataset
 from callbacks import VisImage, VisAttentionMaps, VisPlot
 from DWT_IDWT.DWT_IDWT_layer import DWT_2D, IDWT_2D
-from IS_Net.unsupervized_wt_attn_isnet import ISNetWT
+from IS_Net.unsupervized_attn_isnet import ISNetDIS
 from utils.window_inference import denoise_inference
 from utils.hist_loss import HistLoss
 from pytorch_optimizer import AdaSmooth
@@ -163,12 +163,12 @@ class CustomTrainingPipeline(object):
                 legend=['val']
             )
 
-        self.model = ISNetWT(in_ch=3, out_ch=4 * 3, image_ch=3)
+        self.model = ISNetDIS(in_ch=3, out_ch=4 * 3, image_ch=3)
         self.dwt = DWT_2D('haar')
         self.iwt = IDWT_2D('haar')
         self.model = self.model.to(device)
         # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=0.001)
-        self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001)
+        self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.01, weight_decay=0.001)
 
         if load_path is not None:
             load_data = torch.load(load_path, map_location=self.device)
@@ -191,10 +191,11 @@ class CustomTrainingPipeline(object):
         #     if i < 3 else None
         #     for i in range(5)
         # ]
+        self.hist_loss = HistLoss(image_size=128, device=self.device) 
 
         # self.perceptual_loss = DISTS()
         self.perceptual_loss = None
-        self.hist_loss = None
+        # self.hist_loss = None
 
         # self.ssim_loss = None
         self.wavelets_criterion = torch.nn.SmoothL1Loss()
@@ -220,7 +221,7 @@ class CustomTrainingPipeline(object):
         for param_group in self.optimizer.param_groups:
             return param_group['lr']
 
-    def _compute_wavelets_loss(self, pred_wavelets_pyramid, gt_image, factor: float = 0.9):
+    def _compute_histogram_loss(self, pred_wavelets_pyramid, gt_image, factor: float = 0.9):
         gt_d0_ll = gt_image
         _h_loss = 0.0
         _loss_scale = 1.0
@@ -237,6 +238,24 @@ class CustomTrainingPipeline(object):
 
         return _h_loss
 
+    def _compute_wavelets_loss(self, pred_wavelets_pyramid, gt_image, factor: float = 0.9):
+        gt_d0_ll = gt_image
+        _w_loss = 0.0
+        _loss_scale = 1.0
+
+        for i in range(len(pred_wavelets_pyramid)):
+            gt_ll, gt_lh, gt_hl, gt_hh = self.dwt(gt_d0_ll)
+            gt_w = torch.cat((gt_ll, gt_lh, gt_hl, gt_hh), dim=1)
+
+            if i >= 3:
+                _w_loss += self.wavelets_criterion(pred_wavelets_pyramid[i], gt_w) * _loss_scale
+
+            _loss_scale *= factor
+
+            gt_d0_ll = gt_ll / 2.0
+
+        return _w_loss
+
     def _compute_deep_iwt_loss(self, pred_wavelets_pyramid, gt_image):
         composed_image = pred_wavelets_pyramid[-1][:, :3]
 
@@ -250,7 +269,7 @@ class CustomTrainingPipeline(object):
 
             composed_image = self.iwt(composed_image, lh, hl, hh) * 2
 
-        _loss += self.images_criterion(composed_image, gt_image)
+        _loss += self.images_criterion(composed_image / 2, gt_image)
 
         return _loss
 
@@ -261,18 +280,19 @@ class CustomTrainingPipeline(object):
         with tqdm.tqdm(total=len(self.train_dataloader)) as pbar:
             for _noisy_image, _clear_image in self.train_dataloader:
                 noisy_image = _noisy_image.to(self.device)
-                clear_image = _clear_image.to(self.device)
 
                 self.optimizer.zero_grad()
                 output, spatial_attention_maps = self.model(noisy_image)
                 pred_image = output[0]
                 pred_wavelets_pyramid = output[1:]
                     
-                # hist_loss = self._compute_wavelets_loss(pred_wavelets_pyramid, pred_image)
+                #  hist_loss = self._compute_histogram_loss(pred_wavelets_pyramid, noisy_image)
+                h_loss = self.hist_loss(pred_image, noisy_image)
                 wloss = self._compute_deep_iwt_loss(pred_wavelets_pyramid, pred_image)
-                hist_loss = 0
+                wloss += self._compute_wavelets_loss(pred_wavelets_pyramid, noisy_image)
+                # h_loss = 0
 
-                total_loss = wloss
+                total_loss = wloss + h_loss
 
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 2.0)
@@ -283,11 +303,12 @@ class CustomTrainingPipeline(object):
                         epoch,
                         self.epochs,
                         wloss.item(),
-                        hist_loss.item() if self.hist_loss is not None else hist_loss
+                        h_loss.item() if self.hist_loss is not None else h_loss
                     )
                 avg_epoch_loss += total_loss.item() / len(self.train_dataloader)
 
                 if self.images_visualizer is not None:
+                    clear_image = _clear_image.to(self.device)
                     wavelets_pred = pred_wavelets_pyramid[0].detach()
                     with torch.no_grad():
                         wavelets_gt = self.dwt(clear_image)
