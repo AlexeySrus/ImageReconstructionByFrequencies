@@ -70,6 +70,26 @@ python3 pytorch_wavelet_train.py \
     --preload_datasets
 ```
 
+##### Запуск валидации
+Скрипт запускается из директории `research_pipelines/denoising_with_wavelets/`.
+Валидация запускается следующим скриптом:
+```shell
+usage: evaluate_model.py [-h] -m MODEL -f FOLDER [-o OUTPUT]
+
+Plot wavelets
+
+options:
+  -h, --help            show this help message and exit
+  -m MODEL, --model MODEL
+                        Path to model checkpoint file
+  -f FOLDER, --folder FOLDER
+                        Path to folder with images
+  -o OUTPUT, --output OUTPUT
+                        Path to folder with output visualizations (optional)
+```
+Предобученную модель можно скачать по [следующей ссылке](https://disk.yandex.ru/d/Psf0BS5BK2jvrw "Yandex Disk").
+
+
 ### Визулизация коэффициентов вейвлет-преобразований
 Для отрисовки матриц с коэффициентами ДВП подготовлен следующий скрипт:
 `research_pipelines/denoising_with_wavelets/scripts/plot_wavelets_pyramid.py`
@@ -88,4 +108,9 @@ options:
                         Path to folder with output visualizations (optional)
   -g GAMMA_CORRECTION, --gamma_correction GAMMA_CORRECTION
                         Coefficient to adjust gamma of wavelets coefficients visualization (optional)
+```
+
+Замечание: перед запуском python скриптов может понадобиться добавить следующую переменную окружения:
+```shell
+export PYTHONPATH=./
 ```
