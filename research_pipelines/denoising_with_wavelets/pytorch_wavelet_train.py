@@ -192,8 +192,8 @@ class CustomTrainingPipeline(object):
         #     for i in range(5)
         # ]
 
-        # self.perceptual_loss = DISTS()
-        self.perceptual_loss = None
+        self.perceptual_loss = DISTS()
+        # self.perceptual_loss = None
         self.hist_loss = None
 
         # self.ssim_loss = None
@@ -269,7 +269,7 @@ class CustomTrainingPipeline(object):
                 loss = self.images_criterion(pred_image, clear_image)
 
                 if self.perceptual_loss is not None:
-                    loss = loss / 2 + self.perceptual_loss(pred_image, clear_image)
+                    loss = loss + self.perceptual_loss(pred_image, clear_image)
                     
                 wloss, hist_loss = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image)
 
@@ -339,7 +339,7 @@ class CustomTrainingPipeline(object):
                     loss = self.images_criterion(restored_image, clear_image.unsqueeze(0))
 
                     if self.perceptual_loss is not None:
-                        loss = loss / 2 + self.perceptual_loss(restored_image, clear_image.unsqueeze(0))
+                        loss = loss + self.perceptual_loss(restored_image, clear_image.unsqueeze(0))
                     
                     avg_loss_rate += loss.item()
 
