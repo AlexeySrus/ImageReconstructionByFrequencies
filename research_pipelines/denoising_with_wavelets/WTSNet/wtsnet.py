@@ -244,7 +244,7 @@ class WTSNet(nn.Module):
         df_hd2 = self.hight_freq_c2(df_hd2)
         hf2 -= df_hd2
 
-        pred_ll1 = self.iwt2(pred_ll2 * 2, hf2) * 2
+        pred_ll1 = self.iwt2(pred_ll2, hf2) * 2
         t1_wf, _ = self.low_freq_to_wavelets_u1(pred_ll1)
         df_hd1, sa1 = self.hight_freq_u1(
             torch.cat((t1_wf, hf1), dim=1)
