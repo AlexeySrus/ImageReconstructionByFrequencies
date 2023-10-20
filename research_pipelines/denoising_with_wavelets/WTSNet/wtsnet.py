@@ -81,8 +81,10 @@ class FeaturesDownsample(nn.Module):
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
         self.conv1 = ConvModule(in_ch, in_ch * 2, 3)
+        self.bn1 = nn.BatchNorm2d(in_ch * 2)
         self.act1 = nn.Mish(inplace=True)
         self.conv2 = ConvModule(in_ch * 2, out_ch, 3)
+        self.bn2 = nn.BatchNorm2d(out_ch)
 
         self.down_bneck = nn.Conv2d(
             in_channels=in_ch,
@@ -93,13 +95,15 @@ class FeaturesDownsample(nn.Module):
         )
 
         self.act_final = nn.Mish(inplace=True)
-        self.pool = nn.MaxPool2d(2, 2)
+        self.pool = nn.AvgPool2d(2, 2)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         hx = x
         y = self.conv1(x)
+        y = self.bn1(y)
         y = self.act1(y)
         y = self.conv2(y)
+        y = self.bn2(y)
 
         hx = self.down_bneck(hx)
 
@@ -112,8 +116,10 @@ class FeaturesProcessing(nn.Module):
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
         self.conv1 = ConvModule(in_ch, in_ch * 2, 3)
+        self.bn1 = nn.BatchNorm2d(in_ch * 2)
         self.act1 = nn.Mish(inplace=True)
         self.conv2 = ConvModule(in_ch * 2, out_ch, 3)
+        self.bn2 = nn.BatchNorm2d(out_ch)
 
         self.down_bneck = nn.Conv2d(
             in_channels=in_ch,
@@ -128,8 +134,10 @@ class FeaturesProcessing(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         hx = x
         y = self.conv1(x)
+        y = self.bn1(y)
         y = self.act1(y)
         y = self.conv2(y)
+        y = self.bn2(y)
 
         hx = self.down_bneck(hx)
 
