@@ -196,6 +196,7 @@ class CustomTrainingPipeline(object):
         self.perceptual_loss = DISTS()
         # self.perceptual_loss = None
         self.hist_loss = None
+        self.final_hist_loss = HistLoss(image_size=128, device=self.device)
 
         # self.ssim_loss = None
         self.wavelets_criterion = torch.nn.L1Loss()
@@ -270,11 +271,12 @@ class CustomTrainingPipeline(object):
                 loss = self.images_criterion(pred_image, clear_image)
 
                 if self.perceptual_loss is not None:
-                    loss = loss + self.perceptual_loss(pred_image, clear_image)
+                    loss = loss / 2 + self.perceptual_loss(pred_image, clear_image) / 2
                     
-                wloss, hist_loss = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image)
+                wloss, _ = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image)
+                hist_loss = self.final_hist_loss(pred_image, clear_image)
 
-                total_loss = loss + wloss + hist_loss * 0.01
+                total_loss = loss + wloss + hist_loss * 0.1
 
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 2.0)
@@ -340,7 +342,7 @@ class CustomTrainingPipeline(object):
                     loss = self.images_criterion(restored_image, clear_image.unsqueeze(0))
 
                     if self.perceptual_loss is not None:
-                        loss = loss + self.perceptual_loss(restored_image, clear_image.unsqueeze(0))
+                        loss = loss / 2 + self.perceptual_loss(restored_image, clear_image.unsqueeze(0)) / 2
                     
                     avg_loss_rate += loss.item()
 
