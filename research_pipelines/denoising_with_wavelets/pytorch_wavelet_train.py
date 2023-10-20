@@ -182,7 +182,7 @@ class CustomTrainingPipeline(object):
             if not no_load_optim:
                 self.optimizer.load_state_dict(load_data['optimizer'])
                 print(
-                    '#' * 5 + 'Optimizer has been loaded by path: {}'.format(load_path) + '#' * 5
+                    '#' * 5 + ' Optimizer has been loaded by path: {} '.format(load_path) + '#' * 5
                 )
 
         self.images_criterion = torch.nn.MSELoss()
