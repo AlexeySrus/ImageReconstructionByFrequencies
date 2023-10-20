@@ -10,6 +10,7 @@ def preprocess_image(img: np.ndarray, mean: float = 0.5, std: float = 0.5) -> to
 class TensorRotate(Enum):
     """Rotate enumerates class"""
     NONE = lambda x: x
+    HORISONTAL_FLIP = lambda x: x.flip(2)
     ROTATE_90_CLOCKWISE = lambda x: x.transpose(1, 2).flip(2)
     ROTATE_180 = lambda x: x.flip(1, 2)
     ROTATE_90_COUNTERCLOCKWISE = lambda x: x.transpose(1, 2).flip(1)
@@ -22,6 +23,7 @@ def rotate_tensor(img: torch.Tensor, rot_value: TensorRotate) -> torch.Tensor:
         img: tensor in CHW format
         rot_value: element of TensorRotate class, possible values
             TensorRotate.NONE,
+            TensorRotate.HORISONTAL_FLIP,
             TensorRotate.ROTATE_90_CLOCKWISE,
             TensorRotate.ROTATE_180,
             TensorRotate.ROTATE_90_COUNTERCLOCKWISE,
