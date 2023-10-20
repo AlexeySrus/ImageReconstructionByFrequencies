@@ -95,7 +95,7 @@ class FeaturesDownsample(nn.Module):
         )
 
         self.act_final = nn.Mish(inplace=True)
-        self.pool = nn.MaxPool2d(2, 2)
+        self.pool = nn.AvgPool2d(2, 2)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         hx = x
