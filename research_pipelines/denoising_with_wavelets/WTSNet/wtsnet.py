@@ -81,10 +81,10 @@ class FeaturesDownsample(nn.Module):
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
         self.conv1 = ConvModule(in_ch, in_ch * 2, 3)
-        self.bn1 = nn.InstanceNorm2d(in_ch * 2)
+        # self.bn1 = nn.InstanceNorm2d(in_ch * 2)
         self.act1 = nn.Mish(inplace=True)
         self.conv2 = ConvModule(in_ch * 2, out_ch, 3)
-        self.bn2 = nn.InstanceNorm2d(out_ch)
+        # self.bn2 = nn.InstanceNorm2d(out_ch)
 
         self.down_bneck = nn.Conv2d(
             in_channels=in_ch,
@@ -100,10 +100,10 @@ class FeaturesDownsample(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         hx = x
         y = self.conv1(x)
-        y = self.bn1(y)
+        # y = self.bn1(y)
         y = self.act1(y)
         y = self.conv2(y)
-        y = self.bn2(y)
+        # y = self.bn2(y)
 
         hx = self.down_bneck(hx)
 
@@ -116,10 +116,10 @@ class FeaturesProcessing(nn.Module):
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
         self.conv1 = ConvModule(in_ch, in_ch * 2, 3)
-        self.bn1 = nn.InstanceNorm2d(in_ch * 2)
+        # self.bn1 = nn.InstanceNorm2d(in_ch * 2)
         self.act1 = nn.Mish(inplace=True)
         self.conv2 = ConvModule(in_ch * 2, out_ch, 3)
-        self.bn2 = nn.InstanceNorm2d(out_ch)
+        # self.bn2 = nn.InstanceNorm2d(out_ch)
 
         self.down_bneck = nn.Conv2d(
             in_channels=in_ch,
@@ -134,10 +134,10 @@ class FeaturesProcessing(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         hx = x
         y = self.conv1(x)
-        y = self.bn1(y)
+        # y = self.bn1(y)
         y = self.act1(y)
         y = self.conv2(y)
-        y = self.bn2(y)
+        # y = self.bn2(y)
 
         hx = self.down_bneck(hx)
 
@@ -281,7 +281,9 @@ class WTSNet(nn.Module):
 
 if __name__ == '__main__':
     import numpy as np
-    from flopth import flopth
+    from torch.onnx import OperatorExportTypes
+    from fvcore.nn import FlopCountAnalysis
+    from pthflops import count_ops
 
     device = 'cpu'
 
@@ -304,3 +306,15 @@ if __name__ == '__main__':
     model_parameters = filter(lambda p: p.requires_grad, model.parameters())
     params = sum([np.prod(p.size()) for p in model_parameters])
     print('Params: {} params'.format(params))
+
+    # torch.onnx.export(model,               # model being run
+    #                 inp,                         # model input (or a tuple for multiple inputs)
+    #                 "denoising.onnx",   # where to save the model (can be a file or file-like object)
+    #                 export_params=True,        # store the trained parameter weights inside the model file
+    #                 opset_version=16,          # the ONNX version to export the model to
+    #                 do_constant_folding=True,  # whether to execute constant folding for optimization
+    #                 input_names = ['input'],   # the model's input names
+    #                 output_names = ['output'], # the model's output names
+    #                 dynamic_axes={'input' : {0 : 'batch_size'},    # variable length axes
+    #                                 'output' : {0 : 'batch_size'}},
+    #                 operator_export_type=OperatorExportTypes.ONNX_ATEN_FALLBACK)
