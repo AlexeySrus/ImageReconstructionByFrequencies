@@ -10,6 +10,14 @@ from DWT_IDWT.DWT_IDWT_layer import DWT_2D, IDWT_2D
 padding_mode: str = 'reflect'
 
 
+def init_weights(m):
+    if type(m) == nn.Linear:
+        torch.nn.init.xavier_uniform_(m.weight)
+
+    if type(m) == nn.Conv2d:
+        torch.nn.init.xavier_uniform_(m.weight)
+
+
 class DownscaleByWaveletes(nn.Module):
     def __init__(self, wavename: str = 'haar') -> None:
         """
@@ -224,10 +232,8 @@ class WTSNet(nn.Module):
         ll3, hf3 = self.dwt3(ll2 / 2)
         ll4, hf4 = self.dwt4(ll3 / 2)
 
-        ll4 = ll4 - 1 # Normalize to -1..1
-
-        t4, sa5 = self.low_freq_u4(ll4)
-        t4_wf = self.low_freq_to_wavelets_f4(ll4)
+        t4, sa5 = self.low_freq_u4(ll4 - 1) # Normalize to -1..1
+        t4_wf = self.low_freq_to_wavelets_f4(ll4 - 1) # Normalize to -1..1
         pred_ll4 = self.low_freq_c4(t4)
         df_hd4, sa4 = self.hight_freq_u4(
             torch.cat((t4_wf, hf4), dim=1)
@@ -236,26 +242,24 @@ class WTSNet(nn.Module):
         hf4 -= df_hd4
 
         # pred_ll4 + 1: Denormalize to 0..2
-        pred_ll3 = self.iwt4(pred_ll4 + 1, hf4) * 2 - 1 # Normalize to -1..1
-        t3_wf = self.low_freq_to_wavelets_f3(pred_ll3)
+        pred_ll3 = self.iwt4(pred_ll4 + 1, hf4) * 2
+        t3_wf = self.low_freq_to_wavelets_f3(ll3 - 1) # Normalize to -1..1
         df_hd3, sa3 = self.hight_freq_u3(
             torch.cat((t3_wf, hf3), dim=1)
         )
         df_hd3 = self.hight_freq_c3(df_hd3)
         hf3 -= df_hd3
 
-        # pred_ll3 + 1: Denormalize to 0..2
-        pred_ll2 = self.iwt3(pred_ll3 + 1, hf3) * 2 - 1 # Normalize to -1..1
-        t2_wf = self.low_freq_to_wavelets_f2(pred_ll2)
+        pred_ll2 = self.iwt3(pred_ll3, hf3) * 2
+        t2_wf = self.low_freq_to_wavelets_f2(ll2 - 1) # Normalize to -1..1
         df_hd2, sa2 = self.hight_freq_u2(
             torch.cat((t2_wf, hf2), dim=1)
         )
         df_hd2 = self.hight_freq_c2(df_hd2)
         hf2 -= df_hd2
 
-        # pred_ll2 + 1: Denormalize to 0..2
-        pred_ll1 = self.iwt2(pred_ll2 + 1, hf2) * 2 - 1 # Normalize to -1..1
-        t1_wf = self.low_freq_to_wavelets_f1(pred_ll1)
+        pred_ll1 = self.iwt2(pred_ll2, hf2) * 2
+        t1_wf = self.low_freq_to_wavelets_f1(ll1) # Normalize to -1..1
         df_hd1, sa1 = self.hight_freq_u1(
             torch.cat((t1_wf, hf1), dim=1)
         )
@@ -263,7 +267,7 @@ class WTSNet(nn.Module):
         hf1 -= df_hd1
 
         # pred_ll1 + 1: Denormalize to 0..2
-        pred_image = self.iwt1(pred_ll1 + 1, hf1)
+        pred_image = self.iwt1(pred_ll1, hf1)
 
         sa1 = nn.functional.interpolate(sa1[0], (x.size(2), x.size(3)), mode='area')
         sa2 = nn.functional.interpolate(sa2[0], (x.size(2), x.size(3)), mode='area')
@@ -271,10 +275,10 @@ class WTSNet(nn.Module):
         sa4 = nn.functional.interpolate(sa4[0], (x.size(2), x.size(3)), mode='area')
         sa5 = nn.functional.interpolate(sa5[0], (x.size(2), x.size(3)), mode='area')
 
-        wavelets1 = torch.cat((pred_ll1 + 1, hf1), dim=1)
-        wavelets2 = torch.cat((pred_ll2 + 1, hf2), dim=1)
-        wavelets3 = torch.cat((pred_ll3 + 1, hf3), dim=1)
-        wavelets4 = torch.cat((pred_ll4 + 1, hf4), dim=1)
+        wavelets1 = torch.cat((pred_ll1, hf1), dim=1)
+        wavelets2 = torch.cat((pred_ll2, hf2), dim=1)
+        wavelets3 = torch.cat((pred_ll3, hf3), dim=1)
+        wavelets4 = torch.cat((pred_ll4, hf4), dim=1)
 
         return [pred_image, wavelets1, wavelets2, wavelets3, wavelets4], [sa1, sa2, sa3, sa4, sa5]
 
@@ -282,12 +286,13 @@ class WTSNet(nn.Module):
 if __name__ == '__main__':
     import numpy as np
     from torch.onnx import OperatorExportTypes
-    from fvcore.nn import FlopCountAnalysis
-    from pthflops import count_ops
+    # from fvcore.nn import FlopCountAnalysis
+    # from pthflops import count_ops
 
     device = 'cpu'
 
     model = WTSNet().to(device)
+    model.apply(init_weights)
     inp = torch.rand(1, 3, 512, 512).to(device)
 
     with torch.no_grad():

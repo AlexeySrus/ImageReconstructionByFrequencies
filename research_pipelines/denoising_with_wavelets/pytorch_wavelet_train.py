@@ -19,7 +19,7 @@ from piq import DISTS
 from dataloader import SeriesAndComputingClearDataset, PairedDenoiseDataset, SyntheticNoiseDataset
 from callbacks import VisImage, VisAttentionMaps, VisPlot
 from DWT_IDWT.DWT_IDWT_layer import DWT_2D, IDWT_2D
-from WTSNet.wtsnet import WTSNet
+from WTSNet.wtsnet import WTSNet, init_weights
 from utils.window_inference import denoise_inference
 from utils.hist_loss import HistLoss
 from pytorch_optimizer import AdaSmooth
@@ -164,6 +164,7 @@ class CustomTrainingPipeline(object):
             )
 
         self.model = WTSNet()
+        self.model.apply(init_weights)
         self.dwt = DWT_2D('haar')
         self.iwt = IDWT_2D('haar')
         self.model = self.model.to(device)
