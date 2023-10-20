@@ -167,8 +167,9 @@ class CustomTrainingPipeline(object):
         self.dwt = DWT_2D('haar')
         self.iwt = IDWT_2D('haar')
         self.model = self.model.to(device)
-        self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=0.00001)
+        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=0.00001)
         # self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=0.001, weight_decay=0.0001)
+        self.oprimizer = AdaSmooth(params=self.model.parameters(), lr=0.001, weight_decay=0.00001)
 
         if load_path is not None:
             load_data = torch.load(load_path, map_location=self.device)
