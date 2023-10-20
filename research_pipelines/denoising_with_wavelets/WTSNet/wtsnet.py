@@ -81,10 +81,10 @@ class FeaturesDownsample(nn.Module):
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
         self.conv1 = ConvModule(in_ch, in_ch * 2, 3)
-        self.bn1 = nn.BatchNorm2d(in_ch * 2)
+        self.bn1 = nn.InstanceNorm2d(in_ch * 2)
         self.act1 = nn.Mish(inplace=True)
         self.conv2 = ConvModule(in_ch * 2, out_ch, 3)
-        self.bn2 = nn.BatchNorm2d(out_ch)
+        self.bn2 = nn.InstanceNorm2d(out_ch)
 
         self.down_bneck = nn.Conv2d(
             in_channels=in_ch,
@@ -95,7 +95,7 @@ class FeaturesDownsample(nn.Module):
         )
 
         self.act_final = nn.Mish(inplace=True)
-        self.pool = nn.AvgPool2d(2, 2)
+        self.pool = nn.MaxPool2d(2, 2)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         hx = x
@@ -116,10 +116,10 @@ class FeaturesProcessing(nn.Module):
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
         self.conv1 = ConvModule(in_ch, in_ch * 2, 3)
-        self.bn1 = nn.BatchNorm2d(in_ch * 2)
+        self.bn1 = nn.InstanceNorm2d(in_ch * 2)
         self.act1 = nn.Mish(inplace=True)
         self.conv2 = ConvModule(in_ch * 2, out_ch, 3)
-        self.bn2 = nn.BatchNorm2d(out_ch)
+        self.bn2 = nn.InstanceNorm2d(out_ch)
 
         self.down_bneck = nn.Conv2d(
             in_channels=in_ch,
@@ -189,29 +189,27 @@ class WTSNet(nn.Module):
     def __init__(self, image_channels: int = 3):
         super().__init__()
 
-        out_w_ch = image_channels * 4
-
         self.dwt1 = DownscaleByWaveletes()
         self.dwt2 = DownscaleByWaveletes()
         self.dwt3 = DownscaleByWaveletes()
         self.dwt4 = DownscaleByWaveletes()
 
-        self.low_freq_to_wavelets_u1 = MiniUNet(image_channels, 64, 64)
+        self.low_freq_to_wavelets_f1 = FeaturesProcessing(image_channels, 64)
         self.hight_freq_u1 = MiniUNet(64 + image_channels * 3, 64, 128)
         self.hight_freq_c1 = conv1x1(128, image_channels * 3)
 
-        self.low_freq_to_wavelets_u2 = MiniUNet(image_channels, 32, 64)
+        self.low_freq_to_wavelets_f2 = FeaturesProcessing(image_channels, 64)
         self.hight_freq_u2 = MiniUNet(64 + image_channels * 3, 64, 64)
         self.hight_freq_c2 = conv1x1(64, image_channels * 3)
 
-        self.low_freq_to_wavelets_u3 = MiniUNet(image_channels, 32, 32)
+        self.low_freq_to_wavelets_f3 = FeaturesProcessing(image_channels, 32)
         self.hight_freq_u3 = MiniUNet(32 + image_channels * 3, 32, 64)
         self.hight_freq_c3 = conv1x1(64, image_channels * 3)
 
-        self.low_freq_u4 = MiniUNet(image_channels, 32, 32)
+        self.low_freq_u4 = MiniUNet(image_channels, 16, 32)
         self.low_freq_c4 = conv1x1(32, image_channels)
-        self.low_freq_to_wavelets_u4 = MiniUNet(image_channels, 32, 32)
-        self.hight_freq_u4 = MiniUNet(32 + image_channels * 3, 32, 32)
+        self.low_freq_to_wavelets_f4 = FeaturesProcessing(image_channels, 32)
+        self.hight_freq_u4 = MiniUNet(32 + image_channels * 3, 16, 32)
         self.hight_freq_c4 = conv1x1(32, image_channels * 3)
 
         self.iwt1 = UpscaleByWaveletes()
@@ -223,21 +221,20 @@ class WTSNet(nn.Module):
     def forward(self, x: torch.Tensor) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         ll1, hf1 = self.dwt1(x)
         ll2, hf2 = self.dwt2(ll1 / 2)
-        ll3, hf3 = self.dwt2(ll2 / 2)
-        ll4, hf4 = self.dwt2(ll3 / 2)
+        ll3, hf3 = self.dwt3(ll2 / 2)
+        ll4, hf4 = self.dwt4(ll3 / 2)
 
-        t4, _ = self.low_freq_u4(ll4)
-        t4_wf, _ = self.low_freq_to_wavelets_u4(ll4)
-        df_ll4 = self.low_freq_c4(t4)
+        t4, sa5 = self.low_freq_u4(ll4)
+        t4_wf = self.low_freq_to_wavelets_f4(ll4)
+        pred_ll4 = self.low_freq_c4(t4)
         df_hd4, sa4 = self.hight_freq_u4(
             torch.cat((t4_wf, hf4), dim=1)
         )
         df_hd4 = self.hight_freq_c4(df_hd4)
-        pred_ll4 = ll4 - df_ll4
         hf4 -= df_hd4
 
         pred_ll3 = self.iwt4(pred_ll4, hf4) * 2
-        t3_wf, _ = self.low_freq_to_wavelets_u3(pred_ll3)
+        t3_wf = self.low_freq_to_wavelets_f3(pred_ll3)
         df_hd3, sa3 = self.hight_freq_u3(
             torch.cat((t3_wf, hf3), dim=1)
         )
@@ -245,7 +242,7 @@ class WTSNet(nn.Module):
         hf3 -= df_hd3
 
         pred_ll2 = self.iwt3(pred_ll3, hf3) * 2
-        t2_wf, _ = self.low_freq_to_wavelets_u2(pred_ll2)
+        t2_wf = self.low_freq_to_wavelets_f2(pred_ll2)
         df_hd2, sa2 = self.hight_freq_u2(
             torch.cat((t2_wf, hf2), dim=1)
         )
@@ -253,7 +250,7 @@ class WTSNet(nn.Module):
         hf2 -= df_hd2
 
         pred_ll1 = self.iwt2(pred_ll2, hf2) * 2
-        t1_wf, _ = self.low_freq_to_wavelets_u1(pred_ll1)
+        t1_wf = self.low_freq_to_wavelets_f1(pred_ll1)
         df_hd1, sa1 = self.hight_freq_u1(
             torch.cat((t1_wf, hf1), dim=1)
         )
@@ -266,17 +263,19 @@ class WTSNet(nn.Module):
         sa2 = nn.functional.interpolate(sa2[0], (x.size(2), x.size(3)), mode='area')
         sa3 = nn.functional.interpolate(sa3[0], (x.size(2), x.size(3)), mode='area')
         sa4 = nn.functional.interpolate(sa4[0], (x.size(2), x.size(3)), mode='area')
+        sa5 = nn.functional.interpolate(sa5[0], (x.size(2), x.size(3)), mode='area')
 
         wavelets1 = torch.cat((pred_ll1, hf1), dim=1)
         wavelets2 = torch.cat((pred_ll2, hf2), dim=1)
         wavelets3 = torch.cat((pred_ll3, hf3), dim=1)
         wavelets4 = torch.cat((pred_ll4, hf4), dim=1)
 
-        return [pred_image, wavelets1, wavelets2, wavelets3, wavelets4], [sa1, sa2, sa3, sa4]
+        return [pred_image, wavelets1, wavelets2, wavelets3, wavelets4], [sa1, sa2, sa3, sa4, sa5]
 
 
 if __name__ == '__main__':
     import numpy as np
+    from flopth import flopth
 
     device = 'cpu'
 

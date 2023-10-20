@@ -140,7 +140,7 @@ class CustomTrainingPipeline(object):
             port=visdom_port,
             vis_step=150,
             scale=0.5,
-            maps_count=4
+            maps_count=5
         )
 
         self.plot_visualizer = None if visdom_port is None else VisPlot(
