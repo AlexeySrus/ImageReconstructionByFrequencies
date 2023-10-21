@@ -234,15 +234,14 @@ class WTSNet(nn.Module):
 
         t4, sa5 = self.low_freq_u4(ll4 - 1) # Normalize to -1..1
         t4_wf = self.low_freq_to_wavelets_f4(ll4 - 1) # Normalize to -1..1
-        pred_ll4 = self.low_freq_c4(t4)
+        pred_ll4 = self.low_freq_c4(t4) + 1 # Denormalize to 0..2
         df_hd4, sa4 = self.hight_freq_u4(
             torch.cat((t4_wf, hf4), dim=1)
         )
         df_hd4 = self.hight_freq_c4(df_hd4)
         hf4 -= df_hd4
 
-        # pred_ll4 + 1: Denormalize to 0..2
-        pred_ll3 = self.iwt4(pred_ll4 + 1, hf4) * 2
+        pred_ll3 = self.iwt4(pred_ll4, hf4) * 2
         t3_wf = self.low_freq_to_wavelets_f3(ll3 - 1) # Normalize to -1..1
         df_hd3, sa3 = self.hight_freq_u3(
             torch.cat((t3_wf, hf3), dim=1)
@@ -259,14 +258,13 @@ class WTSNet(nn.Module):
         hf2 -= df_hd2
 
         pred_ll1 = self.iwt2(pred_ll2, hf2) * 2
-        t1_wf = self.low_freq_to_wavelets_f1(ll1) # Normalize to -1..1
+        t1_wf = self.low_freq_to_wavelets_f1(ll1 - 1) # Normalize to -1..1
         df_hd1, sa1 = self.hight_freq_u1(
             torch.cat((t1_wf, hf1), dim=1)
         )
         df_hd1 = self.hight_freq_c1(df_hd1)
         hf1 -= df_hd1
 
-        # pred_ll1 + 1: Denormalize to 0..2
         pred_image = self.iwt1(pred_ll1, hf1)
 
         sa1 = nn.functional.interpolate(sa1[0], (x.size(2), x.size(3)), mode='area')
