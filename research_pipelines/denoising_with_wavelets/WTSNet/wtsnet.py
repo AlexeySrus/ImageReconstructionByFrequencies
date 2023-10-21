@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 
 from WTSNet.cbam import CBAM
-from DWT_IDWT.DWT_IDWT_layer import DWT_2D, IDWT_2D
+from haar_pytorch import HaarForward, HaarInverse
 
 
 padding_mode: str = 'reflect'
@@ -19,40 +19,33 @@ def init_weights(m):
 
 
 class DownscaleByWaveletes(nn.Module):
-    def __init__(self, wavename: str = 'haar') -> None:
+    def __init__(self) -> None:
         """
-        Downscale by Wavelets transforms
+        Downscale by Haar Wavelets transforms
         This transform increase channels by 4 times: C -> C * 4
-
-        Args:
-            wavename (str, optional): wavelet name. Defaults to 'haar'.
         """
         super().__init__()
 
-        self.dwt = DWT_2D(wavename)
+        self.dwt = HaarForward()
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        x_ll, x_lh, x_hl, x_hh = self.dwt(x)
-        hight_freq = torch.cat((x_lh, x_hl, x_hh), dim=1)
-        return x_ll, hight_freq
+        out = self.dwt(x)
+        step = out.size(1) // 4
+        return out[:, :step], out[:, step:]
 
 
 class UpscaleByWaveletes(nn.Module):
-    def __init__(self, wavename: str = 'haar') -> None:
+    def __init__(self) -> None:
         """
-        Downscale by Wavelets transforms
+        Downscale by Haar Wavelets transforms
         This transform reduce channels by 4 times: C -> C // 4
-
-        Args:
-            wavename (str, optional): wavelet name. Defaults to 'haar'.
         """
         super().__init__()
 
-        self.iwt = IDWT_2D(wavename)
+        self.iwt = HaarInverse()
 
     def forward(self, x_ll: torch.Tensor, hight_freq: torch.Tensor) -> torch.Tensor:
-        x_lh, x_hl, x_hh = torch.split(hight_freq, hight_freq.size(1) // 3, dim=1)
-        out = self.iwt(x_ll, x_lh, x_hl, x_hh)
+        out = self.iwt(torch.cat((x_ll, hight_freq), dim=1))
         return out
 
 
@@ -197,9 +190,9 @@ class WTSNet(nn.Module):
         ll3, hf3 = self.dwt3(ll2 / 2)
         ll4, hf4 = self.dwt4(ll3 / 2)
 
-        t4, sa5 = self.low_freq_u4(ll4 - 1) # Normalize to -1..1
-        t4_wf = self.low_freq_to_wavelets_f4(ll4 - 1) # Normalize to -1..1
-        pred_ll4 = self.low_freq_c4(t4) + 1 # Denormalize to 0..2
+        t4, sa5 = self.low_freq_u4(ll4 - 1)
+        t4_wf = self.low_freq_to_wavelets_f4(ll4 - 1)
+        pred_ll4 = self.low_freq_c4(t4) + 1
         df_hd4, sa4 = self.hight_freq_u4(
             torch.cat((t4_wf, hf4), dim=1)
         )
@@ -207,7 +200,7 @@ class WTSNet(nn.Module):
         hf4 -= df_hd4
 
         pred_ll3 = self.iwt4(pred_ll4, hf4) * 2
-        t3_wf = self.low_freq_to_wavelets_f3(ll3 - 1) # Normalize to -1..1
+        t3_wf = self.low_freq_to_wavelets_f3(ll3 - 1)
         df_hd3, sa3 = self.hight_freq_u3(
             torch.cat((t3_wf, hf3), dim=1)
         )
@@ -215,7 +208,7 @@ class WTSNet(nn.Module):
         hf3 -= df_hd3
 
         pred_ll2 = self.iwt3(pred_ll3, hf3) * 2
-        t2_wf = self.low_freq_to_wavelets_f2(ll2 - 1) # Normalize to -1..1
+        t2_wf = self.low_freq_to_wavelets_f2(ll2 - 1)
         df_hd2, sa2 = self.hight_freq_u2(
             torch.cat((t2_wf, hf2), dim=1)
         )
@@ -223,7 +216,7 @@ class WTSNet(nn.Module):
         hf2 -= df_hd2
 
         pred_ll1 = self.iwt2(pred_ll2, hf2) * 2
-        t1_wf = self.low_freq_to_wavelets_f1(ll1 - 1) # Normalize to -1..1
+        t1_wf = self.low_freq_to_wavelets_f1(ll1 - 1)
         df_hd1, sa1 = self.hight_freq_u1(
             torch.cat((t1_wf, hf1), dim=1)
         )
@@ -258,10 +251,23 @@ if __name__ == '__main__':
     model.apply(init_weights)
     inp = torch.rand(1, 3, 512, 512).to(device)
 
+    haar = HaarForward()
+    ihaar = HaarInverse()
+
+    wavelets = haar(inp)
+    img_reconstructed = ihaar(wavelets)
+    step = wavelets.size(1) // 4
+    print(step, wavelets.shape)
+    ll = wavelets[:, :step] # :3
+    lh = wavelets[:, step:step*2] # 3:6
+    hl = wavelets[:, step*2:step*3] # 6:9
+    hh = wavelets[:, step*3:] # 9:12
+    
+    for h, n in zip((ll, lh, hl, hh), ('ll', 'lh', 'hl', 'hh')):
+        print('Haar part: {}: {} {} {}'.format(n, h.min(), h.max(), h.shape))
+
     with torch.no_grad():
         out = model(inp)
-
-    print(out[0][0].min(), out[0][0].max())
 
     for block_output, block_name in zip(out[0], ('d{}'.format(i) for i in range(1, 6 + 1))):
         print('Shape of {}: {}'.format(block_name, block_output.shape))
@@ -277,7 +283,7 @@ if __name__ == '__main__':
 
     # torch.onnx.export(model,               # model being run
     #                 inp,                         # model input (or a tuple for multiple inputs)
-    #                 "denoising.onnx",   # where to save the model (can be a file or file-like object)
+    #                 "haar.onnx",   # where to save the model (can be a file or file-like object)
     #                 export_params=True,        # store the trained parameter weights inside the model file
     #                 opset_version=16,          # the ONNX version to export the model to
     #                 do_constant_folding=True,  # whether to execute constant folding for optimization
@@ -286,3 +292,17 @@ if __name__ == '__main__':
     #                 dynamic_axes={'input' : {0 : 'batch_size'},    # variable length axes
     #                                 'output' : {0 : 'batch_size'}},
     #                 operator_export_type=OperatorExportTypes.ONNX_ATEN_FALLBACK)
+
+
+    optim = torch.optim.RAdam(model.parameters(), lr=0.1)
+
+    N = 1000
+    for i in range(N):
+        optim.zero_grad()
+        pred = model(inp)
+        loss = torch.nn.functional.mse_loss(pred[0][0], inp)
+        loss.backward()
+        optim.step()
+
+        if (i + 1) % 10 == 0:
+            print('Step {}/{}, Loss: {}'.format(i + 1, N, loss.item()))

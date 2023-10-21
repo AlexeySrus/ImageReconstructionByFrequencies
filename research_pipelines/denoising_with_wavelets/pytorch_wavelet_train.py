@@ -15,10 +15,10 @@ import os
 from torchmetrics.image import PeakSignalNoiseRatio as TorchPSNR
 from pytorch_msssim import SSIM
 from piq import DISTS
+from haar_pytorch import HaarForward, HaarInverse
 
 from dataloader import SeriesAndComputingClearDataset, PairedDenoiseDataset, SyntheticNoiseDataset
 from callbacks import VisImage, VisAttentionMaps, VisPlot
-from DWT_IDWT.DWT_IDWT_layer import DWT_2D, IDWT_2D
 from WTSNet.wtsnet import WTSNet, init_weights
 from utils.window_inference import denoise_inference
 from utils.hist_loss import HistLoss
@@ -165,8 +165,8 @@ class CustomTrainingPipeline(object):
 
         self.model = WTSNet()
         self.model.apply(init_weights)
-        self.dwt = DWT_2D('haar')
-        self.iwt = IDWT_2D('haar')
+        self.dwt = HaarForward()
+        self.iwt = HaarInverse()
         self.model = self.model.to(device)
         # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=0.00001)
         # self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=0.001, weight_decay=0.0001)
