@@ -129,8 +129,8 @@ class MiniUNet(nn.Module):
 
         self.deep_conv_block = FeaturesProcessing(mid_ch * 2, mid_ch)
 
-        self.upsample2 = FeaturesUpsample(mid_ch, mid_ch)
-        self.upsample1 = FeaturesUpsample(mid_ch, mid_ch)
+        self.upsample2 = nn.UpsamplingBilinear2d(scale_factor=2) # FeaturesUpsample(mid_ch, mid_ch)
+        self.upsample1 = nn.UpsamplingBilinear2d(scale_factor=2) # FeaturesUpsample(mid_ch, mid_ch)
 
         self.attn2 = CBAM(mid_ch + mid_ch)
         self.attn1 = CBAM(mid_ch + mid_ch)
