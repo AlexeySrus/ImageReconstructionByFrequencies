@@ -301,7 +301,7 @@ class CustomTrainingPipeline(object):
                 wloss, _ = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image)
                 hist_loss = self.final_hist_loss(pred_image, clear_image)
 
-                total_loss = loss + wloss * 0 + hist_loss * 0.1
+                total_loss = loss + wloss + hist_loss * 0.1
 
                 total_loss.backward()
                 # torch.nn.utils.clip_grad_norm_(self.model.parameters(), 2.0)

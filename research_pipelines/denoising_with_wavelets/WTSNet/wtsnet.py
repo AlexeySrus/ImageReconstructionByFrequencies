@@ -253,6 +253,7 @@ class WTSNet(nn.Module):
 
 
 if __name__ == '__main__':
+    import cv2
     import numpy as np
     from torch.onnx import OperatorExportTypes
     # from fvcore.nn import FlopCountAnalysis
@@ -263,7 +264,10 @@ if __name__ == '__main__':
 
     model = WTSNet().to(device)
     model.apply(init_weights)
-    inp = torch.rand(1, 3, 128, 128).to(device)
+
+    img_path = '/Users/alexey/Downloads/9F9AFB3E-DA8F-4204-81ED-D93D84D76185_1_105_c.jpeg'
+    img = cv2.imread(img_path, cv2.IMREAD_COLOR)[:512, :512]
+    inp = torch.from_numpy(img.astype(np.float32) / 255.0).permute(2, 0, 1).unsqueeze(0)
 
     haar = HaarForward()
     ihaar = HaarInverse()
