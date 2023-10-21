@@ -204,14 +204,14 @@ class WTSNet(nn.Module):
 
         t4, sa5 = self.low_freq_u4(ll4 - 1)
         t4_wf = self.low_freq_to_wavelets_f4(ll4 - 1)
-        pred_ll4 = self.low_freq_c4(t4) + 1
+        # pred_ll4 = self.low_freq_c4(t4) + 1
         df_hd4, sa4 = self.hight_freq_u4(
             torch.cat((t4_wf, hf4), dim=1)
         )
         df_hd4 = self.hight_freq_c4(df_hd4)
         hf4 -= df_hd4
 
-        pred_ll3 = self.iwt4(pred_ll4, hf4) * 2
+        pred_ll3 = self.iwt4(ll4, hf4) * 2
         t3_wf = self.low_freq_to_wavelets_f3(ll3 - 1)
         df_hd3, sa3 = self.hight_freq_u3(
             torch.cat((t3_wf, hf3), dim=1)
