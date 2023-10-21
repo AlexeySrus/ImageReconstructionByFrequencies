@@ -47,23 +47,6 @@ class UpscaleByWaveletes(nn.Module):
     def forward(self, x_ll: torch.Tensor, hight_freq: torch.Tensor) -> torch.Tensor:
         out = self.iwt(torch.cat((x_ll, hight_freq), dim=1))
         return out
-
-
-class ConvModule(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int, ksize: int = 3):
-        super().__init__()
-        self.conv = nn.Conv2d(
-            in_channels=in_ch,
-            out_channels=out_ch,
-            kernel_size=ksize,
-            stride=1,
-            padding=ksize // 2,
-            padding_mode=padding_mode
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        y = self.conv(x)
-        return y
     
 
 def conv1x1(in_ch, out_ch):
@@ -76,12 +59,23 @@ def conv1x1(in_ch, out_ch):
     )
 
 
+def conv3x3(in_ch, out_ch):
+    return nn.Conv2d(
+        in_channels=in_ch,
+        out_channels=out_ch,
+        kernel_size=3,
+        stride=1,
+        padding=1,
+        padding_mode=padding_mode
+    )
+
+
 class FeaturesProcessing(nn.Module):
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
-        self.conv1 = ConvModule(in_ch, in_ch * 2, 3)
+        self.conv1 = conv3x3(in_ch, in_ch * 2)
         self.act1 = nn.Mish()
-        self.conv2 = ConvModule(in_ch * 2, out_ch, 3)
+        self.conv2 = conv3x3(in_ch * 2, out_ch)
 
         self.down_bneck = conv1x1(in_ch, out_ch)
 
@@ -297,14 +291,14 @@ if __name__ == '__main__':
     #                                 'output' : {0 : 'batch_size'}},
     #                 operator_export_type=OperatorExportTypes.ONNX_ATEN_FALLBACK)
 
+    model2 = FeaturesProcessing(3, 3)
+    optim = torch.optim.SGD(params=model2.parameters(), lr=0.01, nesterov=True, momentum=0.9)
 
-    optim = torch.optim.RAdam(model.parameters(), lr=0.1)
-
-    N = 1000
+    N = 5000
     for i in range(N):
         optim.zero_grad()
-        pred = model(inp)
-        loss = torch.nn.functional.mse_loss(pred[0][0], inp)
+        pred = model2(inp)
+        loss = torch.nn.functional.mse_loss(pred, inp)
         loss.backward()
         optim.step()
 
