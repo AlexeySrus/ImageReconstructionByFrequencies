@@ -28,6 +28,30 @@ from pytorch_optimizer import AdaSmooth
 class SSIMLoss(SSIM):
     def forward(self, x, y):
         return 1. - super().forward(x, y)
+    
+
+class DWTHaar(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.dwt = HaarForward()
+
+    def forward(self, x):
+        out = self.dwt(x)
+        step = out.size(1) // 4
+        ll = out[:, :step]
+        lh = out[:, step:step*2]
+        hl = out[:, step*2:step*3]
+        hh = out[:, step*3:]
+        return [ll, lh, hl, hh]
+    
+
+class IWTHaar(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.iwt = HaarInverse()
+
+    def forward(self, ll, lh, hl, hh):
+        return self.iwt(torch.cat((ll, lh, hl, hh), dim=1))
 
 
 class CustomTrainingPipeline(object):
@@ -165,8 +189,8 @@ class CustomTrainingPipeline(object):
 
         self.model = WTSNet()
         self.model.apply(init_weights)
-        self.dwt = HaarForward()
-        self.iwt = HaarInverse()
+        self.dwt = DWTHaar()
+        self.iwt = IWTHaar()
         self.model = self.model.to(device)
         # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=0.00001)
         # self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=0.001, weight_decay=0.0001)
