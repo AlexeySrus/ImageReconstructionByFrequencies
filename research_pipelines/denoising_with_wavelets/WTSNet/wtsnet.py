@@ -81,55 +81,18 @@ def conv1x1(in_ch, out_ch):
         stride=1,
         padding=0
     )
-    
 
-class FeaturesDownsample(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int):
-        super().__init__()
-        self.conv1 = ConvModule(in_ch, in_ch * 2, 3)
-        self.act1 = nn.Mish(inplace=True)
-        self.conv2 = ConvModule(in_ch * 2, out_ch, 3)
-
-        self.down_bneck = nn.Conv2d(
-            in_channels=in_ch,
-            out_channels=out_ch,
-            kernel_size=1,
-            stride=1,
-            padding=0
-        )
-
-        self.act_final = nn.Mish(inplace=True)
-        self.pool = nn.AvgPool2d(2, 2)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        hx = x
-        y = self.conv1(x)
-        y = self.act1(y)
-        y = self.conv2(y)
-
-        hx = self.down_bneck(hx)
-
-        y = self.act_final(hx + y)
-        y = self.pool(y)
-        return y
-    
 
 class FeaturesProcessing(nn.Module):
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
         self.conv1 = ConvModule(in_ch, in_ch * 2, 3)
-        self.act1 = nn.Mish(inplace=True)
+        self.act1 = nn.Mish()
         self.conv2 = ConvModule(in_ch * 2, out_ch, 3)
 
-        self.down_bneck = nn.Conv2d(
-            in_channels=in_ch,
-            out_channels=out_ch,
-            kernel_size=1,
-            stride=1,
-            padding=0
-        )
+        self.down_bneck = conv1x1(in_ch, out_ch)
 
-        self.act_final = nn.Mish(inplace=True)
+        self.act_final = nn.Mish()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         hx = x
@@ -140,6 +103,18 @@ class FeaturesProcessing(nn.Module):
         hx = self.down_bneck(hx)
 
         y = self.act_final(hx + y)
+        return y
+    
+
+class FeaturesDownsample(nn.Module):
+    def __init__(self, in_ch: int, out_ch: int):
+        super().__init__()
+        self.features = FeaturesProcessing(in_ch, out_ch)
+        self.pool = nn.MaxPool2d(2, 2)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        y = self.features(x)
+        y = self.pool(y)
         return y
 
 
@@ -175,8 +150,8 @@ class MiniUNet(nn.Module):
         decoded_f2, _, sa_attn1 = self.attn2(decoded_f2)
         decoded_f2 = self.upsample_features_block2(decoded_f2)
 
-        down_f1 = self.upsample1(down_f1)
-        decoded_f1 = torch.cat((hx, down_f1), dim=1)
+        decoded_f2 = self.upsample1(decoded_f2)
+        decoded_f1 = torch.cat((hx, decoded_f2), dim=1)
         decoded_f1, _, sa_attn2 = self.attn1(decoded_f1)
         decoded_f1 = self.upsample_features_block1(decoded_f1)
 

@@ -24,7 +24,7 @@ class ChannelAttention(nn.Module):
         self.max_pool = nn.AdaptiveMaxPool2d(1)
         self.fc = nn.Sequential(
             nn.Conv2d(channel, channel // reduction, 1, bias=False),
-            nn.Mish(inplace=True),
+            nn.Mish(),
             nn.Conv2d(channel // reduction, channel, 1, bias=False)
         )
         self.sigmoid = nn.Sigmoid()
