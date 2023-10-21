@@ -130,6 +130,8 @@ class MiniUNet(nn.Module):
         self.upsample_features_block2 = FeaturesProcessing(mid_ch + mid_ch, mid_ch)
         self.upsample_features_block1 = FeaturesProcessing(mid_ch + mid_ch, out_ch)
 
+        self.final_conv = conv1x1(out_ch, out_ch)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         hx = self.init_block(x)
 
@@ -147,6 +149,8 @@ class MiniUNet(nn.Module):
         decoded_f1 = torch.cat((hx, decoded_f2), dim=1)
         decoded_f1, _, sa_attn2 = self.attn1(decoded_f1)
         decoded_f1 = self.upsample_features_block1(decoded_f1)
+
+        decoded_f1 = self.final_conv(decoded_f1)
 
         return decoded_f1, [sa_attn1, sa_attn2]
 
