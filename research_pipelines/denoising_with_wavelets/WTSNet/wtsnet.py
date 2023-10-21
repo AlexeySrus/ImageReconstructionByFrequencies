@@ -204,14 +204,14 @@ class WTSNet(nn.Module):
 
         t4, sa5 = self.low_freq_u4(ll4 - 1)
         t4_wf = self.low_freq_to_wavelets_f4(ll4 - 1)
-        # pred_ll4 = self.low_freq_c4(t4) + 1
+        pred_ll4 = self.low_freq_c4(t4) + 1
         df_hd4, sa4 = self.hight_freq_u4(
             torch.cat((t4_wf, hf4), dim=1)
         )
         df_hd4 = self.hight_freq_c4(df_hd4)
         hf4 -= df_hd4
 
-        pred_ll3 = self.iwt4(ll4, hf4) * 2
+        pred_ll3 = self.iwt4(pred_ll4, hf4) * 2
         t3_wf = self.low_freq_to_wavelets_f3(ll3 - 1)
         df_hd3, sa3 = self.hight_freq_u3(
             torch.cat((t3_wf, hf3), dim=1)
@@ -282,6 +282,8 @@ if __name__ == '__main__':
     with torch.no_grad():
         out = model(inp)
 
+    print('Rand MSE: {}'.format(torch.nn.functional.mse_loss(out[0][0], inp).item()))
+
     for block_output, block_name in zip(out[0], ('d{}'.format(i) for i in range(1, 6 + 1))):
         print('Shape of {}: {}'.format(block_name, block_output.shape))
 
@@ -306,18 +308,18 @@ if __name__ == '__main__':
     #                                 'output' : {0 : 'batch_size'}},
     #                 operator_export_type=OperatorExportTypes.ONNX_ATEN_FALLBACK)
 
-    model2 = MiniUNet(3, 9, 3)
-    model2.apply(init_weights)
-    optim = AdaSmooth(params=model2.parameters(), lr=0.1)
+    # model2 = MiniUNet(3, 9, 3)
+    # model2.apply(init_weights)
+    # optim = AdaSmooth(params=model2.parameters(), lr=0.1)
 
-    N = 5000
-    for i in range(N):
-        optim.zero_grad()
-        pred = model2(inp)[0]
-        loss = torch.nn.functional.mse_loss(pred, inp)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model2.parameters(), 2.0)
-        optim.step()
+    # N = 5000
+    # for i in range(N):
+    #     optim.zero_grad()
+    #     pred = model2(inp)[0]
+    #     loss = torch.nn.functional.mse_loss(pred, inp)
+    #     loss.backward()
+    #     torch.nn.utils.clip_grad_norm_(model2.parameters(), 2.0)
+    #     optim.step()
 
-        if (i + 1) % 10 == 0:
-            print('Step {}/{}, Loss: {}'.format(i + 1, N, loss.item()))
+    #     if (i + 1) % 10 == 0:
+    #         print('Step {}/{}, Loss: {}'.format(i + 1, N, loss.item()))
