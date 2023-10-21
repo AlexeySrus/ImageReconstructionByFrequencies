@@ -246,7 +246,7 @@ class WTSNet(nn.Module):
         wavelets1 = torch.cat((pred_ll1, hf1), dim=1)
         wavelets2 = torch.cat((pred_ll2, hf2), dim=1)
         wavelets3 = torch.cat((pred_ll3, hf3), dim=1)
-        wavelets4 = torch.cat((pred_ll4, hf4), dim=1)
+        wavelets4 = torch.cat((ll4, hf4), dim=1)
 
         return [pred_image, wavelets1, wavelets2, wavelets3, wavelets4], [sa1, sa2, sa3, sa4, sa5]
 
