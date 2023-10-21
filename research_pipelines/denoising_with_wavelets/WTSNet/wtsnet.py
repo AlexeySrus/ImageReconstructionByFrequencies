@@ -103,6 +103,20 @@ class FeaturesDownsample(nn.Module):
         y = self.features(x)
         y = self.pool(y)
         return y
+    
+
+class FeaturesUpsample(nn.Module):
+    def __init__(self, in_ch: int, out_ch: int):
+        super().__init__()
+        self.up = nn.ConvTranspose2d(in_ch, in_ch // 2, kernel_size=2, stride=2)
+        self.act = nn.Mish()
+        self.features = FeaturesProcessing(in_ch // 2, out_ch)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        y = self.up(x)
+        y = self.act(y)
+        y = self.features(y)
+        return y
 
 
 class MiniUNet(nn.Module):
@@ -115,8 +129,8 @@ class MiniUNet(nn.Module):
 
         self.deep_conv_block = FeaturesProcessing(mid_ch * 2, mid_ch)
 
-        self.upsample2 = nn.UpsamplingBilinear2d(scale_factor=2)
-        self.upsample1 = nn.UpsamplingBilinear2d(scale_factor=2)
+        self.upsample2 = FeaturesUpsample(mid_ch, mid_ch)
+        self.upsample1 = FeaturesUpsample(mid_ch, mid_ch)
 
         self.attn2 = CBAM(mid_ch + mid_ch)
         self.attn1 = CBAM(mid_ch + mid_ch)
@@ -242,12 +256,13 @@ if __name__ == '__main__':
     from torch.onnx import OperatorExportTypes
     # from fvcore.nn import FlopCountAnalysis
     # from pthflops import count_ops
+    from pytorch_optimizer import AdaSmooth
 
     device = 'cpu'
 
     model = WTSNet().to(device)
     model.apply(init_weights)
-    inp = torch.rand(1, 3, 512, 512).to(device)
+    inp = torch.rand(1, 3, 128, 128).to(device)
 
     haar = HaarForward()
     ihaar = HaarInverse()
@@ -291,15 +306,17 @@ if __name__ == '__main__':
     #                                 'output' : {0 : 'batch_size'}},
     #                 operator_export_type=OperatorExportTypes.ONNX_ATEN_FALLBACK)
 
-    model2 = FeaturesProcessing(3, 3)
-    optim = torch.optim.SGD(params=model2.parameters(), lr=0.01, nesterov=True, momentum=0.9)
+    model2 = MiniUNet(3, 9, 3)
+    model2.apply(init_weights)
+    optim = AdaSmooth(params=model2.parameters(), lr=0.1)
 
     N = 5000
     for i in range(N):
         optim.zero_grad()
-        pred = model2(inp)
+        pred = model2(inp)[0]
         loss = torch.nn.functional.mse_loss(pred, inp)
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model2.parameters(), 2.0)
         optim.step()
 
         if (i + 1) % 10 == 0:
