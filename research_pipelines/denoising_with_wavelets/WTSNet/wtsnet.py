@@ -93,6 +93,18 @@ class FeaturesProcessing(nn.Module):
         return y
     
 
+class FeaturesProcessingWithLastConv(nn.Module):
+    def __init__(self, in_ch: int, out_ch: int):
+        super().__init__()
+        self.features = FeaturesProcessing(in_ch, out_ch)
+        self.final_conv = conv1x1(out_ch, out_ch)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        y = self.features(x)
+        y = self.final_conv(y)
+        return y
+
+
 class FeaturesDownsample(nn.Module):
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
@@ -172,21 +184,21 @@ class WTSNet(nn.Module):
         self.dwt3 = DownscaleByWaveletes()
         self.dwt4 = DownscaleByWaveletes()
 
-        self.low_freq_to_wavelets_f1 = FeaturesProcessing(image_channels, 64)
+        self.low_freq_to_wavelets_f1 = FeaturesProcessingWithLastConv(image_channels, 64)
         self.hight_freq_u1 = MiniUNet(64 + image_channels * 3, 64, 128)
         self.hight_freq_c1 = conv1x1(128, image_channels * 3)
 
-        self.low_freq_to_wavelets_f2 = FeaturesProcessing(image_channels, 64)
+        self.low_freq_to_wavelets_f2 = FeaturesProcessingWithLastConv(image_channels, 64)
         self.hight_freq_u2 = MiniUNet(64 + image_channels * 3, 64, 64)
         self.hight_freq_c2 = conv1x1(64, image_channels * 3)
 
-        self.low_freq_to_wavelets_f3 = FeaturesProcessing(image_channels, 32)
+        self.low_freq_to_wavelets_f3 = FeaturesProcessingWithLastConv(image_channels, 32)
         self.hight_freq_u3 = MiniUNet(32 + image_channels * 3, 32, 64)
         self.hight_freq_c3 = conv1x1(64, image_channels * 3)
 
         self.low_freq_u4 = MiniUNet(image_channels, 16, 32)
         self.low_freq_c4 = conv1x1(32, image_channels)
-        self.low_freq_to_wavelets_f4 = FeaturesProcessing(image_channels, 32)
+        self.low_freq_to_wavelets_f4 = FeaturesProcessingWithLastConv(image_channels, 32)
         self.hight_freq_u4 = MiniUNet(32 + image_channels * 3, 16, 32)
         self.hight_freq_c4 = conv1x1(32, image_channels * 3)
 
@@ -247,7 +259,7 @@ class WTSNet(nn.Module):
         wavelets1 = torch.cat((pred_ll1, hf1), dim=1)
         wavelets2 = torch.cat((pred_ll2, hf2), dim=1)
         wavelets3 = torch.cat((pred_ll3, hf3), dim=1)
-        wavelets4 = torch.cat((ll4, hf4), dim=1)
+        wavelets4 = torch.cat((pred_ll4, hf4), dim=1)
 
         return [pred_image, wavelets1, wavelets2, wavelets3, wavelets4], [sa1, sa2, sa3, sa4, sa5]
 
