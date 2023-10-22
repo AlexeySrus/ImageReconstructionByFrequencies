@@ -193,8 +193,8 @@ class CustomTrainingPipeline(object):
         self.iwt = IWTHaar()
         self.model = self.model.to(device)
         # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=0.00001)
-        self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001)
-        # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001, weight_decay=0.00001)
+        # self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001)
+        self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
 
         if load_path is not None:
             load_data = torch.load(load_path, map_location=self.device)
@@ -304,7 +304,7 @@ class CustomTrainingPipeline(object):
                 total_loss = loss + wloss + hist_loss * 0.1
 
                 total_loss.backward()
-                # torch.nn.utils.clip_grad_norm_(self.model.parameters(), 2.0)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 2.0)
                 self.optimizer.step()
 
                 pbar.postfix = \
