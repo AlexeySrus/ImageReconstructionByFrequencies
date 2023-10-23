@@ -113,8 +113,7 @@ class CustomTrainingPipeline(object):
         os.makedirs(self.output_val_images_dir, exist_ok=True)
 
 
-        if synth_data_paths is None:
-            self.train_base_dataset = PairedDenoiseDataset(
+        self.train_base_dataset = PairedDenoiseDataset(
                 noisy_images_path=train_data_paths[0],
                 clear_images_path=train_data_paths[1],
                 need_crop=True,
@@ -122,7 +121,8 @@ class CustomTrainingPipeline(object):
                 optional_dataset_size=25000,
                 preload=preload_data
             )
-        else:
+
+        if synth_data_paths is not None:
             self.train_synth_dataset = SyntheticNoiseDataset(
                 clear_images_path=synth_data_paths,
                 window_size=self.image_shape[0],
