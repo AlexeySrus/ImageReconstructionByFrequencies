@@ -23,6 +23,7 @@ from FFTCNN.fftcnn import FFTCNN, init_weights
 from utils.window_inference import denoise_inference
 from utils.hist_loss import HistLoss
 from pytorch_optimizer import AdaSmooth, Ranger21
+from utils.adversarial_loss import Adversarial
 
 
 class SSIMLoss(SSIM):
@@ -205,10 +206,11 @@ class CustomTrainingPipeline(object):
                     '#' * 5 + ' Optimizer has been loaded by path: {} '.format(load_path) + '#' * 5
                 )
 
-        self.images_criterion = torch.nn.L1Loss()
-        # self.perceptual_loss = DISTS()
+        self.images_criterion = torch.nn.MSELoss()
+        self.perceptual_loss = DISTS()
         self.perceptual_loss = None
         self.final_hist_loss = HistLoss(image_size=128, device=self.device)
+        self.adv_loss = Adversarial(image_size=self.image_shape[0])
 
         # self.ssim_loss = None
         self.accuracy_measure = TorchPSNR().to(device)
@@ -252,18 +254,20 @@ class CustomTrainingPipeline(object):
                     loss = loss / 2 + self.perceptual_loss(pred_image, clear_image) / 2
                     
                 hist_loss = self.final_hist_loss(pred_image, clear_image)
+                a_loss = self.adv_loss(pred_image, clear_image)
 
-                total_loss = loss + hist_loss * 0.1
+                total_loss = loss * 0.5 + a_loss + hist_loss * 0.1
 
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 2.0)
                 self.optimizer.step()
 
                 pbar.postfix = \
-                    'Epoch: {}/{}, px_loss: {:.7f}, h_loss: {:.7f}'.format(
+                    'Epoch: {}/{}, px_loss: {:.7f}, adv_loss: {:.7f}, h_loss: {:.7f}'.format(
                         epoch,
                         self.epochs,
                         loss.item(),
+                        a_loss.item(),
                         hist_loss.item() if self.final_hist_loss is not None else hist_loss
                     )
                 avg_epoch_loss += loss.item() / len(self.train_dataloader)
