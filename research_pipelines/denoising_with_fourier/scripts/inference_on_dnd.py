@@ -12,7 +12,7 @@ from timeit import default_timer as time
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 CURRENT_PATH = os.path.dirname(__file__)
 
-from WTSNet.wtsnet import WTSNet, convert_weights_from_old_version
+from FFTCNN.fftcnn import FFTCNN
 from utils.window_inference import eval_denoise_inference
 
 
@@ -96,11 +96,11 @@ if __name__ == '__main__':
     imgsz = 512
     device = 'cuda'
 
-    model = WTSNet().to(device)
+    model = FFTCNN().to(device)
 
     load_path = args.model
     load_data = torch.load(load_path, map_location=device)
-    model.load_state_dict(convert_weights_from_old_version(load_data['model']))
+    model.load_state_dict(load_data['model'])
     model.eval()
 
     # Fake run to optimize
@@ -110,7 +110,7 @@ if __name__ == '__main__':
     print('Best torchmetric PSNR: {:.2f}'.format(load_data['acc']))
 
     if args.output is None:
-        output_folder = os.path.join(CURRENT_PATH, '../../../materials/dnd_inference_results/')
+        output_folder = os.path.join(CURRENT_PATH, '../../../materials/dnd_fftcnn_inference_results/')
     else:
         output_folder = args.output
 
