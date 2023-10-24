@@ -20,7 +20,7 @@ def init_weights(m):
 
 def convert_weights_from_old_version(_weights: OrderedDict) -> OrderedDict:
     new_weights = OrderedDict(
-        [('wtsmodel.' + k, v) if not k.starts_with('wtsmodel') else (k, v) for k, v in _weights.items()]
+        [('wtsmodel.' + k, v) if not k.startswith('wtsmodel.') else (k, v) for k, v in _weights.items()]
     )
     return new_weights
 
@@ -346,7 +346,7 @@ class WTSNet(nn.Module):
         sa5 = nn.functional.interpolate(sa5[0], (x.size(2), x.size(3)), mode='area')
 
 
-        return [pred_image, wavelets1, wavelets2, wavelets3, wavelets4], [sa1, sa2, sa3, sa4, sa5]
+        return pred_image, [wavelets1, wavelets2, wavelets3, wavelets4], [sa1, sa2, sa3, sa4, sa5]
 
 
 if __name__ == '__main__':
@@ -371,23 +371,18 @@ if __name__ == '__main__':
             hh = out[:, step*3:]
             return [ll, lh, hl, hh]
 
-    device = 'cpu'
+    device = 'cuda:0'
 
     model = WTSNet().to(device)
     model.apply(init_weights)
 
     wsize = 512
-    img_path = '/Users/alexey/Downloads/9F9AFB3E-DA8F-4204-81ED-D93D84D76185_1_105_c.jpeg'
-    weights_path = '/Users/Alexey/Downloads/best.trh'
-
-    weights = torch.load(weights_path, map_location=device)['model']
-    weights = OrderedDict(
-        [('wtsmodel.' + k, v) for k, v in weights.items()]
-    )
-    model.load_state_dict(weights)
-
-    img = cv2.imread(img_path, cv2.IMREAD_COLOR)[:wsize, :wsize]
+    img_path = '/media/alexey/SSDData/datasets/denoising_dataset/base_clear_images/cl_img7.jpeg'
+    
+    img = cv2.imread(img_path, cv2.IMREAD_COLOR)[:wsize, :wsize, ::-1]
     inp = torch.from_numpy(img.astype(np.float32) / 255.0).permute(2, 0, 1).unsqueeze(0)
+    inp = inp.to(device)
+    inp[...] = 0.5
 
     haar = HaarForward()
     ihaar = HaarInverse()
@@ -407,14 +402,14 @@ if __name__ == '__main__':
     with torch.no_grad():
         out = model(inp)
 
-    print('Rand MSE: {}'.format(torch.nn.functional.mse_loss(out[0][0], inp).item()))
+    print('Rand MSE: {}'.format(torch.nn.functional.mse_loss(out[0], inp).item()))
 
-    for block_output, block_name in zip(out[0], ('d{}'.format(i) for i in range(1, 6 + 1))):
+    for block_output, block_name in zip(out[1], ('d{}'.format(i) for i in range(1, 6 + 1))):
         print('Shape of {}: {}'.format(block_name, block_output.shape))
 
     print()
 
-    for block_output, block_name in zip(out[1], ('sa_{}'.format(i) for i in range(1, 6 + 1))):
+    for block_output, block_name in zip(out[2], ('sa_{}'.format(i) for i in range(1, 6 + 1))):
         print('Shape of {}: {}'.format(block_name, block_output.shape))
 
     model_parameters = filter(lambda p: p.requires_grad, model.parameters())
@@ -436,12 +431,7 @@ if __name__ == '__main__':
     #                 operator_export_type=OperatorExportTypes.ONNX_ATEN_FALLBACK)
     dwt = DWTHaar()
 
-    def losses_sum(loss_val1: Optional[torch.Tensor], loss_val2: torch.Tensor) -> torch.Tensor:
-        if loss_val1 is None:
-            return loss_val2
-        return loss_val1 + loss_val2
-
-    def compute_wavelets_loss(pred_wavelets_pyramid, gt_image, factor: float = 0.9):
+    def compute_wavelets_loss(pred_wavelets_pyramid, gt_image, factor: float = 0.8):
         gt_d0_ll = gt_image
         _loss = 0.0
         _loss_scale = 1.0
@@ -451,10 +441,10 @@ if __name__ == '__main__':
 
             if i < len(pred_wavelets_pyramid) - 1:
                 gt_wavelets = torch.cat((gt_ll, gt_lh, gt_hl, gt_hh), dim=1)
-                _loss += torch.nn.functional.l1_loss(pred_wavelets_pyramid[i], gt_wavelets) * _loss_scale
+                _loss += torch.nn.functional.smooth_l1_loss(pred_wavelets_pyramid[i], gt_wavelets) * _loss_scale
             else:
                 gt_wavelets = torch.cat((gt_lh, gt_hl, gt_hh), dim=1)
-                _loss += torch.nn.functional.l1_loss(pred_wavelets_pyramid[i][:, 3:], gt_wavelets) * _loss_scale
+                _loss += torch.nn.functional.smooth_l1_loss(pred_wavelets_pyramid[i][:, 3:], gt_wavelets) * _loss_scale
 
             _loss_scale *= factor
 
@@ -462,21 +452,27 @@ if __name__ == '__main__':
 
         return _loss
 
-    # model2 = MiniUNet(3, 9, 3)
-    # model2.apply(init_weights)
+
     # model2 = model
-    # optim = AdaSmooth(params=model2.parameters(), lr=0.001, weight_decay=0.00001)
+    # optim = torch.optim.SGD(params=model2.parameters(), lr=0.1, weight_decay=0.00001, nesterov=True, momentum=0.9)
+
+    # res_img = torch.clamp(inp, 0, 1).to('cpu')[0].permute(1, 2, 0).numpy()
+    # res_img = (res_img * 255).astype(np.uint8)[:, :, ::-1]
+    # cv2.imwrite('TEST_IMG_GT.png', res_img)
 
     # N = 5000
     # for i in range(N):
     #     optim.zero_grad()
     #     pred = model2(inp)
-    #     px_loss = torch.nn.functional.mse_loss(pred[0][0], inp)
-    #     w_loss = compute_wavelets_loss(pred[0][1:], inp)
+    #     px_loss = torch.nn.functional.mse_loss(pred[0], inp)
+    #     w_loss = compute_wavelets_loss(pred[1], inp)
     #     loss = px_loss + w_loss
     #     loss.backward()
     #     torch.nn.utils.clip_grad_norm_(model2.parameters(), 2.0)
     #     optim.step()
 
-    #     if (i + 1) % 10 == 0:
-    #         print('Step {}/{}, Loss: {}'.format(i + 1, N, loss.item()))
+    #     if (i + 1) % 100 == 0:
+    #         print('Step {}/{}, Loss: {}'.format(i + 1, N, px_loss.item()))
+    #         res_img = torch.clamp(pred[0].detach(), 0, 1).to('cpu')[0].permute(1, 2, 0).numpy()
+    #         res_img = (res_img * 255).astype(np.uint8)[:, :, ::-1]
+    #         cv2.imwrite('TEST_IMG.png', res_img)

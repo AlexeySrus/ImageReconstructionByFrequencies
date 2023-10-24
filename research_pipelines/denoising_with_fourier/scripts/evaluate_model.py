@@ -9,7 +9,7 @@ import os
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 CURRENT_PATH = os.path.dirname(__file__)
 
-from WTSNet.wtsnet import WTSNet, convert_weights_from_old_version
+from FFTCNN.fftcnn import FFTCNN, init_weights
 from utils.window_inference import eval_denoise_inference
 
 
@@ -42,11 +42,11 @@ if __name__ == '__main__':
     imgsz = 512
     device = 'cuda'
 
-    model = WTSNet().to(device)
+    model = FFTCNN().to(device)
 
     load_path = args.model
     load_data = torch.load(load_path, map_location=device)
-    model.load_state_dict(convert_weights_from_old_version(load_data['model']))
+    model.load_state_dict(load_data['model'])
     model.eval()
 
     print('Best torchmetric PSNR: {:.2f}'.format(load_data['acc']))
@@ -66,11 +66,11 @@ if __name__ == '__main__':
     for image_name in tqdm(os.listdir(noisy_folder)):
         image_path = os.path.join(noisy_folder, image_name)
         img = cv2.imread(image_path, cv2.IMREAD_COLOR)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
 
         gt_image_path = os.path.join(clear_folder, image_name)
         gt_img = cv2.imread(gt_image_path, cv2.IMREAD_COLOR)
-        gt_img = cv2.cvtColor(gt_img, cv2.COLOR_BGR2RGB)
+        gt_img = cv2.cvtColor(gt_img, cv2.COLOR_BGR2YCrCb)
 
         input_tensor = torch.from_numpy(img.astype(np.float32).transpose((2, 0, 1)) / 255.0)
         
@@ -92,7 +92,7 @@ if __name__ == '__main__':
 
         cv2.imwrite(
             os.path.join(output_folder, image_name),
-            cv2.cvtColor(pred_image, cv2.COLOR_RGB2BGR)
+            cv2.cvtColor(pred_image, cv2.COLOR_YCrCb2BGR)
         )
 
     avg_psnr = np.array(psnr_values).mean()

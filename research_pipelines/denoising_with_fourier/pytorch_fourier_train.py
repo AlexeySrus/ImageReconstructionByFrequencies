@@ -19,7 +19,7 @@ from haar_pytorch import HaarForward, HaarInverse
 
 from dataloader import PairedDenoiseDataset, SyntheticNoiseDataset
 from callbacks import VisImage, VisAttentionMaps, VisPlot
-from WTSNet.wtsnet import WTSNet, init_weights, convert_weights_from_old_version
+from FFTCNN.fftcnn import FFTCNN, init_weights
 from utils.window_inference import denoise_inference
 from utils.hist_loss import HistLoss
 from pytorch_optimizer import AdaSmooth, Ranger21
@@ -184,19 +184,17 @@ class CustomTrainingPipeline(object):
                 legend=['val']
             )
 
-        self.model = WTSNet()
+        self.model = FFTCNN()
         self.model.apply(init_weights)
-        self.dwt = DWTHaar()
-        self.iwt = IWTHaar()
         self.model = self.model.to(device)
         # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=0.00001)
         # self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001)
-        self.optimizer = Ranger21(params=self.model.parameters(), num_iterations=3, lr=0.001)
+        self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
 
         if load_path is not None:
             load_data = torch.load(load_path, map_location=self.device)
 
-            self.model.load_state_dict(convert_weights_from_old_version(load_data['model']))
+            self.model.load_state_dict(load_data['model'])
             print(
                 '#' * 5 + ' Model has been loaded by path: {} '.format(load_path) +  '#' * 5
             )
@@ -207,13 +205,12 @@ class CustomTrainingPipeline(object):
                     '#' * 5 + ' Optimizer has been loaded by path: {} '.format(load_path) + '#' * 5
                 )
 
-        self.images_criterion = torch.nn.MSELoss()
-        self.perceptual_loss = DISTS()
-        # self.perceptual_loss = None
+        self.images_criterion = torch.nn.L1Loss()
+        # self.perceptual_loss = DISTS()
+        self.perceptual_loss = None
         self.final_hist_loss = HistLoss(image_size=128, device=self.device)
 
         # self.ssim_loss = None
-        self.wavelets_criterion = torch.nn.SmoothL1Loss()
         self.accuracy_measure = TorchPSNR().to(device)
 
         if lr_steps > 0:
@@ -236,38 +233,6 @@ class CustomTrainingPipeline(object):
         for param_group in self.optimizer.param_groups:
             return param_group['lr']
 
-    def _compute_wavelets_loss(self, pred_wavelets_pyramid, gt_image, factor: float = 0.8):
-        gt_d0_ll = gt_image
-        _loss = 0.0
-        _loss_scale = 1.0
-
-        for i in range(len(pred_wavelets_pyramid)):
-            gt_ll, gt_lh, gt_hl, gt_hh = self.dwt(gt_d0_ll)
-
-            if i < len(pred_wavelets_pyramid) - 1:
-                gt_wavelets = torch.cat((gt_ll, gt_lh, gt_hl, gt_hh), dim=1)
-                _loss += self.wavelets_criterion(pred_wavelets_pyramid[i], gt_wavelets) * _loss_scale
-            else:
-                gt_wavelets = torch.cat((gt_lh, gt_hl, gt_hh), dim=1)
-                _loss += self.wavelets_criterion(pred_wavelets_pyramid[i][:, 3:], gt_wavelets) * _loss_scale
-
-            _loss_scale *= factor
-
-            gt_d0_ll = gt_ll / 2.0
-
-        return _loss
-
-    def _compute_deep_iwt_loss(self, pred_wavelets_pyramid, gt_image):
-        composed_image = pred_wavelets_pyramid[-1][:, :3]
-
-        for i in range(len(pred_wavelets_pyramid) - 1, -1, -1):
-            _, lh, hl, hh = torch.split(pred_wavelets_pyramid[i], 3, dim=1)
-            composed_image = self.iwt(composed_image, lh, hl, hh) * 2
-
-        _loss = self.images_criterion(composed_image, gt_image)
-
-        return _loss
-
     def _train_step(self, epoch) -> float:
         self.model.train()
         avg_epoch_loss = 0
@@ -280,56 +245,45 @@ class CustomTrainingPipeline(object):
                 self.optimizer.zero_grad()
                 output = self.model(noisy_image)
                 pred_image = output[0]
-                pred_wavelets_pyramid = output[1]
-                spatial_attention_maps = output[2]
 
                 loss = self.images_criterion(pred_image, clear_image)
 
                 if self.perceptual_loss is not None:
                     loss = loss / 2 + self.perceptual_loss(pred_image, clear_image) / 2
                     
-                wloss = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image)
                 hist_loss = self.final_hist_loss(pred_image, clear_image)
 
-                total_loss = loss + wloss * 0.5 + hist_loss * 0.1
+                total_loss = loss + hist_loss * 0.1
 
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 2.0)
                 self.optimizer.step()
 
                 pbar.postfix = \
-                    'Epoch: {}/{}, px_loss: {:.7f}, w_loss: {:.7f}, h_loss: {:.7f}'.format(
+                    'Epoch: {}/{}, px_loss: {:.7f}, h_loss: {:.7f}'.format(
                         epoch,
                         self.epochs,
                         loss.item(),
-                        wloss.item(),
                         hist_loss.item() if self.final_hist_loss is not None else hist_loss
                     )
                 avg_epoch_loss += loss.item() / len(self.train_dataloader)
 
                 if self.images_visualizer is not None:
-                    wavelets_pred = pred_wavelets_pyramid[0].detach()
                     with torch.no_grad():
-                        wavelets_gt = self.dwt(clear_image)
-                        wavelets_inp = self.dwt(noisy_image)
-
                         vis_idx = self.images_visualizer.per_batch(
                             {
                                 'input_img': noisy_image,
-                                'input_wavelets': wavelets_inp,
                                 'pred_image': pred_image.detach(),
-                                'pred_wavelets': wavelets_pred.detach(),
-                                'gt_wavelets': wavelets_gt,
                                 'gt_image': clear_image
                             }
                         )
 
-                        self.attention_visualizer.per_batch(
-                            {
-                                'sa_list': spatial_attention_maps
-                            },
-                            i=vis_idx
-                        )
+                        # self.attention_visualizer.per_batch(
+                        #     {
+                        #         'sa_list': spatial_attention_maps
+                        #     },
+                        #     i=vis_idx
+                        # )
 
                 pbar.update(1)
 
@@ -373,6 +327,7 @@ class CustomTrainingPipeline(object):
 
                     result_path = os.path.join(self.output_val_images_dir, '{}.png'.format(sample_i + 1))
                     val_img = (torch.clip(restored_image[0].to('cpu').permute(1, 2, 0), 0, 1) * 255.0).numpy().astype(np.uint8)
+                    val_img = cv2.cvtColor(val_img, cv2.COLOR_YCrCb2RGB)
                     Image.fromarray(val_img).save(result_path)
 
         if test_len > 0:
