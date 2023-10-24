@@ -210,7 +210,7 @@ class CustomTrainingPipeline(object):
         self.perceptual_loss = DISTS()
         self.perceptual_loss = None
         self.final_hist_loss = HistLoss(image_size=128, device=self.device)
-        self.adv_loss = Adversarial(image_size=self.image_shape[0])
+        self.adv_loss = Adversarial(image_size=self.image_shape[0]).to(device)
 
         # self.ssim_loss = None
         self.accuracy_measure = TorchPSNR().to(device)
