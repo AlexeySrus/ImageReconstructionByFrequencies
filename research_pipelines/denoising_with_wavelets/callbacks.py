@@ -235,8 +235,8 @@ class VisImageForWavelets(AbstractCallback):
         self.step = vis_step
         self.scale = scale
 
-        self.img_mean = 0.5
-        self.img_std = 0.5
+        self.img_mean = 0
+        self.img_std = 1
         self.w_mean = 0
         self.w_std = 1
 
@@ -325,6 +325,8 @@ class VisImage(VisImageForWavelets):
     def __init__(self, title, server='http://localhost', port=8080,
                  vis_step=1, scale=10):
         super().__init__(title, server, port, vis_step, scale)
+        self.change_color_function = self._ycrcb_to_rgb
+        # self.change_color_function = lambda x: x
 
     def per_batch(self, args, label=1, i: Optional[int] = None) -> Optional[int]:
         if self.n % self.step == 0:
@@ -340,19 +342,19 @@ class VisImage(VisImageForWavelets):
                     pred_wavelets = list(torch.split(args['pred_wavelets'][i], 3, dim=0))
                     inp_wavelets = [pw[i] for pw in args['input_wavelets']]
 
-                    inp_image = torch.clip(inp_image, 0, 1).to('cpu')
-                    gt_image = torch.clip(gt_image, 0, 1).to('cpu')
-                    pred_image = torch.clip(pred_image, 0, 1).to('cpu')
+                    inp_image = self.change_color_function(torch.clip(inp_image, 0, 1).to('cpu'))
+                    gt_image = self.change_color_function(torch.clip(gt_image, 0, 1).to('cpu'))
+                    pred_image = self.change_color_function(torch.clip(pred_image, 0, 1).to('cpu'))
 
-                    pred_wavelets[0] = torch.clip(pred_wavelets[0] / 2, 0, 1).to('cpu')
+                    pred_wavelets[0] = self.change_color_function(torch.clip(pred_wavelets[0] / 2, 0, 1).to('cpu'))
                     for k in range(1, 4):
                         pred_wavelets[k] = torch.clip((pred_wavelets[k] + 1.0) / 2, 0, 1).to('cpu')
 
-                    gt_wavelets[0] = torch.clip(gt_wavelets[0] / 2, 0, 1).to('cpu')
+                    gt_wavelets[0] = self.change_color_function(torch.clip(gt_wavelets[0] / 2, 0, 1).to('cpu'))
                     for k in range(1, 4):
                         gt_wavelets[k] = torch.clip((gt_wavelets[k] + 1.0) / 2, 0, 1).to('cpu')
 
-                    inp_wavelets[0] = torch.clip(inp_wavelets[0] / 2, 0, 1).to('cpu')
+                    inp_wavelets[0] = self.change_color_function(torch.clip(inp_wavelets[0] / 2, 0, 1).to('cpu'))
                     for k in range(1, 4):
                         inp_wavelets[k] = torch.clip((inp_wavelets[k] + 1.0) / 2, 0, 1).to('cpu')
 

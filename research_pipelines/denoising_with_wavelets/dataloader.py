@@ -63,6 +63,9 @@ class PairedDenoiseDataset(Dataset):
                 random_swap=False
             )
 
+        noisy_image = cv2.cvtColor(noisy_image, cv2.COLOR_RGB2YCrCb)
+        clear_image = cv2.cvtColor(clear_image, cv2.COLOR_RGB2YCrCb)
+
         return preprocess_image(noisy_image, 0, 1), preprocess_image(clear_image, 0, 1)
 
 
@@ -123,6 +126,9 @@ class SyntheticNoiseDataset(Dataset):
             noisy_crop = self.noise_transform(image=clear_crop)['image']
         else:
             noisy_crop = clear_crop.copy()
+
+        noisy_crop = cv2.cvtColor(noisy_crop, cv2.COLOR_RGB2YCrCb)
+        clear_crop = cv2.cvtColor(clear_crop, cv2.COLOR_RGB2YCrCb)
 
         return preprocess_image(noisy_crop, 0, 1), preprocess_image(clear_crop, 0, 1)
 
