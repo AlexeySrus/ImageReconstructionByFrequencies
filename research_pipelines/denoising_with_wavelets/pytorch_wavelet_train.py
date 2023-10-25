@@ -405,6 +405,7 @@ class CustomTrainingPipeline(object):
 
                     result_path = os.path.join(self.output_val_images_dir, '{}.png'.format(sample_i + 1))
                     val_img = (torch.clip(restored_image[0].to('cpu').permute(1, 2, 0), 0, 1) * 255.0).numpy().astype(np.uint8)
+                    val_img = cv2.cvtColor(val_img, cv2.COLOR_YCrCb2RGB)
                     Image.fromarray(val_img).save(result_path)
 
         if test_len > 0:
