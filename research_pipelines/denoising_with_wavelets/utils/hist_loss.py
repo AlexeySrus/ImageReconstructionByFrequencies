@@ -22,7 +22,7 @@ class RGBuvHistBlock(torch.nn.Module):
       intensity_scale: boolean variable to use the intensity scale (I_y in
         Equation 2). Default value is True.
 
-    Methods:
+    Methods:m
       forward: accepts input image and returns its histogram feature. Note that
         unless the method is 'thresholding', this is a differentiable function
         and can be easily integrated with the loss function. As mentioned in the

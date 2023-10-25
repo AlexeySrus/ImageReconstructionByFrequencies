@@ -320,13 +320,14 @@ class Discriminator(nn.Module):
                 in_channels, out_channels, 3, stride=stride, bn=bn, act=act
             ))
 
-        self.features = nn.Sequential(*m_features)
+        self.features = nn.Sequential(*m_features, nn.AdaptiveAvgPool2d((1, 1)))
 
         patch_size = patch_size // (2**((depth + 1) // 2))
         m_classifier = [
-            nn.Linear(out_channels * patch_size**2, 1024),
+            # nn.Linear(out_channels * patch_size**2, 1024),
+            # nn.AdaptiveAvgPool2d((1, 1)),
             act,
-            nn.Linear(1024, 1)
+            nn.Linear(out_channels, 1)
         ]
         self.classifier = nn.Sequential(*m_classifier)
 
@@ -338,11 +339,11 @@ class Discriminator(nn.Module):
 
 
 class Adversarial(nn.Module):
-    def __init__(self, gan_k: int = 1, gan_type: str = 'GAN', image_size: int = 512):
+    def __init__(self, gan_k: int = 1, gan_type: str = 'GAN', image_size: int = 512, in_ch: int = 3):
         super(Adversarial, self).__init__()
         self.gan_type = gan_type
         self.gan_k = gan_k
-        self.discriminator = Discriminator(gan_type=gan_type, patch_size=image_size)
+        self.discriminator = Discriminator(n_colors=in_ch, gan_type=gan_type, patch_size=image_size)
         if gan_type != 'WGAN_GP':
             self.optimizer = make_optimizer('ADAM', self.discriminator)
         else:
@@ -424,7 +425,7 @@ class Adversarial(nn.Module):
 
 if __name__ == '__main__':
     adv_loss = Adversarial()
-    t1 = torch.rand(1, 3, 512, 512, requires_grad=True)
-    t2 = torch.rand(1, 3, 512, 512, requires_grad=True)
+    t1 = torch.rand(1, 3, 64, 64, requires_grad=True)
+    t2 = torch.rand(1, 3, 64, 64, requires_grad=True)
     loss = adv_loss(t1, t2)
     print(loss.item())

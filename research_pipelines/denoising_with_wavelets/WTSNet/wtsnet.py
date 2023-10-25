@@ -3,7 +3,7 @@ from collections import OrderedDict
 import torch
 import torch.nn as nn
 
-from WTSNet.cbam import CBAM
+from WTSNet.attention import CBAM
 from haar_pytorch import HaarForward, HaarInverse
 
 
@@ -139,7 +139,7 @@ class FeaturesUpsample(nn.Module):
 
 
 class MiniUNet(nn.Module):
-    def __init__(self, in_ch: int, mid_ch: int, out_ch: int):
+    def __init__(self, in_ch: int, mid_ch: int, out_ch: int, need_up_features: bool = False):
         super().__init__()
         self.init_block = FeaturesProcessing(in_ch, mid_ch)
 
@@ -150,7 +150,9 @@ class MiniUNet(nn.Module):
 
         self.upsample2 = nn.UpsamplingBilinear2d(scale_factor=2) # FeaturesUpsample(mid_ch, mid_ch)
         self.upsample1 = nn.UpsamplingBilinear2d(scale_factor=2) # FeaturesUpsample(mid_ch, mid_ch)
+        self.upsample0 = nn.UpsamplingBilinear2d(scale_factor=2)
 
+        self.init_attn = CBAM(mid_ch)
         self.attn2 = CBAM(mid_ch + mid_ch)
         self.attn1 = CBAM(mid_ch + mid_ch)
         
@@ -159,8 +161,12 @@ class MiniUNet(nn.Module):
 
         self.final_conv = conv1x1(out_ch, out_ch)
 
+        self.conv_out = FeaturesProcessingWithLastConv(out_ch, out_ch)
+        self.up_conv_out = FeaturesProcessingWithLastConv(out_ch, out_ch)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         hx = self.init_block(x)
+        hx, _, sa_attn0 = self.init_attn(hx)
 
         down_f1 = self.downsample_block1(hx)
         down_f2 = self.downsample_block2(down_f1)
@@ -177,34 +183,42 @@ class MiniUNet(nn.Module):
         decoded_f1, _, sa_attn2 = self.attn1(decoded_f1)
         decoded_f1 = self.upsample_features_block1(decoded_f1)
 
+        upf1 = self.upsample0(decoded_f1)
+        upf1 = self.up_conv_out(upf1)
+
         decoded_f1 = self.final_conv(decoded_f1)
 
-        return decoded_f1, [sa_attn1, sa_attn2]
+        return decoded_f1, upf1, [sa_attn0, sa_attn1, sa_attn2]
     
 
 class MiniUNetV2(nn.Module):
-    def __init__(self, in_ch: int, mid_ch: int, out_ch: int):
+    def __init__(self, in_ch: int, mid_ch: int, out_ch: int, need_up_features: bool = False):
         super().__init__()
+        self.need_up_features = need_up_features
 
         self.rebnconvin = FeaturesProcessingWithLastConv(in_ch, out_ch)
 
-        self.rebnconv1 = FeaturesProcessing(out_ch, mid_ch)
+        self.rebnconv1 = FeaturesProcessingWithLastConv(out_ch, mid_ch)
         self.pool1 = nn.MaxPool2d(2, stride=2)
 
-        self.rebnconv2 = FeaturesProcessing(mid_ch, mid_ch)
+        self.rebnconv2 = FeaturesProcessingWithLastConv(mid_ch, mid_ch)
         self.pool2 = nn.MaxPool2d(2, stride=2)
 
-        self.rebnconv3 = FeaturesProcessing(mid_ch, mid_ch)
+        self.rebnconv3 = FeaturesProcessingWithLastConv(mid_ch, mid_ch)
 
-        self.rebnconv4 = FeaturesProcessing(mid_ch, mid_ch)
+        self.rebnconv4 = FeaturesProcessingWithLastConv(mid_ch, mid_ch)
 
-        self.rebnconv3d = FeaturesProcessing(mid_ch*2, mid_ch)
-        self.rebnconv2d = FeaturesProcessing(mid_ch*2,mid_ch)
+        self.rebnconv3d = FeaturesProcessingWithLastConv(mid_ch*2, mid_ch)
+        self.rebnconv2d = FeaturesProcessingWithLastConv(mid_ch*2,mid_ch)
         self.rebnconv1d = FeaturesProcessingWithLastConv(mid_ch*2, out_ch)
 
         self.upsample2 = nn.UpsamplingBilinear2d(scale_factor=2)
         self.upsample1 = nn.UpsamplingBilinear2d(scale_factor=2)
+        self.upsample0 = nn.UpsamplingBilinear2d(scale_factor=2)
 
+        self.rebnconvout = FeaturesProcessingWithLastConv(out_ch, out_ch)
+
+        self.init_attn = CBAM(out_ch)
         self.attn3 = CBAM(mid_ch + mid_ch)
         self.attn2 = CBAM(mid_ch + mid_ch)
         self.attn1 = CBAM(mid_ch + mid_ch)
@@ -212,6 +226,8 @@ class MiniUNetV2(nn.Module):
     def forward(self,x):
         hx = x
         hxin = self.rebnconvin(hx)
+        hxin, _, sa_attn0 = self.init_attn(hxin)
+
 
         hx1 = self.rebnconv1(hxin)
         hx = self.pool1(hx1)
@@ -237,7 +253,12 @@ class MiniUNetV2(nn.Module):
         hx2dup_hx1, _, sa_attn1 = self.attn1(hx2dup_hx1)
         hx1d = self.rebnconv1d(hx2dup_hx1)
 
-        return hx1d + hxin, [sa_attn1, sa_attn2, sa_attn3]
+        if self.need_up_features:
+            out_features = self.rebnconvout(self.upsample0(hx1d))
+        else:
+            out_features = hx1d
+
+        return hx1d + hxin, out_features, [sa_attn0, sa_attn1, sa_attn2, sa_attn3]
 
 
 class WTSNetBaseModel(nn.Module):
@@ -245,54 +266,54 @@ class WTSNetBaseModel(nn.Module):
         super().__init__()
 
         self.low_freq_to_wavelets_f1 = FeaturesProcessingWithLastConv(image_channels, 64)
-        self.hight_freq_u1 = MiniUNet(64 + image_channels * 3, 64, 128)
+        self.hight_freq_u1 = MiniUNet(64 + image_channels * 3 + 64, 64, 128)
         self.hight_freq_c1 = conv1x1(128, image_channels * 3)
 
         self.low_freq_to_wavelets_f2 = FeaturesProcessingWithLastConv(image_channels, 64)
-        self.hight_freq_u2 = MiniUNet(64 + image_channels * 3, 64, 64)
+        self.hight_freq_u2 = MiniUNet(64 + image_channels * 3 + 64, 64, 64, True)
         self.hight_freq_c2 = conv1x1(64, image_channels * 3)
 
         self.low_freq_to_wavelets_f3 = FeaturesProcessingWithLastConv(image_channels, 32)
-        self.hight_freq_u3 = MiniUNet(32 + image_channels * 3, 32, 64)
+        self.hight_freq_u3 = MiniUNet(32 + image_channels * 3 + 32 + 32, 32, 64, True)
         self.hight_freq_c3 = conv1x1(64, image_channels * 3)
 
-        self.low_freq_u4 = MiniUNet(image_channels, 16, 32)
+        self.low_freq_u4 = MiniUNetV2(image_channels, 16, 32, True)
         self.low_freq_c4 = conv1x1(32, image_channels)
         self.low_freq_to_wavelets_f4 = FeaturesProcessingWithLastConv(image_channels, 32)
-        self.hight_freq_u4 = MiniUNet(32 + image_channels * 3, 16, 32)
+        self.hight_freq_u4 = MiniUNet(32 + image_channels * 3, 16, 32, True)
         self.hight_freq_c4 = conv1x1(32, image_channels * 3)
 
     def forward(self, ll_list: List[torch.Tensor], hf_list: List[torch.Tensor]) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         ll1, ll2, ll3, ll4 = ll_list
         hf1, hf2, hf3, hf4 = hf_list
 
-        t4, sa5 = self.low_freq_u4(ll4 - 1)
         t4_wf = self.low_freq_to_wavelets_f4(ll4 - 1)
-        df_pred_ll4 = self.low_freq_c4(t4) + 1
-        df_hd4, sa4 = self.hight_freq_u4(
+        df_hd4, hd4up, sa4 = self.hight_freq_u4(
             torch.cat((t4_wf, hf4), dim=1)
         )
         df_hd4 = self.hight_freq_c4(df_hd4)
-        pred_ll4 = ll4 - df_pred_ll4
         hf4 -= df_hd4
+        t4, t4up, sa5 = self.low_freq_u4(ll4 - 1)
+        pred_ll4 = self.low_freq_c4(t4) + 1
+        # pred_ll4 = ll4 - df_pred_ll4
 
         t3_wf = self.low_freq_to_wavelets_f3(ll3 - 1)
-        df_hd3, sa3 = self.hight_freq_u3(
-            torch.cat((t3_wf, hf3), dim=1)
+        df_hd3, hd3up, sa3 = self.hight_freq_u3(
+            torch.cat((t3_wf, hf3, t4up, hd4up), dim=1)
         )
         df_hd3 = self.hight_freq_c3(df_hd3)
         hf3 -= df_hd3
 
         t2_wf = self.low_freq_to_wavelets_f2(ll2 - 1)
-        df_hd2, sa2 = self.hight_freq_u2(
-            torch.cat((t2_wf, hf2), dim=1)
+        df_hd2, hd2up, sa2 = self.hight_freq_u2(
+            torch.cat((t2_wf, hf2, hd3up), dim=1)
         )
         df_hd2 = self.hight_freq_c2(df_hd2)
         hf2 -= df_hd2
 
         t1_wf = self.low_freq_to_wavelets_f1(ll1 - 1)
-        df_hd1, sa1 = self.hight_freq_u1(
-            torch.cat((t1_wf, hf1), dim=1)
+        df_hd1, _, sa1 = self.hight_freq_u1(
+            torch.cat((t1_wf, hf1, hd2up), dim=1)
         )
         df_hd1 = self.hight_freq_c1(df_hd1)
         hf1 -= df_hd1

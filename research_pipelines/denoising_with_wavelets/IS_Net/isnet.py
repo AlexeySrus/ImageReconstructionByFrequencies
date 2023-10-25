@@ -559,9 +559,7 @@ class ISNetDIS(nn.Module):
 
         hxin = self.conv_in(hx)
         #hx = self.pool_in(hxin)
-
-        #stage 1
-        hx1 = self.stage1(hxin)
+            torch.cat((t4_wf, hf4), dim=1)
         hx = self.pool12(hx1)
 
         #stage 2
