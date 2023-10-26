@@ -20,7 +20,7 @@ from haar_pytorch import HaarForward, HaarInverse
 
 from dataloader import PairedDenoiseDataset, SyntheticNoiseDataset
 from callbacks import VisImage, VisAttentionMaps, VisPlot
-from WTSNet.wtsnet import WTSNet, init_weights, convert_weights_from_old_version
+from WTSNet.wts_timm import WTSNetTimm
 from utils.window_inference import denoise_inference
 from utils.hist_loss import HistLoss
 from utils.adversarial_loss import Adversarial
@@ -119,7 +119,7 @@ class CustomTrainingPipeline(object):
                 clear_images_path=train_data_paths[1],
                 need_crop=True,
                 window_size=self.image_shape[0],
-                optional_dataset_size=25000,
+                optional_dataset_size=55000,
                 preload=preload_data
             )
 
@@ -128,7 +128,7 @@ class CustomTrainingPipeline(object):
                 clear_images_path=synth_data_paths,
                 window_size=self.image_shape[0],
                 preload=preload_data,
-                optional_dataset_size=5000
+                optional_dataset_size=10000
             )
 
             self.train_base_dataset = torch.utils.data.ConcatDataset(
@@ -162,7 +162,7 @@ class CustomTrainingPipeline(object):
             port=visdom_port,
             vis_step=150,
             scale=0.5,
-            maps_count=5
+            maps_count=6
         )
 
         self.plot_visualizer = None if visdom_port is None else VisPlot(
@@ -185,19 +185,19 @@ class CustomTrainingPipeline(object):
                 legend=['val']
             )
 
-        self.model = WTSNet()
-        self.model.apply(init_weights)
+        self.model = WTSNetTimm()
+        # self.model.apply(init_weights)
         self.dwt = DWTHaar()
         self.iwt = IWTHaar()
         self.model = self.model.to(device)
-        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=0.00001)
-        # self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001)
-        self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
+        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.0001, nesterov=True, momentum=0.9)
+        self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001)
+        # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
 
         if load_path is not None:
             load_data = torch.load(load_path, map_location=self.device)
 
-            self.model.load_state_dict(convert_weights_from_old_version(load_data['model']))
+            self.model.load_state_dict(load_data['model'])
             print(
                 '#' * 5 + ' Model has been loaded by path: {} '.format(load_path) +  '#' * 5
             )
@@ -245,7 +245,7 @@ class CustomTrainingPipeline(object):
         for param_group in self.optimizer.param_groups:
             return param_group['lr']
 
-    def _compute_wavelets_loss(self, pred_wavelets_pyramid, gt_image, factor: float = 0.8):
+    def _compute_wavelets_loss(self, pred_wavelets_pyramid, gt_image, factor: float = 1.0):
         gt_d0_ll = gt_image
         _loss = 0.0
         _loss_scale = 1.0
