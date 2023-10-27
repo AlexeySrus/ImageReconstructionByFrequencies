@@ -698,7 +698,7 @@ class TimmEncoder(nn.Module):
         hf5 = self.hf_conv5(of5)
         # pred_ll5 = self.lf_conv5(lof5) + 1
 
-        return hf1, hf2, hf3, hf4, hf5, None, [[sa1], [sa2], [sa3], [sa4], [sa5]]
+        return hf1, hf2, hf3, hf4, hf5, [[sa1], [sa2], [sa3], [sa4], [sa5]]
 
 
 class WTSNetSMP(nn.Module):
@@ -760,7 +760,7 @@ class WTSNetTimm(nn.Module):
 
     def forward(self, x: torch.Tensor) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         pred_ll5 = nn.functional.interpolate(x, size=(x.size(2) // 32, x.size(3) // 32), mode='area') * 2
-        hf1, hf2, hf3, hf4, hf5, _, sa_list = self.encoder_model(x)
+        hf1, hf2, hf3, hf4, hf5, sa_list = self.encoder_model(x)
 
         pred_ll4 = self.iwt5(pred_ll5, hf5) * 2
         pred_ll3 = self.iwt4(pred_ll4, hf4) * 2

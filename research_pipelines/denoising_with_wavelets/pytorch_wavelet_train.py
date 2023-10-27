@@ -221,7 +221,7 @@ class CustomTrainingPipeline(object):
         self.perceptual_loss = None
         # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
         self.final_hist_loss = None
-        self.hight_freq_loss = HFENLoss()
+        self.hight_freq_loss = HFENLoss(loss_f=torch.nn.functional.smooth_l1_loss)
 
         # self.adverserial_losses = [
         #     Adversarial(image_size=256, in_ch=3 * 3).to(device),
