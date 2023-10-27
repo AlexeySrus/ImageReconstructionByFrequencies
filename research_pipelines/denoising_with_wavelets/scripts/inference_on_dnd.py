@@ -2,6 +2,7 @@ from typing import Tuple
 from argparse import ArgumentParser, Namespace
 import cv2
 import numpy as np
+import torch
 import h5py
 from tqdm import tqdm
 import torch
@@ -13,6 +14,7 @@ os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 CURRENT_PATH = os.path.dirname(__file__)
 
 from WTSNet.wtsnet import WTSNet, convert_weights_from_old_version
+from WTSNet.wts_timm import WTSNetTimm
 from utils.window_inference import eval_denoise_inference
 
 
@@ -94,13 +96,15 @@ if __name__ == '__main__':
     args = parse_args()
 
     imgsz = 512
-    device = 'cuda'
+    # device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = 'cpu'
+    print('Device: {}'.format(device))
 
-    model = WTSNet().to(device)
+    model = WTSNetTimm().to(device)
 
     load_path = args.model
     load_data = torch.load(load_path, map_location=device)
-    model.load_state_dict(convert_weights_from_old_version(load_data['model']))
+    model.load_state_dict(load_data['model'])
     model.eval()
 
     # Fake run to optimize
@@ -131,6 +135,11 @@ if __name__ == '__main__':
         img = h5py.File(image_path, 'r')
         img = np.float32(np.array(img['InoisySRGB']).T)
 
+        img = cv2.cvtColor(
+            (img * 255.0).astype(np.uint8),
+            cv2.COLOR_RGB2YCrCb
+        ).astype(np.float32) / 255.0
+
         boxes = np.array(info[bb[0][image_idx]]).T
         for k in range(len(boxes)):
             box = [
@@ -158,7 +167,9 @@ if __name__ == '__main__':
             pred = restored_image.to('cpu')
             pred = torch.clamp(pred, 0, 1)
             pred_image = tensor_to_image(pred)
-            pred_matrix = tensor_to_srgb_matrix(pred)
+
+            pred_image = cv2.cvtColor(pred_image, cv2.COLOR_YCrCb2RGB)
+            pred_matrix = pred_image.astype(np.float32) / 255.0
 
             output_matrix_name = '%04d_%02d.mat' % (image_idx + 1, k + 1)
             out_matrix_path = os.path.join(

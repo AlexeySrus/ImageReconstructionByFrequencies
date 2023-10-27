@@ -13,7 +13,7 @@ import timm
 from PIL import Image
 import os
 from torchmetrics.image import PeakSignalNoiseRatio as TorchPSNR
-from pytorch_msssim import SSIM
+from pytorch_msssim import SSIM, MS_SSIM
 from piq import DISTS
 from pytorch_optimizer import AdaSmooth, Ranger21
 from haar_pytorch import HaarForward, HaarInverse
@@ -29,6 +29,11 @@ from utils.adversarial_loss import Adversarial
 class SSIMLoss(SSIM):
     def forward(self, x, y):
         return 1. - super().forward(x, y)
+
+
+class MIXLoss(MS_SSIM):
+    def forward(self, x, y):
+        return (1. - super().forward(x, y)) * (1-0.84) + torch.nn.functional.smooth_l1_loss(x, y) * 0.84
     
 
 class DWTHaar(torch.nn.Module):
@@ -119,7 +124,7 @@ class CustomTrainingPipeline(object):
                 clear_images_path=train_data_paths[1],
                 need_crop=True,
                 window_size=self.image_shape[0],
-                optional_dataset_size=55000,
+                optional_dataset_size=100000,
                 preload=preload_data
             )
 
@@ -128,7 +133,7 @@ class CustomTrainingPipeline(object):
                 clear_images_path=synth_data_paths,
                 window_size=self.image_shape[0],
                 preload=preload_data,
-                optional_dataset_size=10000
+                optional_dataset_size=20000
             )
 
             self.train_base_dataset = torch.utils.data.ConcatDataset(
@@ -208,11 +213,11 @@ class CustomTrainingPipeline(object):
                     '#' * 5 + ' Optimizer has been loaded by path: {} '.format(load_path) + '#' * 5
                 )
 
-        self.images_criterion = torch.nn.MSELoss()
-        self.perceptual_loss = DISTS()
-        # self.perceptual_loss = None
-        self.final_hist_loss = HistLoss(image_size=128, device=self.device)
-        # self.final_hist_loss = None
+        self.images_criterion = MIXLoss() # torch.nn.MSELoss()
+        # self.perceptual_loss = DISTS()
+        self.perceptual_loss = None
+        # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
+        self.final_hist_loss = None
 
         # self.adverserial_losses = [
         #     Adversarial(image_size=256, in_ch=3 * 3).to(device),
@@ -320,10 +325,10 @@ class CustomTrainingPipeline(object):
                     loss = loss / 2 + self.perceptual_loss(pred_image, clear_image) / 2
                     
                 wloss = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image)
-                hist_loss = self.final_hist_loss(pred_image, clear_image)
-                # hist_loss = 0
+                # hist_loss = self.final_hist_loss(pred_image, clear_image)
+                hist_loss = 0
 
-                total_loss = loss + wloss + hist_loss * 0.1
+                total_loss = loss
 
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 2.0)
