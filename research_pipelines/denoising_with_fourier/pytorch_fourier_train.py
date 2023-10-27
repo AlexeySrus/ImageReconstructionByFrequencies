@@ -189,8 +189,8 @@ class CustomTrainingPipeline(object):
         self.model.apply(init_weights)
         self.model = self.model.to(device)
         # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=0.00001)
-        # self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001)
-        self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
+        self.optimizer = torch.optim.Adam(params=self.model.parameters(), lr=0.001, betas=(0.9, 0.999))
+        # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
 
         if load_path is not None:
             load_data = torch.load(load_path, map_location=self.device)
@@ -208,8 +208,9 @@ class CustomTrainingPipeline(object):
 
         self.images_criterion = torch.nn.MSELoss()
         self.perceptual_loss = DISTS()
-        self.perceptual_loss = None
-        self.final_hist_loss = HistLoss(image_size=128, device=self.device)
+        # self.perceptual_loss = None
+        # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
+        self.final_hist_loss = None
         self.adv_loss = Adversarial(image_size=self.image_shape[0]).to(device)
 
         # self.ssim_loss = None
@@ -248,15 +249,17 @@ class CustomTrainingPipeline(object):
                 output = self.model(noisy_image)
                 pred_image = output[0]
 
-                loss = self.images_criterion(pred_image, clear_image)
+                # loss = self.images_criterion(pred_image, clear_image)
 
-                if self.perceptual_loss is not None:
-                    loss = loss / 2 + self.perceptual_loss(pred_image, clear_image) / 2
+                # if self.perceptual_loss is not None:
+                #     loss = loss / 2 + self.perceptual_loss(pred_image, clear_image) / 2
                     
-                hist_loss = self.final_hist_loss(pred_image, clear_image)
+                # hist_loss = self.final_hist_loss(pred_image, clear_image)
+                hist_loss = 0
                 a_loss = self.adv_loss(pred_image, clear_image)
 
-                total_loss = loss * 0.5 + a_loss + hist_loss * 0.1
+                total_loss = a_loss
+                loss = a_loss
 
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 2.0)
