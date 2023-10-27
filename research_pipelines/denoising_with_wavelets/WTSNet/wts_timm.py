@@ -671,14 +671,14 @@ class TimmEncoder(nn.Module):
         self.hf_conv3 = conv1x1(enc_channels[2], 3*3)
         self.hf_conv4 = conv1x1(enc_channels[3], 3*3)
         self.hf_conv5 = conv1x1(enc_channels[4], 3*3)
-        self.lf_conv5 = conv1x1(enc_channels[4], 3)
+        # self.lf_conv5 = conv1x1(enc_channels[4], 3)
 
         self.attn1 = CBAM(enc_channels[0])
         self.attn2 = CBAM(enc_channels[1])
         self.attn3 = CBAM(enc_channels[2])
         self.attn4 = CBAM(enc_channels[3])
         self.attn5 = CBAM(enc_channels[4])
-        self.attn6 = CBAM(enc_channels[4])
+        # self.attn6 = CBAM(enc_channels[4])
 
     def forward(self, x: torch.Tensor) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         x = (x - 0.5) * 2
