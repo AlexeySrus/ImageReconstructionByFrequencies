@@ -91,3 +91,11 @@ class HFENLoss(nn.Module): # Edge loss with pre_smooth
         if self.norm:
             hfen_loss /= img2.norm()
         return hfen_loss
+
+
+if __name__ == '__main__':
+    loss = HFENLoss(torch.nn.functional.smooth_l1_loss)
+    t1 = torch.rand(1, 3, 512, 512)
+    t2 = torch.rand(1, 3, 512, 512)
+    lv = loss(t1, t2)
+    print(lv)

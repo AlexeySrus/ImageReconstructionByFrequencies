@@ -518,7 +518,7 @@ def load_filter(kernel, kernel_size=3, in_channels=3, out_channels=3,
         )
 
     filter = conv(in_channels=in_channels, out_channels=out_channels,
-                        kernel_size=kernel_size, stride=stride, padding=padding,
+                        kernel_size=kernel_size, stride=stride, padding=pad, padding_mode='reflect',
                         groups=groups, bias=False)
     filter.weight.data = kernel
     filter.weight.requires_grad = requires_grad

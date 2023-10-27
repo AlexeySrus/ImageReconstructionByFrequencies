@@ -796,7 +796,8 @@ if __name__ == '__main__':
     wsize = 512
     img_path = '/media/alexey/SSDData/datasets/denoising_dataset/base_clear_images/cl_img7.jpeg'
     
-    img = cv2.imread(img_path, cv2.IMREAD_COLOR)[:wsize, :wsize, ::-1]
+    # img = cv2.imread(img_path, cv2.IMREAD_COLOR)[:wsize, :wsize, ::-1]
+    img = np.random.randint(0, 256, size=(wsize, wsize, 3), dtype=np.uint8)
     inp = torch.from_numpy(img.astype(np.float32) / 255.0).permute(2, 0, 1).unsqueeze(0)
     inp = inp.to(device)
 
