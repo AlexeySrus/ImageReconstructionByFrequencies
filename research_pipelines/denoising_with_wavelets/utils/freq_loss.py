@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import numpy as np
 
-from utils.filters import get_log_kernel, get_dog_kernel, load_filter
+from utils.filters import get_log_kernel, load_filter
 
 
 def denorm(x, min_max=(-1.0, 1.0)):
@@ -33,6 +33,16 @@ def norm(x):
     else:
         raise TypeError("Got unexpected object type, expected torch.Tensor or \
         np.ndarray")
+
+
+class FFTloss(torch.nn.Module):
+    def __init__(self, loss_f = torch.nn.L1Loss, reduction='mean'):
+        super(FFTloss, self).__init__()
+        self.criterion = loss_f(reduction=reduction)
+
+    def forward(self, img1, img2):
+        zeros=torch.zeros(img1.size()).to(img1.device)
+        return self.criterion(torch.fft(torch.stack((img1,zeros),-1),2),torch.fft(torch.stack((img2,zeros),-1),2))
 
 
 class HFENLoss(nn.Module): # Edge loss with pre_smooth
@@ -69,10 +79,7 @@ class HFENLoss(nn.Module): # Edge loss with pre_smooth
         self.criterion = loss_f
         self.norm = norm
         #can use different kernels like DoG instead:
-        if kernel == 'dog':
-            kernel = get_dog_kernel(kernel_size, sigma)
-        else:
-            kernel = get_log_kernel(kernel_size, sigma)
+        kernel = get_log_kernel(kernel_size, sigma)
         self.filter = load_filter(kernel=kernel, kernel_size=kernel_size)
 
     def forward(self, img1, img2):
