@@ -197,18 +197,13 @@ class CustomTrainingPipeline(object):
         self.iwt = IWTHaar()
         self.model = self.model.to(device)
         # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.0001, nesterov=True, momentum=0.9)
-        self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001)
+        self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.0001)
         # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
 
         if load_path is not None:
             load_data = torch.load(load_path, map_location=self.device)
 
             self.model.load_state_dict(load_data['model'])
-            delattr(self.model.encoder_model, "attn6")
-            delattr(self.model.encoder_model, "lf_conv5")
-            load_data['model'] = self.model.state_dict()
-            torch.save(load_data, load_path)
-            exit()
             print(
                 '#' * 5 + ' Model has been loaded by path: {} '.format(load_path) +  '#' * 5
             )
@@ -226,6 +221,7 @@ class CustomTrainingPipeline(object):
         self.perceptual_loss = None
         # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
         self.final_hist_loss = None
+        self.hight_freq_loss = HFENLoss()
 
         # self.adverserial_losses = [
         #     Adversarial(image_size=256, in_ch=3 * 3).to(device),
@@ -334,9 +330,9 @@ class CustomTrainingPipeline(object):
                     
                 wloss = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image)
                 # hist_loss = self.final_hist_loss(pred_image, clear_image)
-                hist_loss = 0
+                hf_loss = self.hight_freq_loss(pred_image, clear_image)
 
-                total_loss = loss
+                total_loss = loss + hf_loss
 
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 2.0)
@@ -348,7 +344,7 @@ class CustomTrainingPipeline(object):
                         self.epochs,
                         loss.item(),
                         wloss.item(),
-                        hist_loss.item() if self.final_hist_loss is not None else hist_loss
+                        hf_loss.item() # if self.final_hist_loss is not None else hist_loss
                     )
                 avg_epoch_loss += loss.item() / len(self.train_dataloader)
 
