@@ -220,7 +220,7 @@ class CustomTrainingPipeline(object):
             lr_milestones = [
                 int(i * (epochs / _lr_steps))
                 for i in range(1, _lr_steps)
-            ]
+            ] 
             print('Leaning rate milestone epochs: {}'.format(lr_milestones))
             self.scheduler = torch.optim.lr_scheduler.MultiStepLR(
                 self.optimizer,
