@@ -671,14 +671,14 @@ class TimmEncoder(nn.Module):
         self.hf_conv3 = conv1x1(enc_channels[2], 3*3)
         self.hf_conv4 = conv1x1(enc_channels[3], 3*3)
         self.hf_conv5 = conv1x1(enc_channels[4], 3*3)
-        self.lf_conv5 = conv1x1(enc_channels[4], 3)
+        # self.lf_conv5 = conv1x1(enc_channels[4], 3)
 
-        self.attn1 = CBAM(enc_channels[0])
-        self.attn2 = CBAM(enc_channels[1])
-        self.attn3 = CBAM(enc_channels[2])
-        self.attn4 = CBAM(enc_channels[3])
-        self.attn5 = CBAM(enc_channels[4])
-        self.attn6 = CBAM(enc_channels[4])
+        self.attn1 = CBAM(enc_channels[0], kernel_size=3)
+        self.attn2 = CBAM(enc_channels[1], kernel_size=3)
+        self.attn3 = CBAM(enc_channels[2], kernel_size=3)
+        self.attn4 = CBAM(enc_channels[3], kernel_size=3)
+        self.attn5 = CBAM(enc_channels[4], kernel_size=3)
+        # self.attn6 = CBAM(enc_channels[4])
 
     def forward(self, x: torch.Tensor) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         x = (x - 0.5) * 2
@@ -698,7 +698,7 @@ class TimmEncoder(nn.Module):
         hf5 = self.hf_conv5(of5)
         # pred_ll5 = self.lf_conv5(lof5) + 1
 
-        return hf1, hf2, hf3, hf4, hf5, None, [[sa1], [sa2], [sa3], [sa4], [sa5], [sa5]]
+        return hf1, hf2, hf3, hf4, hf5, None, [[sa1], [sa2], [sa3], [sa4], [sa5]]
 
 
 class WTSNetSMP(nn.Module):
@@ -774,15 +774,14 @@ class WTSNetTimm(nn.Module):
         wavelets4 = torch.cat((pred_ll4, hf4), dim=1)
         wavelets5 = torch.cat((pred_ll5, hf5), dim=1)
 
-        sa1, sa2, sa3, sa4, sa5, sa5l = sa_list
+        sa1, sa2, sa3, sa4, sa5 = sa_list
         sa1 = nn.functional.interpolate(sa1[0], (x.size(2), x.size(3)), mode='area')
         sa2 = nn.functional.interpolate(sa2[0], (x.size(2), x.size(3)), mode='area')
         sa3 = nn.functional.interpolate(sa3[0], (x.size(2), x.size(3)), mode='area')
         sa4 = nn.functional.interpolate(sa4[0], (x.size(2), x.size(3)), mode='area')
         sa5 = nn.functional.interpolate(sa5[0], (x.size(2), x.size(3)), mode='area')
-        sa5l = nn.functional.interpolate(sa5l[0], (x.size(2), x.size(3)), mode='area')
 
-        return pred_image, [wavelets1, wavelets2, wavelets3, wavelets4, wavelets5], [sa1, sa2, sa3, sa4, sa5, sa5l]
+        return pred_image, [wavelets1, wavelets2, wavelets3, wavelets4, wavelets5], [sa1, sa2, sa3, sa4, sa5]
 
 
 if __name__ == '__main__':
