@@ -23,6 +23,7 @@ from callbacks import VisImage, VisAttentionMaps, VisPlot
 from WTSNet.wts_timm import WTSNetTimm
 from utils.window_inference import denoise_inference
 from utils.hist_loss import HistLoss
+from utils.freq_loss import HFENLoss
 from utils.adversarial_loss import Adversarial
 
 
@@ -203,6 +204,11 @@ class CustomTrainingPipeline(object):
             load_data = torch.load(load_path, map_location=self.device)
 
             self.model.load_state_dict(load_data['model'])
+            delattr(self.model.encoder_model, "attn6")
+            delattr(self.model.encoder_model, "lf_conv5")
+            load_data['model'] = self.model.state_dict()
+            torch.save(load_data, load_path)
+            exit()
             print(
                 '#' * 5 + ' Model has been loaded by path: {} '.format(load_path) +  '#' * 5
             )
@@ -212,6 +218,8 @@ class CustomTrainingPipeline(object):
                 print(
                     '#' * 5 + ' Optimizer has been loaded by path: {} '.format(load_path) + '#' * 5
                 )
+
+        
 
         self.images_criterion = MIXLoss() # torch.nn.MSELoss()
         # self.perceptual_loss = DISTS()
