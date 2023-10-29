@@ -34,7 +34,7 @@ class SSIMLoss(SSIM):
 
 class MIXLoss(MS_SSIM):
     def forward(self, x, y):
-        return (1. - super().forward(x, y)) * (1-0.84) + torch.nn.functional.smooth_l1_loss(x, y) * 0.84
+        return (1. - super().forward(x, y)) * (1-0.84) + torch.nn.functional.l1_loss(x, y) * 0.84
     
 
 class DWTHaar(torch.nn.Module):
@@ -197,8 +197,8 @@ class CustomTrainingPipeline(object):
         self.iwt = IWTHaar()
         self.model = self.model.to(device)
         # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.0001, nesterov=True, momentum=0.9)
-        self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001)
-        # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
+        # self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001)
+        self.optimizer = Ranger21(params=self.model.parameters(), num_iterations=3, lr=0.001)
 
         if load_path is not None:
             load_data = torch.load(load_path, map_location=self.device)
@@ -230,7 +230,7 @@ class CustomTrainingPipeline(object):
         #     Adversarial(image_size=32, in_ch=3 * 4).to(device)
         # ]
 
-        self.adv_loss = Adversarial(image_size=512, in_ch=3).to(device)
+        # self.adv_loss = Adversarial(image_size=512, in_ch=3).to(device)
         # self.ssim_loss = None
         self.wavelets_criterion = torch.nn.SmoothL1Loss()
         self.accuracy_measure = TorchPSNR().to(device)
