@@ -81,12 +81,12 @@ class FeaturesProcessing(nn.Module):
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
         self.conv1 = conv3x3(in_ch, in_ch * 2)
-        self.act1 = nn.Mish()
+        self.act1 = nn.ReLU()
         self.conv2 = conv3x3(in_ch * 2, out_ch)
 
         self.down_bneck = conv1x1(in_ch, out_ch)
 
-        self.act_final = nn.Mish()
+        self.act_final = nn.ReLU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         hx = x

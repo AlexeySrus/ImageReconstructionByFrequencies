@@ -5,7 +5,7 @@ import torch.nn as nn
 from timm import create_model
 
 from WTSNet.attention import CBAM
-from WTSNet.wtsnet import UpscaleByWaveletes, DownscaleByWaveletes, conv1x1
+from WTSNet.wtsnet import UpscaleByWaveletes, DownscaleByWaveletes, conv1x1, FeaturesProcessingWithLastConv
 from haar_pytorch import HaarForward, HaarInverse
 
 
@@ -705,6 +705,7 @@ class WTSNetSMP(nn.Module):
     def __init__(self, image_channels: int = 3):
         super().__init__()
 
+        # To return version 1.0 comment this and disable frequences substraction
         # self.dwt1 = DownscaleByWaveletes()
         # self.dwt2 = DownscaleByWaveletes()
         # self.dwt3 = DownscaleByWaveletes()
@@ -719,10 +720,10 @@ class WTSNetSMP(nn.Module):
 
 
     def forward(self, x: torch.Tensor) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
-        # ll1, hf1 = self.dwt1(x)
-        # ll2, hf2 = self.dwt2(ll1 / 2)
-        # ll3, hf3 = self.dwt3(ll2 / 2)
-        # ll4, hf4 = self.dwt4(ll3 / 2)
+        # _, ohf1 = self.dwt1(x)
+        # _, ohf2 = self.dwt2(ll1 / 2)
+        # _, ohf3 = self.dwt3(ll2 / 2)
+        # _, ohf4 = self.dwt4(ll3 / 2)
 
         hf1, hf2, hf3, hf4, pred_ll4, sa_list = self.encoder_model(x)
 
@@ -825,9 +826,29 @@ if __name__ == '__main__':
     # model_cfg['params']['patch_size'] = 4
     # model_cfg['params']['out_channels'] = (3, 0, 8, 16, 32, 64)
     # model = MixVisionTransformerEncoder(**model_cfg['params'])
-    model = create_model('resnet10t', features_only=True)
-    print(model.feature_info.channels())
-    out = model(inp)
-    for o in out:
-        print(o.shape)
-    
+    # model = create_model('resnet10t', features_only=True)
+    # print(model.feature_info.channels())
+    # out = model(inp)
+    # for o in out:
+    #     print(o.shape)
+    dwt = DownscaleByWaveletes()
+    iwt = UpscaleByWaveletes()
+
+    x = torch.clone(inp)
+    pred_ll5 = nn.functional.interpolate(x, size=(x.size(2) // 32, x.size(3) // 32), mode='area') * 2
+
+    ll1, hf1 = dwt(x)
+    ll2, hf2 = dwt(ll1 / 2)
+    ll3, hf3 = dwt(ll2 / 2)
+    ll4, hf4 = dwt(ll3 / 2)
+    ll5, hf5 = dwt(ll4 / 2)
+
+    print('L2 between area and wavelets: {}'.format(torch.linalg.norm(pred_ll5 - ll5)))
+
+    pred_ll4 = iwt(pred_ll5, hf5) * 2
+    pred_ll3 = iwt(pred_ll4, hf4) * 2
+    pred_ll2 = iwt(pred_ll3, hf3) * 2
+    pred_ll1 = iwt(pred_ll2, hf2) * 2
+    pred_image = iwt(pred_ll1, hf1)
+
+    print('Wavelets MSE: {}'.format(torch.nn.functional.mse_loss(pred_image, inp).item()))

@@ -197,8 +197,8 @@ class CustomTrainingPipeline(object):
         self.iwt = IWTHaar()
         self.model = self.model.to(device)
         # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.0001, nesterov=True, momentum=0.9)
-        # self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.0001)
-        self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
+        self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001)
+        # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
 
         if load_path is not None:
             load_data = torch.load(load_path, map_location=self.device)
@@ -216,7 +216,7 @@ class CustomTrainingPipeline(object):
 
         
 
-        self.images_criterion = MIXLoss() # torch.nn.MSELoss()
+        # self.images_criterion = MIXLoss() # torch.nn.MSELoss()
         # self.perceptual_loss = DISTS()
         self.perceptual_loss = None
         # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
@@ -230,6 +230,7 @@ class CustomTrainingPipeline(object):
         #     Adversarial(image_size=32, in_ch=3 * 4).to(device)
         # ]
 
+        self.images_criterion = Adversarial(image_size=512, in_ch=3).to(device)
         # self.ssim_loss = None
         self.wavelets_criterion = torch.nn.SmoothL1Loss()
         self.accuracy_measure = TorchPSNR().to(device)
