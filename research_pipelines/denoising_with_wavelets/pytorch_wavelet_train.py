@@ -216,7 +216,7 @@ class CustomTrainingPipeline(object):
 
         
 
-        # self.images_criterion = MIXLoss() # torch.nn.MSELoss()
+        self.images_criterion = MIXLoss() # torch.nn.MSELoss()
         # self.perceptual_loss = DISTS()
         self.perceptual_loss = None
         # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
@@ -230,7 +230,7 @@ class CustomTrainingPipeline(object):
         #     Adversarial(image_size=32, in_ch=3 * 4).to(device)
         # ]
 
-        self.images_criterion = Adversarial(image_size=512, in_ch=3).to(device)
+        self.adv_loss = Adversarial(image_size=512, in_ch=3).to(device)
         # self.ssim_loss = None
         self.wavelets_criterion = torch.nn.SmoothL1Loss()
         self.accuracy_measure = TorchPSNR().to(device)
@@ -324,7 +324,8 @@ class CustomTrainingPipeline(object):
                 pred_wavelets_pyramid = output[1]
                 spatial_attention_maps = output[2]
 
-                loss = self.images_criterion(pred_image, clear_image)
+                # loss = self.images_criterion(pred_image, clear_image)
+                loss = self.adv_loss(pred_image, clear_image)
 
                 if self.perceptual_loss is not None:
                     loss = loss / 2 + self.perceptual_loss(pred_image, clear_image) / 2
