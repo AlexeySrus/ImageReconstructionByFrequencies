@@ -10,7 +10,6 @@ import os
 import scipy.io as sio
 from timeit import default_timer as time
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 CURRENT_PATH = os.path.dirname(__file__)
 
 from WTSNet.wtsnet import WTSNet, convert_weights_from_old_version
@@ -96,8 +95,8 @@ if __name__ == '__main__':
     args = parse_args()
 
     imgsz = 512
-    # device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    device = 'cpu'
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    # device = 'cpu'
     print('Device: {}'.format(device))
 
     model = WTSNetTimm().to(device)
