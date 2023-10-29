@@ -217,7 +217,7 @@ class CustomTrainingPipeline(object):
         
 
         self.images_criterion = MIXLoss() # torch.nn.MSELoss()
-        # self.perceptual_loss = DISTS()
+        self.perceptual_loss = DISTS()
         # self.perceptual_loss = None
         # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
         self.final_hist_loss = None
