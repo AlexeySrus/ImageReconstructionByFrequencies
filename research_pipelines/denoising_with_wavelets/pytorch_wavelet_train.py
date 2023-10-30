@@ -16,7 +16,7 @@ from torchmetrics.image import PeakSignalNoiseRatio as TorchPSNR
 from pytorch_msssim import SSIM, MS_SSIM
 from piq import DISTS
 from pytorch_optimizer import AdaSmooth, Ranger21
-from haar_pytorch import HaarForward, HaarInverse
+from utils.haar_utils import HaarForward, HaarInverse
 
 from dataloader import PairedDenoiseDataset, SyntheticNoiseDataset
 from callbacks import VisImage, VisAttentionMaps, VisPlot
@@ -125,7 +125,7 @@ class CustomTrainingPipeline(object):
                 clear_images_path=train_data_paths[1],
                 need_crop=True,
                 window_size=self.image_shape[0],
-                optional_dataset_size=100000,
+                optional_dataset_size=50000,
                 preload=preload_data
             )
 
@@ -134,7 +134,7 @@ class CustomTrainingPipeline(object):
                 clear_images_path=synth_data_paths,
                 window_size=self.image_shape[0],
                 preload=preload_data,
-                optional_dataset_size=20000
+                optional_dataset_size=50000
             )
 
             self.train_base_dataset = torch.utils.data.ConcatDataset(
@@ -196,9 +196,9 @@ class CustomTrainingPipeline(object):
         self.dwt = DWTHaar()
         self.iwt = IWTHaar()
         self.model = self.model.to(device)
-        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.0001, nesterov=True, momentum=0.9)
-        # self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001)
-        self.optimizer = Ranger21(params=self.model.parameters(), num_iterations=3, lr=0.001)
+        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=1E-5)
+        self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001)
+        # self.optimizer = Ranger21(params=self.model.parameters(), num_iterations=5, lr=0.01)
 
         if load_path is not None:
             load_data = torch.load(load_path, map_location=self.device)
@@ -272,7 +272,7 @@ class CustomTrainingPipeline(object):
 
             _loss_scale *= factor
 
-            gt_d0_ll = gt_ll / 2.0
+            gt_d0_ll = gt_ll
 
         return _loss
 
@@ -305,7 +305,7 @@ class CustomTrainingPipeline(object):
 
             _loss_scale *= factor
 
-            gt_d0_ll = gt_ll / 2.0
+            gt_d0_ll = gt_ll
 
         return _loss
 
@@ -335,7 +335,7 @@ class CustomTrainingPipeline(object):
                 # hist_loss = 0
                 # hf_loss = self.hight_freq_loss(pred_image, clear_image)
 
-                total_loss = loss
+                total_loss = loss + hist_loss * 0.5
 
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 2.0)

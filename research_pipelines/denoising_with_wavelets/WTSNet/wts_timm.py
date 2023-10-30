@@ -6,7 +6,7 @@ from timm import create_model
 
 from WTSNet.attention import CBAM
 from WTSNet.wtsnet import UpscaleByWaveletes, DownscaleByWaveletes, conv1x1, FeaturesProcessingWithLastConv
-from haar_pytorch import HaarForward, HaarInverse
+from utils.haar_utils import HaarForward, HaarInverse
 
 
 padding_mode: str = 'reflect'
@@ -671,14 +671,12 @@ class TimmEncoder(nn.Module):
         self.hf_conv3 = conv1x1(enc_channels[2], 3*3)
         self.hf_conv4 = conv1x1(enc_channels[3], 3*3)
         self.hf_conv5 = conv1x1(enc_channels[4], 3*3)
-        # self.lf_conv5 = conv1x1(enc_channels[4], 3)
 
-        self.attn1 = CBAM(enc_channels[0], kernel_size=3)
-        self.attn2 = CBAM(enc_channels[1], kernel_size=3)
-        self.attn3 = CBAM(enc_channels[2], kernel_size=3)
-        self.attn4 = CBAM(enc_channels[3], kernel_size=3)
-        self.attn5 = CBAM(enc_channels[4], kernel_size=3)
-        # self.attn6 = CBAM(enc_channels[4])
+        self.attn1 = CBAM(enc_channels[0], kernel_size=5)
+        self.attn2 = CBAM(enc_channels[1], kernel_size=5)
+        self.attn3 = CBAM(enc_channels[2], kernel_size=5)
+        self.attn4 = CBAM(enc_channels[3], kernel_size=5)
+        self.attn5 = CBAM(enc_channels[4], kernel_size=5)
 
     def forward(self, x: torch.Tensor) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         x = (x - 0.5) * 2
@@ -689,14 +687,12 @@ class TimmEncoder(nn.Module):
         of3, _, sa3 = self.attn3(of3)
         of4, _, sa4 = self.attn4(of4)
         of5, _, sa5 = self.attn5(_of5)
-        # lof5, _, sa5l = self.attn6(_of5)
 
         hf1 = self.hf_conv1(of1)
         hf2 = self.hf_conv2(of2)
         hf3 = self.hf_conv3(of3)
         hf4 = self.hf_conv4(of4)
         hf5 = self.hf_conv5(of5)
-        # pred_ll5 = self.lf_conv5(lof5) + 1
 
         return hf1, hf2, hf3, hf4, hf5, [[sa1], [sa2], [sa3], [sa4], [sa5]]
 
@@ -727,9 +723,9 @@ class WTSNetSMP(nn.Module):
 
         hf1, hf2, hf3, hf4, pred_ll4, sa_list = self.encoder_model(x)
 
-        pred_ll3 = self.iwt4(pred_ll4, hf4) * 2
-        pred_ll2 = self.iwt3(pred_ll3, hf3) * 2
-        pred_ll1 = self.iwt2(pred_ll2, hf2) * 2
+        pred_ll3 = self.iwt4(pred_ll4, hf4)
+        pred_ll2 = self.iwt3(pred_ll3, hf3)
+        pred_ll1 = self.iwt2(pred_ll2, hf2)
         pred_image = self.iwt1(pred_ll1, hf1)
 
         wavelets1 = torch.cat((pred_ll1, hf1), dim=1)
@@ -760,13 +756,13 @@ class WTSNetTimm(nn.Module):
 
 
     def forward(self, x: torch.Tensor) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
-        pred_ll5 = nn.functional.interpolate(x, size=(x.size(2) // 32, x.size(3) // 32), mode='area') * 2
+        pred_ll5 = nn.functional.interpolate(x, size=(x.size(2) // 32, x.size(3) // 32), mode='area')
         hf1, hf2, hf3, hf4, hf5, sa_list = self.encoder_model(x)
 
-        pred_ll4 = self.iwt5(pred_ll5, hf5) * 2
-        pred_ll3 = self.iwt4(pred_ll4, hf4) * 2
-        pred_ll2 = self.iwt3(pred_ll3, hf3) * 2
-        pred_ll1 = self.iwt2(pred_ll2, hf2) * 2
+        pred_ll4 = self.iwt5(pred_ll5, hf5)
+        pred_ll3 = self.iwt4(pred_ll4, hf4)
+        pred_ll2 = self.iwt3(pred_ll3, hf3)
+        pred_ll1 = self.iwt2(pred_ll2, hf2)
         pred_image = self.iwt1(pred_ll1, hf1)
 
         wavelets1 = torch.cat((pred_ll1, hf1), dim=1)
@@ -835,20 +831,45 @@ if __name__ == '__main__':
     iwt = UpscaleByWaveletes()
 
     x = torch.clone(inp)
-    pred_ll5 = nn.functional.interpolate(x, size=(x.size(2) // 32, x.size(3) // 32), mode='area') * 2
+    pred_ll5 = nn.functional.interpolate(x, size=(x.size(2) // 32, x.size(3) // 32), mode='area')
 
     ll1, hf1 = dwt(x)
-    ll2, hf2 = dwt(ll1 / 2)
-    ll3, hf3 = dwt(ll2 / 2)
-    ll4, hf4 = dwt(ll3 / 2)
-    ll5, hf5 = dwt(ll4 / 2)
+    ll2, hf2 = dwt(ll1)
+    ll3, hf3 = dwt(ll2)
+    ll4, hf4 = dwt(ll3)
+    ll5, hf5 = dwt(ll4)
+
+    print(hf1.min(), hf1.max())
 
     print('L2 between area and wavelets: {}'.format(torch.linalg.norm(pred_ll5 - ll5)))
+    print(pred_ll5[0, :, 7, 9], ll5[0, :, 7, 9])
 
-    pred_ll4 = iwt(pred_ll5, hf5) * 2
-    pred_ll3 = iwt(pred_ll4, hf4) * 2
-    pred_ll2 = iwt(pred_ll3, hf3) * 2
-    pred_ll1 = iwt(pred_ll2, hf2) * 2
+    pred_ll4 = iwt(pred_ll5, hf5)
+    pred_ll3 = iwt(pred_ll4, hf4)
+    pred_ll2 = iwt(pred_ll3, hf3)
+    pred_ll1 = iwt(pred_ll2, hf2)
     pred_image = iwt(pred_ll1, hf1)
+    print(pred_image.min(), pred_image.max())
 
-    print('Wavelets MSE: {}'.format(torch.nn.functional.mse_loss(pred_image, inp).item()))
+    print('Wavelets MSE: {}'.format(torch.linalg.norm(pred_image - inp)))
+
+    x = torch.LongTensor(
+        [
+            [1, 2, 3, 4, 5, 1],
+            [6, 7, 8, 9, 10, 1],
+            [11, 12, 13, 14, 15, 1],
+            [16, 17, 18, 19, 20, 1],
+            [21, 22, 23, 24, 25, 1],
+            [26, 27, 28, 29, 30, 31]
+        ]
+    ).unsqueeze(0).unsqueeze(0)
+    print(x.shape)
+
+    ll1, hf1 = dwt(x)
+    ll1 = ll1.to(torch.long)[0][0]
+    
+    pl1 = nn.functional.interpolate(x.to(torch.float32), size=(x.size(2) // 2, x.size(3) // 2), mode='area')
+    pl1 = pl1.to(torch.long)[0][0]
+
+    print(ll1)
+    print(pl1)

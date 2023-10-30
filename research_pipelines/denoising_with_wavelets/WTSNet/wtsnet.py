@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 
 from WTSNet.attention import CBAM
-from haar_pytorch import HaarForward, HaarInverse
+from utils.haar_utils import HaarForward, HaarInverse
 
 
 padding_mode: str = 'reflect'

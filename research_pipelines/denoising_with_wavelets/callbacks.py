@@ -346,17 +346,17 @@ class VisImage(VisImageForWavelets):
                     gt_image = self.change_color_function(torch.clip(gt_image, 0, 1).to('cpu'))
                     pred_image = self.change_color_function(torch.clip(pred_image, 0, 1).to('cpu'))
 
-                    pred_wavelets[0] = self.change_color_function(torch.clip(pred_wavelets[0] / 2, 0, 1).to('cpu'))
+                    pred_wavelets[0] = self.change_color_function(torch.clip(pred_wavelets[0], 0, 1).to('cpu'))
                     for k in range(1, 4):
-                        pred_wavelets[k] = torch.clip((pred_wavelets[k] + 1.0) / 2, 0, 1).to('cpu')
+                        pred_wavelets[k] = torch.clip(pred_wavelets[k] + 0.5, 0, 1).to('cpu')
 
-                    gt_wavelets[0] = self.change_color_function(torch.clip(gt_wavelets[0] / 2, 0, 1).to('cpu'))
+                    gt_wavelets[0] = self.change_color_function(torch.clip(gt_wavelets[0], 0, 1).to('cpu'))
                     for k in range(1, 4):
-                        gt_wavelets[k] = torch.clip((gt_wavelets[k] + 1.0) / 2, 0, 1).to('cpu')
+                        gt_wavelets[k] = torch.clip(gt_wavelets[k] + 0.5, 0, 1).to('cpu')
 
-                    inp_wavelets[0] = self.change_color_function(torch.clip(inp_wavelets[0] / 2, 0, 1).to('cpu'))
+                    inp_wavelets[0] = self.change_color_function(torch.clip(inp_wavelets[0], 0, 1).to('cpu'))
                     for k in range(1, 4):
-                        inp_wavelets[k] = torch.clip((inp_wavelets[k] + 1.0) / 2, 0, 1).to('cpu')
+                        inp_wavelets[k] = torch.clip(inp_wavelets[k] + 0.5, 0, 1).to('cpu')
 
                     wx_inp = torch.cat(
                         (
