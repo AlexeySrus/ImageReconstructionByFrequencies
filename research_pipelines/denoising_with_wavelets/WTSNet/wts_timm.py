@@ -7,6 +7,7 @@ from timm import create_model
 from WTSNet.attention import CBAM
 from WTSNet.wtsnet import UpscaleByWaveletes, DownscaleByWaveletes, conv1x1, FeaturesProcessingWithLastConv
 from utils.haar_utils import HaarForward, HaarInverse
+from utils.cas import contrast_adaptive_sharpening
 
 
 padding_mode: str = 'reflect'
@@ -786,6 +787,8 @@ class WTSNetTimm(nn.Module):
         sa3 = nn.functional.interpolate(sa3[0], (x.size(2), x.size(3)), mode='area')
         sa4 = nn.functional.interpolate(sa4[0], (x.size(2), x.size(3)), mode='area')
         sa5 = nn.functional.interpolate(sa5[0], (x.size(2), x.size(3)), mode='area')
+
+        pred_image = contrast_adaptive_sharpening(pred_image)
 
         return pred_image, [wavelets1, wavelets2, wavelets3, wavelets4, wavelets5], [sa1, sa2, sa3, sa4, sa5]
 
