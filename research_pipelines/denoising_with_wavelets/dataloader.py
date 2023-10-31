@@ -1,4 +1,4 @@
-from typing import Tuple, Optional, List
+from typing import Tuple, Optional, List, Union
 import albumentations as A
 import cv2
 import numpy as np
@@ -19,7 +19,8 @@ class PairedDenoiseDataset(Dataset):
                  need_crop: bool = False,
                  window_size: int = 224,
                  optional_dataset_size: Optional[int] = None,
-                 preload: bool = False):
+                 preload: bool = False,
+                 return_names: bool = False):
         self.noisy_images = {
             os.path.splitext(img_name)[0]: os.path.join(noisy_images_path, img_name)
             for img_name in os.listdir(noisy_images_path)
@@ -35,6 +36,9 @@ class PairedDenoiseDataset(Dataset):
         self.dataset_size = len(self.images_keys) if optional_dataset_size is None else optional_dataset_size
         self.window_size = window_size
         self.need_crop = need_crop
+        self.return_names = return_names
+
+        self.names = [img_name for img_name in os.listdir(clear_images_path)]
 
         if preload:
             print('Loading images into RAM:')
@@ -45,7 +49,7 @@ class PairedDenoiseDataset(Dataset):
     def __len__(self):
         return self.dataset_size
 
-    def __getitem__(self, _idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, _idx: int) -> Union[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor, str]]:
         idx = _idx % len(self.images_keys)
 
         noisy_image = self.noisy_images[self.images_keys[idx]]
@@ -65,6 +69,10 @@ class PairedDenoiseDataset(Dataset):
 
         noisy_image = cv2.cvtColor(noisy_image, cv2.COLOR_RGB2YCrCb)
         clear_image = cv2.cvtColor(clear_image, cv2.COLOR_RGB2YCrCb)
+
+        if self.return_names:
+            img_name = self.names[idx]
+            return preprocess_image(noisy_image, 0, 1), preprocess_image(clear_image, 0, 1), img_name
 
         return preprocess_image(noisy_image, 0, 1), preprocess_image(clear_image, 0, 1)
 

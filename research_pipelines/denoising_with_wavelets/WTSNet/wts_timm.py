@@ -743,7 +743,7 @@ class WTSNetSMP(nn.Module):
 
 
 class WTSNetTimm(nn.Module):
-    def __init__(self, image_channels: int = 3):
+    def __init__(self, image_channels: int = 3, use_clipping: bool = False):
         super().__init__()
 
         self.encoder_model = TimmEncoder()
@@ -754,10 +754,19 @@ class WTSNetTimm(nn.Module):
         self.iwt4 = UpscaleByWaveletes()
         self.iwt5 = UpscaleByWaveletes()
 
+        self.use_clipping = use_clipping
+
 
     def forward(self, x: torch.Tensor) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         pred_ll5 = nn.functional.interpolate(x, size=(x.size(2) // 32, x.size(3) // 32), mode='area')
         hf1, hf2, hf3, hf4, hf5, sa_list = self.encoder_model(x)
+
+        if self.use_clipping:
+            hf1 = torch.clamp(hf1, -0.5, 0.5)
+            hf2 = torch.clamp(hf2, -0.5, 0.5)
+            hf3 = torch.clamp(hf3, -0.5, 0.5)
+            hf4 = torch.clamp(hf4, -0.5, 0.5)
+            hf5 = torch.clamp(hf5, -0.5, 0.5)
 
         pred_ll4 = self.iwt5(pred_ll5, hf5)
         pred_ll3 = self.iwt4(pred_ll4, hf4)

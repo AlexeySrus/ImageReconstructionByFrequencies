@@ -125,7 +125,7 @@ class CustomTrainingPipeline(object):
                 clear_images_path=train_data_paths[1],
                 need_crop=True,
                 window_size=self.image_shape[0],
-                optional_dataset_size=50000,
+                optional_dataset_size=800000,
                 preload=preload_data
             )
 
@@ -134,7 +134,7 @@ class CustomTrainingPipeline(object):
                 clear_images_path=synth_data_paths,
                 window_size=self.image_shape[0],
                 preload=preload_data,
-                optional_dataset_size=50000
+                optional_dataset_size=200000
             )
 
             self.train_base_dataset = torch.utils.data.ConcatDataset(
@@ -145,7 +145,8 @@ class CustomTrainingPipeline(object):
         self.val_dataset = PairedDenoiseDataset(
             noisy_images_path=val_data_paths[0],
             clear_images_path=val_data_paths[1],
-            preload=preload_data
+            preload=preload_data,
+            return_names=True
         )
 
         self.train_dataloader = torch.utils.data.DataLoader(
@@ -197,8 +198,8 @@ class CustomTrainingPipeline(object):
         self.iwt = IWTHaar()
         self.model = self.model.to(device)
         # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=1E-5)
-        self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001)
-        # self.optimizer = Ranger21(params=self.model.parameters(), num_iterations=5, lr=0.01)
+        # self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001)
+        self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
 
         if load_path is not None:
             load_data = torch.load(load_path, map_location=self.device)
@@ -217,10 +218,10 @@ class CustomTrainingPipeline(object):
         
 
         self.images_criterion = MIXLoss() # torch.nn.MSELoss()
-        self.perceptual_loss = DISTS()
-        # self.perceptual_loss = None
-        self.final_hist_loss = HistLoss(image_size=128, device=self.device)
-        # self.final_hist_loss = None
+        # self.perceptual_loss = DISTS()
+        self.perceptual_loss = None
+        # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
+        self.final_hist_loss = None
         # self.hight_freq_loss = HFENLoss(loss_f=torch.nn.functional.smooth_l1_loss)
 
         # self.adverserial_losses = [
@@ -331,11 +332,11 @@ class CustomTrainingPipeline(object):
                     loss = loss / 2 + self.perceptual_loss(pred_image, clear_image) / 2
                     
                 wloss = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image)
-                hist_loss = self.final_hist_loss(pred_image, clear_image)
-                # hist_loss = 0
+                # hist_loss = self.final_hist_loss(pred_image, clear_image)
+                hist_loss = 0
                 # hf_loss = self.hight_freq_loss(pred_image, clear_image)
 
-                total_loss = loss + hist_loss * 0.5
+                total_loss = loss
 
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 2.0)
@@ -387,7 +388,7 @@ class CustomTrainingPipeline(object):
 
         if self.val_dataset is not None:
             for sample_i in tqdm.tqdm(range(len(self.val_dataset))):
-                _noisy_image, _clear_image = self.val_dataset[sample_i]
+                _noisy_image, _clear_image, image_name = self.val_dataset[sample_i]
 
                 noisy_image = _noisy_image.to(self.device)
                 clear_image = _clear_image.to(self.device)
@@ -415,7 +416,8 @@ class CustomTrainingPipeline(object):
                     avg_acc_rate += acc_rate
                     test_len += 1
 
-                    result_path = os.path.join(self.output_val_images_dir, '{}.png'.format(sample_i + 1))
+                    # result_path = os.path.join(self.output_val_images_dir, '{}.png'.format(sample_i + 1))
+                    result_path = os.path.join(self.output_val_images_dir, image_name)
                     val_img = (torch.clip(restored_image[0].to('cpu').permute(1, 2, 0), 0, 1) * 255.0).numpy().astype(np.uint8)
                     val_img = cv2.cvtColor(val_img, cv2.COLOR_YCrCb2RGB)
                     Image.fromarray(val_img).save(result_path)
