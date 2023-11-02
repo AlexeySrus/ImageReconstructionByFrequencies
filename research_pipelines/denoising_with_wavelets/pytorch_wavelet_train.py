@@ -198,8 +198,8 @@ class CustomTrainingPipeline(object):
         self.dwt = DWTHaar()
         self.iwt = IWTHaar()
         self.model = self.model.to(device)
-        self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=0.001)
-        # self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001)
+        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=0.001)
+        self.optimizer = torch.optim.Adam(params=self.model.parameters(), lr=0.01)
         # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
 
         if load_path is not None:
@@ -241,7 +241,7 @@ class CustomTrainingPipeline(object):
         #     Adversarial(image_size=32, in_ch=3 * 4).to(device)
         # ]
 
-        # self.adv_loss = Adversarial(image_size=512, in_ch=3).to(device)
+        self.adv_loss = Adversarial(image_size=image_size, in_ch=3).to(device)
         # self.ssim_loss = None
         self.wavelets_criterion = torch.nn.SmoothL1Loss()
         self.accuracy_measure = TorchPSNR().to(device)
@@ -338,7 +338,7 @@ class CustomTrainingPipeline(object):
                 # loss = self.images_criterion_ch1(pred_image[:, :1], clear_image[:, :1]) * 0.6 + \
                 #     self.images_criterion_ch2(pred_image[:, 1:], clear_image[:, 1:]) * 0.4
                 loss = self.images_criterion(pred_image, clear_image)
-                # loss = self.adv_loss(pred_image, clear_image)
+                aloss = self.adv_loss(pred_image, clear_image)
 
                 if self.perceptual_loss is not None:
                     loss = loss / 2 + self.perceptual_loss(pred_image, clear_image) / 2
@@ -348,19 +348,19 @@ class CustomTrainingPipeline(object):
                 hist_loss = 0
                 # hf_loss = self.hight_freq_loss(pred_image, clear_image)
 
-                total_loss = loss + wloss * 0.5
+                total_loss = loss + wloss * 0.5 + aloss
 
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 2.0)
                 self.optimizer.step()
 
                 pbar.postfix = \
-                    'Epoch: {}/{}, px_loss: {:.7f}, w_loss: {:.7f}, h_loss: {:.7f}'.format(
+                    'Epoch: {}/{}, px_loss: {:.7f}, w_loss: {:.7f}, adv_loss: {:.7f}'.format(
                         epoch,
                         self.epochs,
                         loss.item(),
                         wloss.item(),
-                        hist_loss.item() if self.final_hist_loss is not None else hist_loss
+                        aloss.item()
                     )
                 avg_epoch_loss += loss.item() / len(self.train_dataloader)
 
