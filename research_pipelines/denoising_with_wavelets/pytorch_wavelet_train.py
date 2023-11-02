@@ -274,12 +274,12 @@ class CustomTrainingPipeline(object):
         for i in range(len(pred_wavelets_pyramid)):
             gt_ll, gt_lh, gt_hl, gt_hh = self.dwt(gt_d0_ll)
 
-            if i == len(pred_wavelets_pyramid) - 1:
-                gt_wavelets = torch.cat((gt_ll, gt_lh, gt_hl, gt_hh), dim=1)
-                _loss += self.wavelets_criterion(pred_wavelets_pyramid[i], gt_wavelets) * _loss_scale
-            else:
-                gt_wavelets = torch.cat((gt_lh, gt_hl, gt_hh), dim=1)
-                _loss += self.wavelets_criterion(pred_wavelets_pyramid[i][:, 3:], gt_wavelets) * _loss_scale
+            # if i == len(pred_wavelets_pyramid) - 1:
+            #     gt_wavelets = torch.cat((gt_ll, gt_lh, gt_hl, gt_hh), dim=1)
+            #     _loss += self.wavelets_criterion(pred_wavelets_pyramid[i], gt_wavelets) * _loss_scale
+            # else:
+            gt_wavelets = torch.cat((gt_lh, gt_hl, gt_hh), dim=1)
+            _loss += self.wavelets_criterion(pred_wavelets_pyramid[i][:, 3:], gt_wavelets) * _loss_scale
 
             _loss_scale *= factor
 
@@ -351,7 +351,7 @@ class CustomTrainingPipeline(object):
                 total_loss = loss + wloss * 0.5
 
                 total_loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 2.0)
                 self.optimizer.step()
 
                 pbar.postfix = \
