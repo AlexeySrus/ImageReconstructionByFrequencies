@@ -347,7 +347,7 @@ class CustomTrainingPipeline(object):
                 hist_loss = 0
                 # hf_loss = self.hight_freq_loss(pred_image, clear_image)
 
-                total_loss = loss
+                total_loss = loss + wloss * 0.2
 
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 2.0)
