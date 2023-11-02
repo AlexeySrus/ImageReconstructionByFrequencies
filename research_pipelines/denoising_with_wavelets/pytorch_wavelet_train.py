@@ -265,10 +265,15 @@ class CustomTrainingPipeline(object):
     def get_lr(self):
         for param_group in self.optimizer.param_groups:
             return param_group['lr']
+    
+    def _add_loss(loss1, loss2):
+        if loss1 is None:
+            return loss2
+        return loss1 + loss2
 
     def _compute_wavelets_loss(self, pred_wavelets_pyramid, gt_image, factor: float = 1.0):
         gt_d0_ll = gt_image
-        _loss = 0.0
+        _loss = None
         _loss_scale = 1.0
 
         for i in range(len(pred_wavelets_pyramid)):
@@ -279,7 +284,7 @@ class CustomTrainingPipeline(object):
             #     _loss += self.wavelets_criterion(pred_wavelets_pyramid[i], gt_wavelets) * _loss_scale
             # else:
             gt_wavelets = torch.cat((gt_lh, gt_hl, gt_hh), dim=1)
-            _loss += self.wavelets_criterion(pred_wavelets_pyramid[i][:, 3:], gt_wavelets) * _loss_scale
+            _loss = self._add_loss(_loss, self.wavelets_criterion(pred_wavelets_pyramid[i][:, 3:], gt_wavelets)) * _loss_scale
 
             _loss_scale *= factor
 
@@ -348,7 +353,7 @@ class CustomTrainingPipeline(object):
                 hist_loss = 0
                 # hf_loss = self.hight_freq_loss(pred_image, clear_image)
 
-                total_loss = loss + wloss * 0.5 + aloss
+                total_loss = loss + wloss + aloss
 
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 2.0)
