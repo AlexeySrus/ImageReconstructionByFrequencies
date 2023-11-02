@@ -52,8 +52,8 @@ def contrast_adaptive_sharpening(x, amount=0.8, better_diagonals=True):
     """
     assert x.dim() >= 2
     assert 0 <= amount <= 1
-    assert x.max() <= 1
-    assert x.min() >= 0
+    # assert x.max() <= 1
+    # assert x.min() >= 0
     
     x_padded = F.pad(x, pad=(1, 1, 1, 1))
     # each side gets padded with 1 pixel 

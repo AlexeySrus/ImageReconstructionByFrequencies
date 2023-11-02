@@ -11,6 +11,7 @@ CURRENT_PATH = os.path.dirname(__file__)
 
 from WTSNet.wts_timm import WTSNetTimm
 from utils.window_inference import eval_denoise_inference
+from utils.cas import contrast_adaptive_sharpening
 
 
 def parse_args() -> Namespace:
@@ -42,7 +43,7 @@ if __name__ == '__main__':
     imgsz = 512
     device = 'cuda'
 
-    model = WTSNetTimm(use_clipping=True).to(device)
+    model = WTSNetTimm(model_name='efficientnetv2_s', use_clipping=True).to(device)
 
     load_path = args.model
     load_data = torch.load(load_path, map_location=device)
@@ -70,29 +71,44 @@ if __name__ == '__main__':
 
         gt_image_path = os.path.join(clear_folder, image_name)
         gt_img = cv2.imread(gt_image_path, cv2.IMREAD_COLOR)
-        gt_img = cv2.cvtColor(gt_img, cv2.COLOR_BGR2YCrCb)
+        gt_img = cv2.cvtColor(gt_img, cv2.COLOR_BGR2RGB)
 
         input_tensor = torch.from_numpy(img.astype(np.float32).transpose((2, 0, 1)) / 255.0)
         
         with torch.no_grad():
             restored_image = eval_denoise_inference(
                 tensor_img=input_tensor, model=model, window_size=imgsz, 
-                batch_size=64, crop_size=imgsz // 32, use_tta=True, device=device
+                batch_size=4, crop_size=imgsz // 32, use_tta=True, device=device
             )
 
+        restored_image = restored_image.unsqueeze(0)
+
+        # w = torch.zeros(1, 1, 3, 3)
+        # w[...] = 1/9
+        # restored_image[:, :1] = torch.nn.functional.conv2d(restored_image[:, :1], w, padding=1)
+        
+
+        w = torch.zeros(1, 1, 3, 3)
+        w[0, 0, 0, 1] = -1
+        w[0, 0, 1, 0] = -1
+        w[0, 0, 1, 2] = -1
+        w[0, 0, 2, 1] = -1
+        w[0, 0, 1, 1] = 5
+        restored_image[:, :1] = torch.nn.functional.conv2d(restored_image[:, :1], w, padding=1)
         input_tensor = input_tensor.to('cpu')
 
-        pred_image = restored_image.to('cpu')
+        pred_image = restored_image.to('cpu').squeeze(0)
         pred_image = torch.clamp(pred_image, 0, 1)
         pred_image = tensor_to_image(pred_image)
 
+        pred_image = cv2.cvtColor(pred_image, cv2.COLOR_YCrCb2RGB)
         psnr_values.append(cv2.PSNR(pred_image, gt_img))
 
         print('Image: {}, PSNR: {:.2f}'.format(image_name, psnr_values[-1]))
 
         cv2.imwrite(
             os.path.join(output_folder, image_name),
-            cv2.cvtColor(pred_image, cv2.COLOR_YCrCb2BGR)
+            cv2.cvtColor(pred_image, cv2.COLOR_RGB2BGR)
         )
 
     avg_psnr = np.array(psnr_values).mean()

@@ -94,7 +94,7 @@ def tensor_to_srgb_matrix(t: torch.Tensor) -> np.ndarray:
 if __name__ == '__main__':
     args = parse_args()
 
-    imgsz = 512
+    imgsz = 256
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     # device = 'cpu'
     print('Device: {}'.format(device))
@@ -108,7 +108,7 @@ if __name__ == '__main__':
 
     # Fake run to optimize
     with torch.no_grad():
-        _ = model(torch.rand(1, 3, 512, 512).to(device))
+        _ = model(torch.rand(1, 3, imgsz, imgsz).to(device))
 
     print('Best torchmetric PSNR: {:.2f}'.format(load_data['acc']))
 

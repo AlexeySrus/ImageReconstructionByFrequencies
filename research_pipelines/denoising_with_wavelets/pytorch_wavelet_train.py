@@ -1,9 +1,9 @@
+from typing import Tuple, Optional
 import logging
 from argparse import ArgumentParser, Namespace
 
 import cv2
 import numpy as np
-from typing import Tuple, Optional
 import tqdm
 import torch
 from torch.utils import data
@@ -68,6 +68,7 @@ class CustomTrainingPipeline(object):
                  synth_data_paths: Optional[str],
                  experiment_folder: str,
                  load_path: Optional[str] = None,
+                 model_name: str = 'resnet10t',
                  visdom_port: int = 9000,
                  batch_size: int = 32,
                  epochs: int = 200,
@@ -192,12 +193,12 @@ class CustomTrainingPipeline(object):
                 legend=['val']
             )
 
-        self.model = WTSNetTimm()
+        self.model = WTSNetTimm(model_name=model_name)
         # self.model.apply(init_weights)
         self.dwt = DWTHaar()
         self.iwt = IWTHaar()
         self.model = self.model.to(device)
-        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=1E-5)
+        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.00001, nesterov=True, momentum=0.9)
         # self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001)
         self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
 
@@ -205,6 +206,12 @@ class CustomTrainingPipeline(object):
             load_data = torch.load(load_path, map_location=self.device)
 
             self.model.load_state_dict(load_data['model'])
+            # self.model.to('cpu')
+            # setattr(self.model, 'last_conv', torch.nn.Conv2d(3, 3, kernel_size=5, stride=1, padding=2, padding_mode='reflect', bias=False))
+            # w = torch.zeros(3, 3, 5, 5)
+            # w[:, :, 2, 2] = 1
+            # self.model.last_conv.weight = torch.nn.Parameter(w)
+            # self.model.to(device)
             print(
                 '#' * 5 + ' Model has been loaded by path: {} '.format(load_path) +  '#' * 5
             )
@@ -215,9 +222,11 @@ class CustomTrainingPipeline(object):
                     '#' * 5 + ' Optimizer has been loaded by path: {} '.format(load_path) + '#' * 5
                 )
 
+        # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
         
 
-        self.images_criterion = MIXLoss() # torch.nn.MSELoss()
+        self.images_criterion_ch2 = MIXLoss(channel=2) # torch.nn.MSELoss()
+        self.images_criterion_ch1 = MIXLoss(channel=1)
         # self.perceptual_loss = DISTS()
         self.perceptual_loss = None
         # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
@@ -297,12 +306,12 @@ class CustomTrainingPipeline(object):
             gt_ll, gt_lh, gt_hl, gt_hh = self.dwt(gt_d0_ll)
             target_loss_function = self.adverserial_losses[i]
 
-            if i == len(pred_wavelets_pyramid) - 1:
-                gt_wavelets = torch.cat((gt_ll, gt_lh, gt_hl, gt_hh), dim=1)
-                _loss += target_loss_function(pred_wavelets_pyramid[i], gt_wavelets) * _loss_scale
-            else:
-                gt_wavelets = torch.cat((gt_lh, gt_hl, gt_hh), dim=1)
-                _loss += target_loss_function(pred_wavelets_pyramid[i][:, 3:], gt_wavelets) * _loss_scale
+            # if i == len(pred_wavelets_pyramid) - 1:
+            #     gt_wavelets = torch.cat((gt_ll, gt_lh, gt_hl, gt_hh), dim=1)
+            #     _loss += target_loss_function(pred_wavelets_pyramid[i], gt_wavelets) * _loss_scale
+            # else:
+            gt_wavelets = torch.cat((gt_lh, gt_hl, gt_hh), dim=1)
+            _loss += target_loss_function(pred_wavelets_pyramid[i][:, 3:], gt_wavelets) * _loss_scale
 
             _loss_scale *= factor
 
@@ -325,7 +334,8 @@ class CustomTrainingPipeline(object):
                 pred_wavelets_pyramid = output[1]
                 spatial_attention_maps = output[2]
 
-                loss = self.images_criterion(pred_image, clear_image)
+                loss = self.images_criterion_ch1(pred_image[:, :1], clear_image[:, :1]) * 0.8 + \
+                    self.images_criterion_ch2(pred_image[:, 1:], clear_image[:, 1:]) * 0.2
                 # loss = self.adv_loss(pred_image, clear_image)
 
                 if self.perceptual_loss is not None:
@@ -336,7 +346,7 @@ class CustomTrainingPipeline(object):
                 hist_loss = 0
                 # hf_loss = self.hight_freq_loss(pred_image, clear_image)
 
-                total_loss = loss
+                total_loss = loss + wloss * 0.5
 
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 2.0)
@@ -399,7 +409,8 @@ class CustomTrainingPipeline(object):
                         batch_size=self.batch_size, crop_size=self.image_shape[0] // 32
                     ).unsqueeze(0)
 
-                    loss = self.images_criterion(restored_image, clear_image.unsqueeze(0))
+                    loss = self.images_criterion_ch1(restored_image[:, :1], clear_image[:1].unsqueeze(0)) * 0.8 + \
+                        self.images_criterion_ch2(restored_image[:, 1:], clear_image[1:].unsqueeze(0)) * 0.2
 
                     if self.perceptual_loss is not None:
                         loss = loss / 2 + self.perceptual_loss(restored_image, clear_image.unsqueeze(0)) / 2
@@ -494,6 +505,10 @@ class CustomTrainingPipeline(object):
 def parse_args() -> Namespace:
     parser = ArgumentParser(description='Training pipeline')
     parser.add_argument(
+        '--model', type=str, required=False, default='resnet10t',
+        help='Model name from timm library.'
+    )
+    parser.add_argument(
         '--train_data_folder', type=str, required=True,
         help='Path folder with train data (contains clear/ and noisy/ subfolders).'
     )
@@ -562,6 +577,7 @@ if __name__ == '__main__':
     )
 
     CustomTrainingPipeline(
+        model_name=args.model,
         train_data_paths=train_data,
         val_data_paths=val_data,
         synth_data_paths=args.synthetic_data_paths,

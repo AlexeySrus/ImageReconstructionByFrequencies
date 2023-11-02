@@ -5,9 +5,8 @@ import torch.nn as nn
 from timm import create_model
 
 from WTSNet.attention import CBAM
-from WTSNet.wtsnet import UpscaleByWaveletes, DownscaleByWaveletes, conv1x1, FeaturesProcessingWithLastConv
+from WTSNet.wtsnet import UpscaleByWaveletes, DownscaleByWaveletes, conv1x1, conv3x3, FeaturesProcessingWithLastConv
 from utils.haar_utils import HaarForward, HaarInverse
-from utils.cas import contrast_adaptive_sharpening
 
 
 padding_mode: str = 'reflect'
@@ -631,16 +630,16 @@ class MitEncoder(nn.Module):
         model_cfg['params']['out_channels'] = (3, 0, 8, 16, 32, 64)
         self.encoder_model = MixVisionTransformerEncoder(**model_cfg['params'])
 
-        self.hf_conv1 = conv1x1(32, 3*3)
-        self.hf_conv2 = conv1x1(64, 3*3)
+        self.hf_conv1 = conv3x3(32, 3*3)
+        self.hf_conv2 = conv3x3(64, 3*3)
         self.hf_conv3 = conv1x1(160, 3*3)
         self.hf_conv4 = conv1x1(256, 3*3)
-        self.lf_conv4 = conv1x1(256, 3)
 
         self.attn1 = CBAM(32)
         self.attn2 = CBAM(64)
         self.attn3 = CBAM(160)
         self.attn4 = CBAM(256)
+
 
     def forward(self, x: torch.Tensor) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         x = (x - 0.5) *  2
@@ -667,8 +666,8 @@ class TimmEncoder(nn.Module):
         self.encoder_model = create_model(model_name, features_only=True)
         enc_channels = self.encoder_model.feature_info.channels()
 
-        self.hf_conv1 = conv1x1(enc_channels[0], 3*3)
-        self.hf_conv2 = conv1x1(enc_channels[1], 3*3)
+        self.hf_conv1 = conv3x3(enc_channels[0], 3*3)
+        self.hf_conv2 = conv3x3(enc_channels[1], 3*3)
         self.hf_conv3 = conv1x1(enc_channels[2], 3*3)
         self.hf_conv4 = conv1x1(enc_channels[3], 3*3)
         self.hf_conv5 = conv1x1(enc_channels[4], 3*3)
@@ -744,10 +743,10 @@ class WTSNetSMP(nn.Module):
 
 
 class WTSNetTimm(nn.Module):
-    def __init__(self, image_channels: int = 3, use_clipping: bool = False):
+    def __init__(self, model_name: str = 'resnet10t', image_channels: int = 3, use_clipping: bool = False):
         super().__init__()
 
-        self.encoder_model = TimmEncoder()
+        self.encoder_model = TimmEncoder(model_name=model_name)
 
         self.iwt1 = UpscaleByWaveletes()
         self.iwt2 = UpscaleByWaveletes()
@@ -756,6 +755,8 @@ class WTSNetTimm(nn.Module):
         self.iwt5 = UpscaleByWaveletes()
 
         self.use_clipping = use_clipping
+
+        # self.last_conv = nn.Conv2d(3, 3, kernel_size=5, stride=1, padding=2, padding_mode='reflect', bias=False)
 
 
     def forward(self, x: torch.Tensor) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
@@ -775,6 +776,8 @@ class WTSNetTimm(nn.Module):
         pred_ll1 = self.iwt2(pred_ll2, hf2)
         pred_image = self.iwt1(pred_ll1, hf1)
 
+        # pred_image = self.last_conv(pred_image)
+
         wavelets1 = torch.cat((pred_ll1, hf1), dim=1)
         wavelets2 = torch.cat((pred_ll2, hf2), dim=1)
         wavelets3 = torch.cat((pred_ll3, hf3), dim=1)
@@ -787,8 +790,6 @@ class WTSNetTimm(nn.Module):
         sa3 = nn.functional.interpolate(sa3[0], (x.size(2), x.size(3)), mode='area')
         sa4 = nn.functional.interpolate(sa4[0], (x.size(2), x.size(3)), mode='area')
         sa5 = nn.functional.interpolate(sa5[0], (x.size(2), x.size(3)), mode='area')
-
-        pred_image = contrast_adaptive_sharpening(pred_image)
 
         return pred_image, [wavelets1, wavelets2, wavelets3, wavelets4, wavelets5], [sa1, sa2, sa3, sa4, sa5]
 
