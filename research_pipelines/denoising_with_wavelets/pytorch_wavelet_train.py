@@ -266,7 +266,7 @@ class CustomTrainingPipeline(object):
         for param_group in self.optimizer.param_groups:
             return param_group['lr']
     
-    def _add_loss(loss1, loss2):
+    def _add_loss(self, loss1, loss2):
         if loss1 is None:
             return loss2
         return loss1 + loss2
