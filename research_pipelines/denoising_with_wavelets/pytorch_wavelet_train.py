@@ -198,7 +198,7 @@ class CustomTrainingPipeline(object):
         self.dwt = DWTHaar()
         self.iwt = IWTHaar()
         self.model = self.model.to(device)
-        self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=0.00001)
+        self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9)
         # self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001)
         # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
 
