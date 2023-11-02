@@ -680,13 +680,13 @@ class TimmEncoder(nn.Module):
 
     def forward(self, x: torch.Tensor) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         x = (x - 0.5) * 2
-        of1, of2, of3, of4, _of5 = self.encoder_model(x)
+        of1, of2, of3, of4, of5 = self.encoder_model(x)
 
         of1, _, sa1 = self.attn1(of1)
         of2, _, sa2 = self.attn2(of2)
         of3, _, sa3 = self.attn3(of3)
         of4, _, sa4 = self.attn4(of4)
-        of5, _, sa5 = self.attn5(_of5)
+        of5, _, sa5 = self.attn5(of5)
 
         hf1 = self.hf_conv1(of1)
         hf2 = self.hf_conv2(of2)
