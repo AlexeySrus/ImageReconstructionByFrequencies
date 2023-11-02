@@ -227,6 +227,7 @@ class CustomTrainingPipeline(object):
 
         self.images_criterion_ch2 = MIXLoss(channel=2) # torch.nn.MSELoss()
         self.images_criterion_ch1 = MIXLoss(channel=1)
+        self.images_criterion_ch3 = MIXLoss(channel=3)
         # self.perceptual_loss = DISTS()
         self.perceptual_loss = None
         # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
@@ -334,8 +335,8 @@ class CustomTrainingPipeline(object):
                 pred_wavelets_pyramid = output[1]
                 spatial_attention_maps = output[2]
 
-                loss = self.images_criterion_ch1(pred_image[:, :1], clear_image[:, :1]) * 0.8 + \
-                    self.images_criterion_ch2(pred_image[:, 1:], clear_image[:, 1:]) * 0.2
+                loss = self.images_criterion_ch3(pred_image, clear_image)
+                    # self.images_criterion_ch2(pred_image[:, 1:], clear_image[:, 1:]) * 0.2
                 # loss = self.adv_loss(pred_image, clear_image)
 
                 if self.perceptual_loss is not None:
@@ -409,8 +410,8 @@ class CustomTrainingPipeline(object):
                         batch_size=self.batch_size, crop_size=self.image_shape[0] // 32
                     ).unsqueeze(0)
 
-                    loss = self.images_criterion_ch1(restored_image[:, :1], clear_image[:1].unsqueeze(0)) * 0.8 + \
-                        self.images_criterion_ch2(restored_image[:, 1:], clear_image[1:].unsqueeze(0)) * 0.2
+                    loss = self.images_criterion_ch3(restored_image, clear_image.unsqueeze(0))
+                        # self.images_criterion_ch2(restored_image[:, 1:], clear_image[1:].unsqueeze(0)) * 0.2
 
                     if self.perceptual_loss is not None:
                         loss = loss / 2 + self.perceptual_loss(restored_image, clear_image.unsqueeze(0)) / 2
