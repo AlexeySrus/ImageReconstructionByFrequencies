@@ -3,14 +3,14 @@ from argparse import ArgumentParser, Namespace
 import cv2
 import numpy as np
 from tqdm import tqdm
+from skimage.metrics import structural_similarity as ssim
 import torch
 import os
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 CURRENT_PATH = os.path.dirname(__file__)
 
 from WTSNet.wts_timm import WTSNetTimm
-from utils.window_inference import eval_denoise_inference
+from utils.window_inference import eval_denoise_inference, denoise_inference
 from utils.cas import contrast_adaptive_sharpening
 
 
@@ -21,12 +21,20 @@ def parse_args() -> Namespace:
         help='Path to model checkpoint file'
     )
     parser.add_argument(
+        '-n', '--name', type=str, required=False, default='resnet10t',
+        help='Timm model name'
+    )
+    parser.add_argument(
         '-f', '--folder', type=str, required=True,
         help='Path to folder with images'
     )
     parser.add_argument(
         '-o', '--output', type=str, required=False,
         help='Path to folder with output visualizations (optional)'
+    )
+    parser.add_argument(
+        '-v', '--verbose', action='store_true',
+        help='Enable printing metrics per each sample)'
     )
     return parser.parse_args()
     
@@ -40,10 +48,10 @@ def tensor_to_image(t: torch.Tensor) -> np.ndarray:
 if __name__ == '__main__':
     args = parse_args()
 
-    imgsz = 512
+    imgsz = 256
     device = 'cuda'
 
-    model = WTSNetTimm(model_name='efficientnetv2_s', use_clipping=True).to(device)
+    model = WTSNetTimm(model_name=args.name, use_clipping=True).to(device)
 
     load_path = args.model
     load_data = torch.load(load_path, map_location=device)
@@ -53,6 +61,7 @@ if __name__ == '__main__':
     print('Best torchmetric PSNR: {:.2f}'.format(load_data['acc']))
 
     psnr_values = []
+    ssim_values = []
 
     if args.output is None:
         output_folder = os.path.join(CURRENT_PATH, '../../../materials/eval_results/')
@@ -71,45 +80,34 @@ if __name__ == '__main__':
 
         gt_image_path = os.path.join(clear_folder, image_name)
         gt_img = cv2.imread(gt_image_path, cv2.IMREAD_COLOR)
-        gt_img = cv2.cvtColor(gt_img, cv2.COLOR_BGR2RGB)
+        gt_img = cv2.cvtColor(gt_img, cv2.COLOR_BGR2YCrCb)
 
         input_tensor = torch.from_numpy(img.astype(np.float32).transpose((2, 0, 1)) / 255.0)
-        
+
         with torch.no_grad():
             restored_image = eval_denoise_inference(
                 tensor_img=input_tensor, model=model, window_size=imgsz, 
-                batch_size=4, crop_size=imgsz // 32, use_tta=True, device=device
+                batch_size=32, crop_size=imgsz // 32, use_tta=True, device=device
             )
 
-        restored_image = restored_image.unsqueeze(0)
-
-        # w = torch.zeros(1, 1, 3, 3)
-        # w[...] = 1/9
-        # restored_image[:, :1] = torch.nn.functional.conv2d(restored_image[:, :1], w, padding=1)
-        
-
-        w = torch.zeros(1, 1, 3, 3)
-        w[0, 0, 0, 1] = -1
-        w[0, 0, 1, 0] = -1
-        w[0, 0, 1, 2] = -1
-        w[0, 0, 2, 1] = -1
-        w[0, 0, 1, 1] = 5
-        restored_image[:, :1] = torch.nn.functional.conv2d(restored_image[:, :1], w, padding=1)
         input_tensor = input_tensor.to('cpu')
 
-        pred_image = restored_image.to('cpu').squeeze(0)
+        pred_image = restored_image.to('cpu')
         pred_image = torch.clamp(pred_image, 0, 1)
         pred_image = tensor_to_image(pred_image)
 
-        pred_image = cv2.cvtColor(pred_image, cv2.COLOR_YCrCb2RGB)
-        psnr_values.append(cv2.PSNR(pred_image, gt_img))
+        ssim_values.append(ssim(pred_image[..., 0], gt_img[..., 0]))
+        psnr_values.append(cv2.PSNR(pred_image[..., 0], gt_img[..., 0]))
 
-        print('Image: {}, PSNR: {:.2f}'.format(image_name, psnr_values[-1]))
+        if args.verbose:
+            print('Image: {}, PSNR: {:.2f}, SSIM: {:.3f}'.format(image_name, psnr_values[-1], ssim_values[-1]))
 
         cv2.imwrite(
             os.path.join(output_folder, image_name),
-            cv2.cvtColor(pred_image, cv2.COLOR_RGB2BGR)
+            cv2.cvtColor(pred_image, cv2.COLOR_YCrCb2BGR)
         )
 
     avg_psnr = np.array(psnr_values).mean()
+    avg_ssim = np.array(ssim_values).mean()
     print('Result PSNR: {:.2f}'.format(avg_psnr))
+    print('Result SSIM: {:.3f}'.format(avg_ssim))

@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from timm import create_model
 
-from WTSNet.attention import CBAM
+from WTSNet.attention import CBAM, CoordinateAttention
 from WTSNet.wtsnet import UpscaleByWaveletes, DownscaleByWaveletes, conv1x1, conv3x3, FeaturesProcessingWithLastConv
 from utils.haar_utils import HaarForward, HaarInverse
 
@@ -654,58 +654,13 @@ class MitEncoder(nn.Module):
         hf2 = self.hf_conv2(of2)
         hf3 = self.hf_conv3(of3)
         hf4 = self.hf_conv4(of4)
-        pred_ll4 = self.lf_conv4(of4) + 1
 
-        return hf1, hf2, hf3, hf4, pred_ll4, [[sa1], [sa2], [sa3], [sa4]]
-
-
-class TimmEncoder(nn.Module):
-    def __init__(self, model_name: str = 'resnet10t'):
-        super().__init__()
-
-        self.encoder_model = create_model(model_name, features_only=True)
-        enc_channels = self.encoder_model.feature_info.channels()
-
-        self.hf_conv1 = conv3x3(enc_channels[0], 3*3)
-        self.hf_conv2 = conv3x3(enc_channels[1], 3*3)
-        self.hf_conv3 = conv1x1(enc_channels[2], 3*3)
-        self.hf_conv4 = conv1x1(enc_channels[3], 3*3)
-        self.hf_conv5 = conv1x1(enc_channels[4], 3*3)
-
-        self.attn1 = CBAM(enc_channels[0], kernel_size=5)
-        self.attn2 = CBAM(enc_channels[1], kernel_size=5)
-        self.attn3 = CBAM(enc_channels[2], kernel_size=5)
-        self.attn4 = CBAM(enc_channels[3], kernel_size=5)
-        self.attn5 = CBAM(enc_channels[4], kernel_size=5)
-
-    def forward(self, x: torch.Tensor) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
-        x = (x - 0.5) * 2
-        of1, of2, of3, of4, of5 = self.encoder_model(x)
-
-        of1, _, sa1 = self.attn1(of1)
-        of2, _, sa2 = self.attn2(of2)
-        of3, _, sa3 = self.attn3(of3)
-        of4, _, sa4 = self.attn4(of4)
-        of5, _, sa5 = self.attn5(of5)
-
-        hf1 = self.hf_conv1(of1)
-        hf2 = self.hf_conv2(of2)
-        hf3 = self.hf_conv3(of3)
-        hf4 = self.hf_conv4(of4)
-        hf5 = self.hf_conv5(of5)
-
-        return hf1, hf2, hf3, hf4, hf5, [[sa1], [sa2], [sa3], [sa4], [sa5]]
+        return hf1, hf2, hf3, hf4, [[sa1], [sa2], [sa3], [sa4]]
 
 
 class WTSNetSMP(nn.Module):
     def __init__(self, image_channels: int = 3):
         super().__init__()
-
-        # To return version 1.0 comment this and disable frequences substraction
-        # self.dwt1 = DownscaleByWaveletes()
-        # self.dwt2 = DownscaleByWaveletes()
-        # self.dwt3 = DownscaleByWaveletes()
-        # self.dwt4 = DownscaleByWaveletes()
 
         self.encoder_model = MitEncoder()
 
@@ -716,12 +671,8 @@ class WTSNetSMP(nn.Module):
 
 
     def forward(self, x: torch.Tensor) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
-        # _, ohf1 = self.dwt1(x)
-        # _, ohf2 = self.dwt2(ll1 / 2)
-        # _, ohf3 = self.dwt3(ll2 / 2)
-        # _, ohf4 = self.dwt4(ll3 / 2)
-
-        hf1, hf2, hf3, hf4, pred_ll4, sa_list = self.encoder_model(x)
+        pred_ll4 = nn.functional.interpolate(x, size=(x.size(2) // 16, x.size(3) // 16), mode='area')
+        hf1, hf2, hf3, hf4, sa_list = self.encoder_model(x)
 
         pred_ll3 = self.iwt4(pred_ll4, hf4)
         pred_ll2 = self.iwt3(pred_ll3, hf3)
@@ -742,6 +693,51 @@ class WTSNetSMP(nn.Module):
         return pred_image, [wavelets1, wavelets2, wavelets3, wavelets4], [sa1, sa2, sa3, sa4]
 
 
+class TimmEncoder(nn.Module):
+    def __init__(self, model_name: str = 'resnet10t'):
+        super().__init__()
+
+        self.encoder_model = create_model(model_name, features_only=True)
+        enc_channels = self.encoder_model.feature_info.channels()
+
+        self.hf_conv1 = conv3x3(enc_channels[0], 3*3)
+        self.hf_conv2 = conv3x3(enc_channels[1], 3*3)
+        # self.hf_conv1 = conv1x1(enc_channels[0], 3*3)
+        # self.hf_conv2 = conv1x1(enc_channels[1], 3*3)
+        self.hf_conv3 = conv1x1(enc_channels[2], 3*3)
+        self.hf_conv4 = conv1x1(enc_channels[3], 3*3)
+        self.hf_conv5 = conv1x1(enc_channels[4], 3*3)
+
+        self.attn1 = CBAM(enc_channels[0], kernel_size=7)
+        self.attn2 = CBAM(enc_channels[1], kernel_size=7)
+        self.attn3 = CBAM(enc_channels[2], kernel_size=7)
+        self.attn4 = CBAM(enc_channels[3], kernel_size=7)
+        self.attn5 = CBAM(enc_channels[4], kernel_size=7)
+        # self.attn1 = CBAM(enc_channels[0], kernel_size=5)
+        # self.attn2 = CBAM(enc_channels[1], kernel_size=5)
+        # self.attn3 = CBAM(enc_channels[2], kernel_size=5)
+        # self.attn4 = CBAM(enc_channels[3], kernel_size=5)
+        # self.attn5 = CBAM(enc_channels[4], kernel_size=5)
+
+    def forward(self, x: torch.Tensor) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
+        x = (x - 0.5) * 2
+        of1, of2, of3, of4, of5 = self.encoder_model(x)
+
+        of1, _, sa1 = self.attn1(of1)
+        of2, _, sa2 = self.attn2(of2)
+        of3, _, sa3 = self.attn3(of3)
+        of4, _, sa4 = self.attn4(of4)
+        of5, _, sa5 = self.attn5(of5)
+
+        hf1 = self.hf_conv1(of1)
+        hf2 = self.hf_conv2(of2)
+        hf3 = self.hf_conv3(of3)
+        hf4 = self.hf_conv4(of4)
+        hf5 = self.hf_conv5(of5)
+
+        return hf1, hf2, hf3, hf4, hf5, [[sa1], [sa2], [sa3], [sa4], [sa5]]
+
+
 class WTSNetTimm(nn.Module):
     def __init__(self, model_name: str = 'resnet10t', image_channels: int = 3, use_clipping: bool = False):
         super().__init__()
@@ -755,8 +751,6 @@ class WTSNetTimm(nn.Module):
         self.iwt5 = UpscaleByWaveletes()
 
         self.use_clipping = use_clipping
-
-        # self.last_conv = nn.Conv2d(3, 3, kernel_size=5, stride=1, padding=2, padding_mode='reflect', bias=False)
 
 
     def forward(self, x: torch.Tensor) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
@@ -775,8 +769,6 @@ class WTSNetTimm(nn.Module):
         pred_ll2 = self.iwt3(pred_ll3, hf3)
         pred_ll1 = self.iwt2(pred_ll2, hf2)
         pred_image = self.iwt1(pred_ll1, hf1)
-
-        # pred_image = self.last_conv(pred_image)
 
         wavelets1 = torch.cat((pred_ll1, hf1), dim=1)
         wavelets2 = torch.cat((pred_ll2, hf2), dim=1)
@@ -798,12 +790,27 @@ if __name__ == '__main__':
     import cv2
     import numpy as np
     from fvcore.nn import FlopCountAnalysis
+    from timeit import default_timer
 
     device = 'cpu'
 
-    model = WTSNetTimm().to(device)
+    model = WTSNetTimm(model_name='resnet101').to(device)
+    model.eval()
 
-    wsize = 512
+    wsize = 256
+
+    t = torch.rand(5, 3, wsize, wsize)
+    with torch.no_grad():
+        _ = model(t)
+
+    start_time = default_timer()
+    with torch.no_grad():
+        for _ in range(100):
+            a = model(t)
+    finish_time = default_timer()
+
+    print('Inference time: {:.2f}'.format((finish_time - start_time) / 100))
+
     img_path = '/media/alexey/SSDData/datasets/denoising_dataset/base_clear_images/cl_img7.jpeg'
     
     # img = cv2.imread(img_path, cv2.IMREAD_COLOR)[:wsize, :wsize, ::-1]
@@ -855,7 +862,7 @@ if __name__ == '__main__':
     print(hf1.min(), hf1.max())
 
     print('L2 between area and wavelets: {}'.format(torch.linalg.norm(pred_ll5 - ll5)))
-    print(pred_ll5[0, :, 7, 9], ll5[0, :, 7, 9])
+    print(pred_ll5[0, :, 1, 1], ll5[0, :, 1, 1])
 
     pred_ll4 = iwt(pred_ll5, hf5)
     pred_ll3 = iwt(pred_ll4, hf4)

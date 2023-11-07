@@ -4,6 +4,13 @@ from tqdm import tqdm
 from .tensor_utils import TensorRotate, rotate_tensor, preprocess_image
 
 
+def pad_to_batch(_input_batch: torch.Tensor, _batch_size: int):
+    pad_size = _batch_size - _input_batch.size(0)
+    if pad_size <= 0:
+        return _input_batch
+    return torch.nn.functional.pad(_input_batch, (0, 0, 0, 0, 0, 0, 0, pad_size))
+
+
 def denoise_inference(
         tensor_img: torch.Tensor,
         model: torch.nn.Module,

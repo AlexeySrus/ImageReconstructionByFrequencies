@@ -326,8 +326,9 @@ class Discriminator(nn.Module):
         m_classifier = [
             # nn.Linear(out_channels * patch_size**2, 1024),
             # nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Linear(out_channels, out_channels // 2),
             act,
-            nn.Linear(out_channels, 1)
+            nn.Linear(out_channels // 2, 1)
         ]
         self.classifier = nn.Sequential(*m_classifier)
 
