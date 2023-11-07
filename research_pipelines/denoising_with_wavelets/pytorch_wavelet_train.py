@@ -126,7 +126,7 @@ class CustomTrainingPipeline(object):
                 clear_images_path=train_data_paths[1],
                 need_crop=True,
                 window_size=self.image_shape[0],
-                optional_dataset_size=200000,
+                optional_dataset_size=400000,
                 preload=preload_data
             )
 
@@ -135,7 +135,7 @@ class CustomTrainingPipeline(object):
                 clear_images_path=synth_data_paths,
                 window_size=self.image_shape[0],
                 preload=preload_data,
-                optional_dataset_size=50000
+                optional_dataset_size=100000
             )
 
             self.train_base_dataset = torch.utils.data.ConcatDataset(
