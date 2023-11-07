@@ -794,7 +794,7 @@ if __name__ == '__main__':
 
     device = 'cpu'
 
-    model = WTSNetTimm(model_name='resnet101').to(device)
+    model = WTSNetTimm(model_name='efficientnet_b0').to(device)
     model.eval()
 
     wsize = 256
@@ -803,13 +803,14 @@ if __name__ == '__main__':
     with torch.no_grad():
         _ = model(t)
 
+    N = 100
     start_time = default_timer()
     with torch.no_grad():
-        for _ in range(100):
+        for _ in range(N):
             a = model(t)
     finish_time = default_timer()
 
-    print('Inference time: {:.2f}'.format((finish_time - start_time) / 100))
+    print('Inference time: {:.2f}'.format((finish_time - start_time) / N))
 
     img_path = '/media/alexey/SSDData/datasets/denoising_dataset/base_clear_images/cl_img7.jpeg'
     
@@ -853,22 +854,28 @@ if __name__ == '__main__':
     x = torch.clone(inp)
     pred_ll5 = nn.functional.interpolate(x, size=(x.size(2) // 32, x.size(3) // 32), mode='area')
 
-    ll1, hf1 = dwt(x)
-    ll2, hf2 = dwt(ll1)
-    ll3, hf3 = dwt(ll2)
-    ll4, hf4 = dwt(ll3)
-    ll5, hf5 = dwt(ll4)
+    start_time = default_timer()
+    for _ in range(100):
+        ll1, hf1 = dwt(x)
+        ll2, hf2 = dwt(ll1)
+        ll3, hf3 = dwt(ll2)
+        ll4, hf4 = dwt(ll3)
+        ll5, hf5 = dwt(ll4)
+
+        pred_ll4 = iwt(pred_ll5, hf5)
+        pred_ll3 = iwt(pred_ll4, hf4)
+        pred_ll2 = iwt(pred_ll3, hf3)
+        pred_ll1 = iwt(pred_ll2, hf2)
+        pred_image = iwt(pred_ll1, hf1)
+    finish_time = default_timer()
+
+    print('Wavelets full path time: {:.2f}'.format((finish_time - start_time) / 100))
 
     print(hf1.min(), hf1.max())
 
     print('L2 between area and wavelets: {}'.format(torch.linalg.norm(pred_ll5 - ll5)))
     print(pred_ll5[0, :, 1, 1], ll5[0, :, 1, 1])
 
-    pred_ll4 = iwt(pred_ll5, hf5)
-    pred_ll3 = iwt(pred_ll4, hf4)
-    pred_ll2 = iwt(pred_ll3, hf3)
-    pred_ll1 = iwt(pred_ll2, hf2)
-    pred_image = iwt(pred_ll1, hf1)
     print(pred_image.min(), pred_image.max())
 
     print('Wavelets MSE: {}'.format(torch.linalg.norm(pred_image - inp)))

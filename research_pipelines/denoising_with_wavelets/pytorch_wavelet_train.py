@@ -198,8 +198,8 @@ class CustomTrainingPipeline(object):
         self.dwt = DWTHaar()
         self.iwt = IWTHaar()
         self.model = self.model.to(device)
-        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=0.00001)
-        self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001)
+        self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=0.00001)
+        # self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001)
         # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
 
         if load_path is not None:
@@ -227,7 +227,7 @@ class CustomTrainingPipeline(object):
 
         # self.images_criterion_ch2 = MIXLoss(channel=2) # torch.nn.MSELoss()
         # self.images_criterion_ch1 = MIXLoss(channel=1)
-        self.images_criterion = MIXLoss()
+        self.images_criterion = MIXLoss(data_range=1)
         # self.perceptual_loss = DISTS()
         self.perceptual_loss = None
         # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
@@ -277,11 +277,7 @@ class CustomTrainingPipeline(object):
 
         for i in range(len(pred_wavelets_pyramid)):
             gt_ll, gt_lh, gt_hl, gt_hh = self.dwt(gt_d0_ll)
-
-            # if i == len(pred_wavelets_pyramid) - 1:
-            #     gt_wavelets = torch.cat((gt_ll, gt_lh, gt_hl, gt_hh), dim=1)
-            #     _loss += self.wavelets_criterion(pred_wavelets_pyramid[i], gt_wavelets) * _loss_scale
-            # else:
+            
             gt_wavelets = torch.cat((gt_lh, gt_hl, gt_hh), dim=1)
             _loss = self._add_loss(_loss, self.wavelets_criterion(pred_wavelets_pyramid[i][:, 3:], gt_wavelets)) * _loss_scale
 
@@ -352,7 +348,7 @@ class CustomTrainingPipeline(object):
                 hist_loss = 0
                 # hf_loss = self.hight_freq_loss(pred_image, clear_image)
 
-                total_loss = wloss * 0.2
+                total_loss = loss + wloss * 0.2
 
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 2.0)

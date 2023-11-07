@@ -8,7 +8,7 @@ import os
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 CURRENT_PATH = os.path.dirname(__file__)
 
-from IS_Net.wt_attn_isnet import ISNetWT
+from WTSNet.wts_timm import WTSNetTimm
 
 
 def parse_args() -> Namespace:
@@ -16,6 +16,10 @@ def parse_args() -> Namespace:
     parser.add_argument(
         '-m', '--model', type=str, required=True,
         help='Path to model checkpoint file'
+    )
+    parser.add_argument(
+        '-n', '--name', type=str, required=False, default='resnet10t',
+        help='Timm model name'
     )
     parser.add_argument(
         '-i', '--image', type=str, required=False,
@@ -26,13 +30,16 @@ def parse_args() -> Namespace:
         help='Path to folder with output visualizations (optional)'
     )
     parser.add_argument(
-        '-g', '--gamma_correction', type=float, required=False, default=1.5,
+        '-g', '--gamma_correction', type=float, required=False, default=1.0,
         help='Coefficient to adjust gamma of wavelets coefficients visualization (optional)'
     )
     return parser.parse_args()
 
 
 def adjust_gamma(image: np.ndarray, gamma: float = 1.0) -> np.ndarray:
+    if abs (gamma - 1.0) < 1E-5:
+        return image.copy()
+
     invGamma = 1.0 / gamma
     table = np.array([((i / 255.0) ** invGamma) * 255
         for i in np.arange(0, 256)]).astype("uint8")
@@ -42,7 +49,7 @@ def adjust_gamma(image: np.ndarray, gamma: float = 1.0) -> np.ndarray:
 def tensor_to_image(t: torch.Tensor) -> np.ndarray:
     _img = t.permute(1, 2, 0).numpy()
     _img = (_img * 255.0).astype(np.uint8)
-    return _img
+    return cv2.cvtColor(_img, cv2.COLOR_YCrCb2RGB)
 
 
 def add_paddings_to_image(image: np.ndarray, border: int = 8) -> np.ndarray:
@@ -75,11 +82,12 @@ def add_alpha_channel(image: np.ndarray) -> np.ndarray:
 if __name__ == '__main__':
     args = parse_args()
 
-    model = ISNetWT(in_ch=3, out_ch=3 * 4, image_ch=3)
+    model = WTSNetTimm(model_name=args.name, use_clipping=False)
 
     load_path = args.model
     load_data = torch.load(load_path, map_location='cpu')
     model.load_state_dict(load_data['model'])
+    model.eval()
 
     print('Best torchmetric PSNR: {:.2f}'.format(load_data['acc']))
 
@@ -96,20 +104,22 @@ if __name__ == '__main__':
         image_path = args.image
 
     img = cv2.imread(image_path, cv2.IMREAD_COLOR)
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    if img.shape[0] != 256 or img.shape[1] != 256:
+        img = cv2.resize(img, (256, 256), interpolation=cv2.INTER_AREA)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
 
     input_tensor = torch.from_numpy(img.astype(np.float32).transpose((2, 0, 1)) / 255.0).unsqueeze(0)
     
     with torch.no_grad():
         outputs = model(input_tensor)
     
-    d1, d2, d3, d4, d5, d6 = outputs[0]
+    d1, d2, d3, d4, d5 = outputs[1]
 
     final_vis_grid = []
 
-    for wavelets_level, w in enumerate([d2, d3, d4, d5, d6]):
+    for wavelets_level, w in enumerate([d1, d2, d3, d4, d5]):
         ll, lh, hl, hh = torch.split(w[0], 3, dim=0)
-        ll = torch.clamp(ll / 2, 0, 1)
+        ll = torch.clamp(ll, 0, 1)
         lh = torch.clamp(lh + 0.5, 0, 1)
         hl = torch.clamp(hl + 0.5, 0, 1)
         hh = torch.clamp(hh + 0.5, 0, 1)
@@ -165,7 +175,7 @@ if __name__ == '__main__':
         final_vis_grid[i][:, w:, 3] = 0
 
     final_vis_grid = np.concatenate(
-        final_vis_grid[:4],last
+        final_vis_grid[:4],
         axis=1
     )
 
