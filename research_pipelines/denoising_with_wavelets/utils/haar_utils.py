@@ -68,3 +68,67 @@ class HaarInverse(nn.Module):
         out[:,:,1::2,0::2] = self.alpha * (self._f(x, 0, size) - self._f(x, 1, size) + self._f(x, 2, size) - self._f(x, 3, size))
         out[:,:,1::2,1::2] = self.alpha * (self._f(x, 0, size) - self._f(x, 1, size) - self._f(x, 2, size) + self._f(x, 3, size))
         return out
+
+
+
+class ConvHaarForward(nn.Module):
+    """
+    Performs a 2d DWT Forward decomposition of an image using Haar Wavelets implemented with Conv2d
+    """
+    def __init__(self, n_channels: int = 3):
+        super().__init__()
+        self.w_conv = self.generate_dwt_kernel(n_channels)
+
+    @staticmethod
+    def generate_dwt_kernel(n_channels: int = 3):
+        w = torch.zeros(n_channels * 4, n_channels, 2, 2)
+
+        for k in range(n_channels):
+            # A
+            w[k + 4*k, k, :, :] = 1/4
+
+            # # H
+            # w[k + n_channels, k, 0, 0] = 1/4
+            # w[k + n_channels, k, 0, 1] = -1/4
+            # w[k + n_channels, k, 1, 0] = 1/4
+            # w[k + n_channels, k, 1, 1] = -1/4
+
+            # # V
+            # w[k + n_channels * 2, k, 0, 0] = 1/4
+            # w[k + n_channels * 2, k, 0, 1] = 1/4
+            # w[k + n_channels * 2, k, 1, 0] = -1/4
+            # w[k + n_channels * 2, k, 1, 1] = -1/4
+
+            # # D
+            # w[k + n_channels * 3, k, 0, 0] = 1/4
+            # w[k + n_channels * 3, k, 0, 1] = -1/4
+            # w[k + n_channels * 3, k, 1, 0] = -1/4
+            # w[k + n_channels * 3, k, 1, 1] = 1/4
+
+        a_param = torch.nn.Conv2d(n_channels, n_channels * 4, 2, 2)
+        a_param.weight = torch.nn.Parameter(w, requires_grad=False)
+        return a_param
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Performs a 2d DWT Forward decomposition of an image using Haar Wavelets
+
+        Arguments:
+            x (torch.Tensor): input tensor of shape [b, c, h, w]
+
+        Returns:
+            out (torch.Tensor): output tensor of shape [b, c * 4, h / 2, w / 2]
+        """
+
+        return self.w_conv(x)
+
+
+if __name__ == '__main__':
+    dwt = HaarForward()
+    cdwt = ConvHaarForward()
+
+    t = torch.rand(1, 3, 512, 512)
+    w1 = dwt(t)
+    w2 = cdwt(t)
+
+    print(torch.linalg.norm(w1[:, :3] - w2[:, :3]))

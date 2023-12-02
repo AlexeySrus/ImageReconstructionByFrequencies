@@ -24,6 +24,7 @@ from WTSNet.wts_timm import WTSNetTimm
 from utils.window_inference import denoise_inference
 from utils.hist_loss import HistLoss
 from utils.freq_loss import HFENLoss
+from utils.sparce_loss import SparceLoss
 from utils.adversarial_loss import Adversarial
 
 
@@ -198,8 +199,8 @@ class CustomTrainingPipeline(object):
         self.dwt = DWTHaar()
         self.iwt = IWTHaar()
         self.model = self.model.to(device)
-        self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=0.00001)
-        # self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001)
+        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.0001, nesterov=True, momentum=0.9)
+        self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001)
         # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
 
         if load_path is not None:
@@ -242,8 +243,10 @@ class CustomTrainingPipeline(object):
         # ]
 
         # self.adv_loss = Adversarial(image_size=image_size, in_ch=3).to(device)
-        self.wavelets_criterion = torch.nn.SmoothL1Loss()
+        self.wavelets_criterion = SparceLoss()
         self.accuracy_measure = TorchPSNR().to(device)
+
+        self.scheduler = None
 
         if lr_steps > 0:
             _lr_steps = lr_steps + 1
@@ -255,11 +258,18 @@ class CustomTrainingPipeline(object):
             self.scheduler = torch.optim.lr_scheduler.MultiStepLR(
                 self.optimizer,
                 milestones=lr_milestones,
-                gamma=0.1,
+                gamma=0.5,
                 verbose=True
             )
+            self.step_scheduler = False
         else:
-            self.scheduler = None
+            self.step_scheduler = True
+
+            # self.scheduler = torch.optim.lr_scheduler.CyclicLR(
+            #     self.optimizer, 
+            #     base_lr=0.00001, 
+            #     max_lr=0.01
+            # )
 
     def get_lr(self):
         for param_group in self.optimizer.param_groups:
@@ -338,17 +348,17 @@ class CustomTrainingPipeline(object):
                 # loss = self.images_criterion_ch1(pred_image[:, :1], clear_image[:, :1]) * 0.6 + \
                 #     self.images_criterion_ch2(pred_image[:, 1:], clear_image[:, 1:]) * 0.4
                 loss = self.images_criterion(pred_image, clear_image)
-                # aloss = self.adv_loss(pred_image, clear_image)
+                # loss = self.adv_loss(pred_image, clear_image)
 
                 if self.perceptual_loss is not None:
                     loss = loss / 2 + self.perceptual_loss(pred_image, clear_image) / 2
                     
-                wloss = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image)
+                wloss = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image) 
                 # hist_loss = self.final_hist_loss(pred_image, clear_image)
                 hist_loss = 0
                 # hf_loss = self.hight_freq_loss(pred_image, clear_image)
 
-                total_loss = loss + wloss * 0.2
+                total_loss = wloss
 
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 2.0)
@@ -359,7 +369,8 @@ class CustomTrainingPipeline(object):
                         epoch,
                         self.epochs,
                         loss.item(),
-                        wloss.item()
+                        wloss.item(),
+                        # hist_loss.item()
                     )
                 avg_epoch_loss += loss.item() / len(self.train_dataloader)
 
@@ -386,6 +397,9 @@ class CustomTrainingPipeline(object):
                             },
                             i=vis_idx
                         )
+
+                if self.scheduler is not None and self.step_scheduler:
+                    self.scheduler.step()
 
                 pbar.update(1)
 
@@ -439,7 +453,7 @@ class CustomTrainingPipeline(object):
             avg_acc_rate /= test_len
             avg_loss_rate /= test_len
 
-        if self.scheduler is not None:
+        if self.scheduler is not None and not self.step_scheduler:
             self.scheduler.step()
 
         return avg_loss_rate, avg_acc_rate
