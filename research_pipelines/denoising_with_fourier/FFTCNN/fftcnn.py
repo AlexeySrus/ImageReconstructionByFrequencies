@@ -228,7 +228,7 @@ class FFTCNN(nn.Module):
         x = self.basic_layer_1(inp)
         x = self.final_comples_conv(x)
 
-        x = x - inp
+        x = inp - x
 
         restored_x = torch.fft.ifft2(
             x, norm=self.four_normalized
