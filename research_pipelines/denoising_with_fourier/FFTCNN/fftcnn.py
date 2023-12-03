@@ -223,10 +223,12 @@ class FFTCNN(nn.Module):
         return fourier_transform_x
 
     def forward(self, image):
-        x = self.get_fourier(image)
+        inp = self.get_fourier(image)
         
-        x = self.basic_layer_1(x)
+        x = self.basic_layer_1(inp)
         x = self.final_comples_conv(x)
+
+        x = x - inp
 
         restored_x = torch.fft.ifft2(
             x, norm=self.four_normalized
