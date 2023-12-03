@@ -213,7 +213,8 @@ class FFTCNN(nn.Module):
         self.four_normalized = 'ortho' if four_normalized else None        
         
         self.basic_layer_1 = FourierBlock(3, 16)
-        self.final_conv = nn.Conv2d(16, 3, 1, dtype=torch.float32)
+        self.final_comples_conv = nn.Conv2d(16, 3, 1, dtype=torch.cfloat)
+        self.final_real_conv = nn.Conv2d(3, 3, 1, dtype=torch.float32)
             
     def get_fourier(self, x):
         fourier_transform_x = torch.fft.fft2(
@@ -225,11 +226,13 @@ class FFTCNN(nn.Module):
         x = self.get_fourier(image)
         
         x = self.basic_layer_1(x)
-        x = self.final_conv(torch.abs(x))
+        x = self.final_comples_conv(x)
 
         restored_x = torch.fft.ifft2(
             x, norm=self.four_normalized
         )
+
+        restored_x = self.final_real_conv(torch.abs(restored_x))
 
         return restored_x, []
 
