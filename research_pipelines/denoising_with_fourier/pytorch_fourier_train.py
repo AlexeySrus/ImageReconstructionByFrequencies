@@ -206,12 +206,12 @@ class CustomTrainingPipeline(object):
                     '#' * 5 + ' Optimizer has been loaded by path: {} '.format(load_path) + '#' * 5
                 )
 
-        self.images_criterion = torch.nn.MSELoss()
+        self.images_criterion = torch.nn.L1Loss()
         # self.perceptual_loss = DISTS()
         self.perceptual_loss = None
         # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
         self.final_hist_loss = None
-        self.adv_loss = Adversarial(image_size=self.image_shape[0]).to(device)
+        # self.adv_loss = Adversarial(image_size=self.image_shape[0]).to(device)
 
         # self.ssim_loss = None
         self.accuracy_measure = TorchPSNR().to(device)
