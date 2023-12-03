@@ -2,8 +2,6 @@ import torch
 from torch import nn
 import numpy
 
-from FFTCNN.cbam import CBAM
-
 padding_mode = 'reflect'
 
 
@@ -60,46 +58,30 @@ class FourierComplexConv2d(nn.Module):
         )
     
     
-# def conv1x1(inplanes, planes):
-#     return FourierComplexConv2d(inplanes, planes, 1, 0)
+def conv1x1(inplanes, planes):
+    return nn.Conv2d(inplanes, planes, 1, 1, padding=0, dtype=torch.cfloat)
     
     
-# def conv3x3(inplanes, planes):
-#     return FourierComplexConv2d(inplanes, planes, 3, 1)
+def conv3x3(inplanes, planes):
+    return nn.Conv2d(inplanes, planes, 3, 1, padding=1, dtype=torch.cfloat)
 
 
-
-def conv1x1(in_ch, out_ch):
-    return nn.Conv2d(
-        in_channels=in_ch,
-        out_channels=out_ch,
-        kernel_size=1,
-        stride=1,
-        padding=0
-    )
-
-
-def conv3x3(in_ch, out_ch):
-    return nn.Conv2d(
-        in_channels=in_ch,
-        out_channels=out_ch,
-        kernel_size=3,
-        stride=1,
-        padding=1,
-        padding_mode=padding_mode
-    )
+def retrieve_elements_from_indices(tensor, indices):
+    flattened_tensor = tensor.flatten(start_dim=2)
+    output = flattened_tensor.gather(dim=2, index=indices.flatten(start_dim=2)).view_as(indices)
+    return output
 
 
 class FeaturesProcessing(nn.Module):
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
         self.conv1 = conv3x3(in_ch, in_ch * 2)
-        self.act1 = nn.Mish()
+        self.act1 = real_imaginary_swish
         self.conv2 = conv3x3(in_ch * 2, out_ch)
 
         self.down_bneck = conv1x1(in_ch, out_ch)
 
-        self.act_final = nn.Mish()
+        self.act_final = real_imaginary_swish
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         hx = x
@@ -129,25 +111,38 @@ class FeaturesDownsample(nn.Module):
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
         self.features = FeaturesProcessing(in_ch, out_ch)
-        self.pool = nn.MaxPool2d(2, 2, ceil_mode=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y = self.features(x)
-        y = self.pool(y)
+        _, indices = nn.functional.max_pool2d_with_indices(torch.abs(y), (2, 2))
+        y = retrieve_elements_from_indices(y, indices)
         return y
+    
+
+class CustomUpsampleNearest2x(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+
+    def forward(self, y):
+        new_y = torch.zeros(y.size(0), y.size(1), y.size(2) * 2, y.size(3) * 2, dtype=y.dtype, device=y.device)
+
+        for k in range(2):
+            for q in range(2):
+                new_y[:, :, k::2, q::2] = torch.clone(y)
+
+        return new_y
     
 
 class FeaturesUpsample(nn.Module):
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
-        self.up = nn.ConvTranspose2d(in_ch, in_ch // 2, kernel_size=2, stride=2)
-        self.act = nn.Mish()
-        self.features = FeaturesProcessing(in_ch // 2, out_ch)
+        self.up = CustomUpsampleNearest2x()
+        self.features = FeaturesProcessing(in_ch, out_ch)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y = self.up(x)
-        y = self.act(y)
         y = self.features(y)
+        y = real_imaginary_swish(y)
         return y
 
 
@@ -161,11 +156,8 @@ class MiniUNet(nn.Module):
 
         self.deep_conv_block = FeaturesProcessing(mid_ch * 2, mid_ch)
 
-        self.upsample2 = nn.UpsamplingBilinear2d(scale_factor=2) # FeaturesUpsample(mid_ch, mid_ch)
-        self.upsample1 = nn.UpsamplingBilinear2d(scale_factor=2) # FeaturesUpsample(mid_ch, mid_ch)
-
-        self.attn2 = CBAM(mid_ch + mid_ch)
-        self.attn1 = CBAM(mid_ch + mid_ch)
+        self.upsample2 = FeaturesUpsample(mid_ch, mid_ch)
+        self.upsample1 = FeaturesUpsample(mid_ch, mid_ch)
         
         self.upsample_features_block2 = FeaturesProcessing(mid_ch + mid_ch, mid_ch)
         self.upsample_features_block1 = FeaturesProcessing(mid_ch + mid_ch, out_ch)
@@ -182,17 +174,15 @@ class MiniUNet(nn.Module):
 
         deep_f = self.upsample2(deep_f)
         decoded_f2 = torch.cat((down_f1, deep_f[:, :, :, :down_f1.size(3)]), axis=1)
-        decoded_f2, _, sa_attn1 = self.attn2(decoded_f2)
         decoded_f2 = self.upsample_features_block2(decoded_f2)
 
         decoded_f2 = self.upsample1(decoded_f2)
         decoded_f1 = torch.cat((hx, decoded_f2[:, :, :, :hx.size(3)]), dim=1)
-        decoded_f1, _, sa_attn2 = self.attn1(decoded_f1)
         decoded_f1 = self.upsample_features_block1(decoded_f1)
 
         decoded_f1 = self.final_conv(decoded_f1)
 
-        return decoded_f1, [sa_attn1, sa_attn2]
+        return decoded_f1, []
 
     
 class FourierBlock(nn.Module):
@@ -211,7 +201,7 @@ class FourierBlock(nn.Module):
         out, _ = self.process(identity)
 
         out += identity
-        out = torch.nn.functional.mish(out)
+        out = real_imaginary_swish(out)
 
         return out
 
@@ -223,53 +213,39 @@ class FFTCNN(nn.Module):
         self.four_normalized = 'ortho' if four_normalized else None        
         
         self.basic_layer_1 = FourierBlock(3, 16)
-        self.basic_layer_2 = FourierBlock(3, 16)
-        # self.final_conv = FourierComplexConv2d(3, 3, 1, 0, use_bias=False)
-        self.final_conv1 = nn.Conv2d(16, 3, 1, padding=0, bias=False)
-        self.final_conv2 = nn.Conv2d(16, 3, 1, padding=0, bias=False)
+        self.final_conv = nn.Conv2d(16, 3, 1, dtype=torch.cfloat)
             
     def get_fourier(self, x):
-        fourier_transform_x = torch.fft.rfft2(
+        fourier_transform_x = torch.fft.fft2(
             x, norm=self.four_normalized
         )
         return fourier_transform_x
 
     def forward(self, image):
         inp = self.get_fourier(image)
-        amp_part, angle_part = torch.abs(inp), torch.angle(inp)
         
-        x = amp_part
-        x = self.basic_layer_1(x)
-        x = self.final_conv1(x)
+        x = self.basic_layer_1(inp)
+        x = self.final_conv(x)
 
-        y = angle_part
-        y = self.basic_layer_2(y)
-        y = self.final_conv2(y)
-        
-        x = x * torch.exp(1.j * y)
-
-        restored_x = torch.fft.irfft2(
+        restored_x = torch.fft.ifft2(
             x, norm=self.four_normalized
         )
 
-        return restored_x[:, :, :image.size(2), :image.size(3)], []
+        return restored_x, []
 
 
 if __name__ == '__main__':
     import cv2
     import numpy as np
     from torch.onnx import OperatorExportTypes
-    from fvcore.nn import FlopCountAnalysis
-    # from pthflops import count_ops
-    from pytorch_optimizer import AdaSmooth
 
-    device = 'cuda:0'
+    device = 'cpu'
 
     model = FFTCNN().to(device)
     model.apply(init_weights)
 
     wsize = 512
-    img_path = '/media/alexey/SSDData/datasets/denoising_dataset/base_clear_images/cl_img7.jpeg'
+    img_path = '/Users/alexey/Downloads/st_photo_1.jpg'
     
     img = cv2.imread(img_path, cv2.IMREAD_COLOR)[:wsize, :wsize, ::-1]
     inp = torch.from_numpy(img.astype(np.float32) / 255.0).permute(2, 0, 1).unsqueeze(0)
@@ -277,12 +253,6 @@ if __name__ == '__main__':
     inp = inp.repeat(4, 1, 1, 1)
 
     with torch.no_grad():
-        out = model(inp)
+        out, _ = model(inp)
 
-    print('Rand MSE: {}'.format(torch.nn.functional.mse_loss(out[0], inp).item()))
-
-    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
-    params = sum([np.prod(p.size()) for p in model_parameters])
-    print('Params: {} params'.format(params))
-
-    print('TOPS: {:.1f}'.format(FlopCountAnalysis(model, inp).total() / 1E+9))
+    print('Rand L1: {}'.format(torch.nn.functional.l1_loss(out, inp).item()))

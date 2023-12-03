@@ -207,8 +207,8 @@ class CustomTrainingPipeline(object):
                 )
 
         self.images_criterion = torch.nn.MSELoss()
-        self.perceptual_loss = DISTS()
-        # self.perceptual_loss = None
+        # self.perceptual_loss = DISTS()
+        self.perceptual_loss = None
         # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
         self.final_hist_loss = None
         self.adv_loss = Adversarial(image_size=self.image_shape[0]).to(device)
@@ -249,28 +249,26 @@ class CustomTrainingPipeline(object):
                 output = self.model(noisy_image)
                 pred_image = output[0]
 
-                # loss = self.images_criterion(pred_image, clear_image)
+                loss = self.images_criterion(pred_image, clear_image)
 
                 # if self.perceptual_loss is not None:
                 #     loss = loss / 2 + self.perceptual_loss(pred_image, clear_image) / 2
                     
                 # hist_loss = self.final_hist_loss(pred_image, clear_image)
                 hist_loss = 0
-                a_loss = self.adv_loss(pred_image, clear_image)
+                # a_loss = self.adv_loss(pred_image, clear_image)
 
-                total_loss = a_loss
-                loss = a_loss
+                total_loss = loss
 
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 2.0)
                 self.optimizer.step()
 
                 pbar.postfix = \
-                    'Epoch: {}/{}, px_loss: {:.7f}, adv_loss: {:.7f}, h_loss: {:.7f}'.format(
+                    'Epoch: {}/{}, px_loss: {:.7f}, h_loss: {:.7f}'.format(
                         epoch,
                         self.epochs,
                         loss.item(),
-                        a_loss.item(),
                         hist_loss.item() if self.final_hist_loss is not None else hist_loss
                     )
                 avg_epoch_loss += loss.item() / len(self.train_dataloader)
