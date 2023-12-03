@@ -213,7 +213,7 @@ class FFTCNN(nn.Module):
         self.four_normalized = 'ortho' if four_normalized else None        
         
         self.basic_layer_1 = FourierBlock(3, 16)
-        self.final_conv = nn.Conv2d(16, 3, 1, dtype=torch.cfloat)
+        self.final_conv = nn.Conv2d(16, 3, 1, dtype=torch.float32)
             
     def get_fourier(self, x):
         fourier_transform_x = torch.fft.fft2(
@@ -222,10 +222,10 @@ class FFTCNN(nn.Module):
         return fourier_transform_x
 
     def forward(self, image):
-        inp = self.get_fourier(image)
+        x = self.get_fourier(image)
         
-        x = self.basic_layer_1(inp)
-        x = self.final_conv(x)
+        x = self.basic_layer_1(x)
+        x = self.final_conv(np.abs(x))
 
         restored_x = torch.fft.ifft2(
             x, norm=self.four_normalized
@@ -254,5 +254,6 @@ if __name__ == '__main__':
 
     with torch.no_grad():
         out, _ = model(inp)
+
 
     print('Rand L1: {}'.format(torch.nn.functional.l1_loss(out, inp).item()))
