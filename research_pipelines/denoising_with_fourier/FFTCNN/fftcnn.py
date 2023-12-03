@@ -225,7 +225,7 @@ class FFTCNN(nn.Module):
         x = self.get_fourier(image)
         
         x = self.basic_layer_1(x)
-        x = self.final_conv(np.abs(x))
+        x = self.final_conv(torch.abs(x))
 
         restored_x = torch.fft.ifft2(
             x, norm=self.four_normalized
