@@ -1,6 +1,6 @@
 #!/bin/bash
 
-export PYTHONPATH=./:../../third_party/pytorch-attention/
+export PYTHONPATH=./:../../third_party/pytorch-attention/:../../third_party/Uformer/
 
 python3 pytorch_wavelet_train.py \
     --model "resnet10t" \
@@ -10,9 +10,9 @@ python3 pytorch_wavelet_train.py \
     --epochs 50 \
     --lr_milestones 0 \
     --image_size 256 \
-    --batch_size 32 \
-    --visdom 9001 \
-    --njobs 12 \
-    --exp /media/alexey/SSDData/experiments/denoising/resnet10t_v2/ \
+    --batch_size 4 \
+    --visdom 9002 \
+    --njobs 4 \
+    --exp /media/alexey/SSDData/experiments/denoising/uformer_wavelets_uns/ \
     --preload_datasets --no_load_optim \
-    --load /media/alexey/SSDData/experiments/denoising/resnet10t_v2/checkpoints/best.trh
+    --load /media/alexey/SSDData/experiments/denoising/uformer_wavelets_uns/checkpoints/best.trh
