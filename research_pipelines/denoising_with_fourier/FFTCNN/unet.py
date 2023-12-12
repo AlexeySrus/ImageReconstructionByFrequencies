@@ -173,7 +173,7 @@ class FFTAttentionUNetModule(nn.Module):
         self.upsample2 = FeaturesUpsample(mid_ch * 2, mid_ch)
         self.upsample1 = FeaturesUpsample(mid_ch, mid_ch)
         
-        self.upsample_features_block4 = FeaturesProcessing(mid_ch * 3 + mid_ch * 3, mid_ch * 2)
+        self.upsample_features_block4 = FeaturesProcessing(mid_ch * 3 + mid_ch * 3, mid_ch * 3)
         self.upsample_features_block3 = FeaturesProcessing(mid_ch * 2 + mid_ch * 2, mid_ch * 2)
         self.upsample_features_block2 = FeaturesProcessing(mid_ch + mid_ch, mid_ch)
         self.upsample_features_block1 = FeaturesProcessing(mid_ch + mid_ch, out_ch)
@@ -192,7 +192,7 @@ class FFTAttentionUNetModule(nn.Module):
         decoded_f4 = torch.cat((down_f3, deep_f), axis=1)
         decoded_f4, sa_df4 = self.upsample_features_block4(decoded_f4)
 
-        deep_f, sa_up_3 = self.upsample3(deep_f)
+        deep_f, sa_up_3 = self.upsample3(decoded_f4)
         decoded_f3 = torch.cat((down_f2, deep_f), axis=1)
         decoded_f3, sa_df3 = self.upsample_features_block3(decoded_f3)
 
