@@ -277,6 +277,18 @@ class CustomTrainingPipeline(object):
         if loss1 is None:
             return loss2
         return loss1 + loss2
+    
+    def decompose_by_wavelets(self, _img: torch.Tensor, level: int = 1):
+        gt_d0_ll = _img
+
+        result = []
+
+        for _ in range(len(level)):
+            gt_ll, gt_lh, gt_hl, gt_hh = self.dwt(gt_d0_ll)
+            result.append(torch.concatenate((gt_ll, gt_lh, gt_hl, gt_hh), dim=1))
+            gt_d0_ll = gt_ll
+
+        return result
 
     def _compute_wavelets_loss(self, pred_wavelets_pyramid, gt_image, factor: float = 1.0, use_approximation: bool = True):
         gt_d0_ll = gt_image
@@ -297,24 +309,6 @@ class CustomTrainingPipeline(object):
             gt_d0_ll = gt_ll
 
         return _loss
-
-    def _compute_deep_iwt_loss(self, pred_wavelets_pyramid, pred_image, input_image):
-        composed_image = pred_wavelets_pyramid[-1][:, :3]
-
-        _loss = self.images_criterion(
-            composed_image,
-            torch.nn.functional.interpolate(input_image, (composed_image.size(2), composed_image.size(3)), mode='area')
-        )
-
-        for i in range(len(pred_wavelets_pyramid) - 1, -1, -1):
-            la, lh, hl, hh = torch.split(pred_wavelets_pyramid[i], 3, dim=1)
-            if i < len(pred_wavelets_pyramid) - 1:
-                _loss += self.images_criterion(composed_image, la)
-            composed_image = self.iwt(composed_image, lh, hl, hh)
-
-        _loss += self.images_criterion(composed_image, pred_image)
-
-        return _loss / (len(pred_wavelets_pyramid) + 1)
 
     def _compute_adversarial_loss(self, pred_wavelets_pyramid, gt_image, factor: float = 1.0):
         gt_d0_ll = gt_image
@@ -351,6 +345,12 @@ class CustomTrainingPipeline(object):
                 pred_image = output[0]
                 pred_wavelets_pyramid = output[1]
                 spatial_attention_maps = output[2]
+
+                # Update wavelets by rule: y = x + model(x)
+                noisy_wavelets = self.decompose_by_wavelets(noisy_image, len(pred_wavelets_pyramid))
+                for wavelet_idx in range(len(pred_wavelets_pyramid)):
+                    pred_wavelets_pyramid[wavelet_idx] = \
+                        noisy_wavelets[wavelet_idx] + pred_wavelets_pyramid[wavelet_idx]
 
                 loss = self.images_criterion(pred_image, clear_image)
 
