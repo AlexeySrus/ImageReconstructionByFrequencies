@@ -46,3 +46,23 @@ def from_torch_fft_to_np(x: torch.Tensor) -> np.ndarray:
     magnitude_spectrum[:, :x.size(2) // 2] = magnitude_spectrum[:, :x.size(2) // 2][:, ::-1]
     magnitude_spectrum[:, x.size(2) // 2:] = magnitude_spectrum[:, x.size(2) // 2:][:, ::-1]
     return magnitude_spectrum.transpose(0, 3, 1, 2)
+
+
+
+### mix two images
+class MixUp_AUG:
+    def __init__(self):
+        self.dist = torch.distributions.beta.Beta(torch.tensor([1.2]), torch.tensor([1.2]))
+
+    def aug(self, rgb_gt, rgb_noisy):
+        bs = rgb_gt.size(0)
+        indices = torch.randperm(bs)
+        rgb_gt2 = rgb_gt[indices]
+        rgb_noisy2 = rgb_noisy[indices]
+
+        lam = self.dist.rsample((bs,1)).view(-1,1,1,1).to(rgb_gt.device)
+
+        rgb_gt    = lam * rgb_gt + (1-lam) * rgb_gt2
+        rgb_noisy = lam * rgb_noisy + (1-lam) * rgb_noisy2
+
+        return rgb_gt, rgb_noisy

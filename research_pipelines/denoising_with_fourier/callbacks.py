@@ -385,10 +385,18 @@ class VisAttentionMaps(AbstractCallback):
                     # """
                     sa_list = [sa[i] for sa in args['sa_list']]
 
-                    x = torch.cat(
-                        sa_list,
-                        dim=2
-                    )
+                    sa_tensors = []
+                    step_k = 4
+                    for k in range(len(sa_list) // step_k):
+                        sa_tensors.append(torch.concat([sa_list[step_k*k + q] for q in range(step_k)], dim=2))
+
+                    sa_tensor = torch.concat(sa_tensors, dim=1)
+                    x = sa_tensor
+                    
+                    # x = torch.cat(
+                    #     sa_list,
+                    #     dim=2
+                    # )
                     x = x.repeat(3, 1, 1)
                     x = torch.clamp(x, 0, 1)
 

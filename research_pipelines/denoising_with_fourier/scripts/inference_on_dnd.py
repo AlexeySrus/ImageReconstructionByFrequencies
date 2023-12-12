@@ -12,7 +12,7 @@ from timeit import default_timer as time
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 CURRENT_PATH = os.path.dirname(__file__)
 
-from FFTCNN.fftcnn import FFTCNN
+from FFTCNN.unet import FFTAttentionUNet as FFTCNN
 from utils.window_inference import eval_denoise_inference
 
 
@@ -90,11 +90,27 @@ def tensor_to_srgb_matrix(t: torch.Tensor) -> np.ndarray:
     return _img
 
 
+def RGB2YCrCb(t: torch.Tensor) -> torch.Tensor:
+    _img = (t.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+    _img = cv2.cvtColor(_img, cv2.COLOR_RGB2YCrCb)
+    res_t = torch.from_numpy(_img.astype(np.float32) / 255.0)
+    return res_t.permute(2, 0, 1)
+
+
+def YCrCb2RGB(t: torch.Tensor) -> torch.Tensor:
+    _img = (torch.clamp(t, 0, 1).permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+    _img = cv2.cvtColor(_img, cv2.COLOR_YCrCb2RGB)
+    res_t = torch.from_numpy(_img.astype(np.float32) / 255.0)
+    return res_t.permute(2, 0, 1)
+
+
 if __name__ == '__main__':
     args = parse_args()
 
-    imgsz = 512
-    device = 'cuda'
+    imgsz = 256
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+    print('Device for inference: {}'.format(device))
 
     model = FFTCNN().to(device)
 
@@ -105,7 +121,7 @@ if __name__ == '__main__':
 
     # Fake run to optimize
     with torch.no_grad():
-        _ = model(torch.rand(1, 3, 512, 512).to(device))
+        _ = model(torch.rand(1, 3, imgsz, imgsz).to(device))
 
     print('Best torchmetric PSNR: {:.2f}'.format(load_data['acc']))
 
@@ -142,11 +158,12 @@ if __name__ == '__main__':
             crop_img = img[box[0]:box[1], box[2]:box[3]].copy()
 
             input_tensor = torch.from_numpy(crop_img.astype(np.float32).transpose((2, 0, 1)))
+            ycrcb_tensor = RGB2YCrCb(input_tensor)
             
             start_inference_time = time()
             with torch.no_grad():
                 restored_image = eval_denoise_inference(
-                    tensor_img=input_tensor, model=model, window_size=imgsz, 
+                    tensor_img=ycrcb_tensor, model=model, window_size=imgsz, 
                     batch_size=4, crop_size=imgsz // 32, use_tta=True, device=device
                 )
             finish_inference_time = time()
@@ -156,6 +173,7 @@ if __name__ == '__main__':
             input_tensor = input_tensor.to('cpu')
 
             pred = restored_image.to('cpu')
+            pred = YCrCb2RGB(pred)
             pred = torch.clamp(pred, 0, 1)
             pred_image = tensor_to_image(pred)
             pred_matrix = tensor_to_srgb_matrix(pred)

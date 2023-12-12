@@ -3,6 +3,7 @@ from argparse import ArgumentParser, Namespace
 
 import cv2
 import numpy as np
+import kornia
 from typing import Tuple, Optional
 import tqdm
 import torch
@@ -20,10 +21,14 @@ from haar_pytorch import HaarForward, HaarInverse
 from dataloader import PairedDenoiseDataset, SyntheticNoiseDataset
 from callbacks import VisImage, VisAttentionMaps, VisPlot
 from FFTCNN.fftcnn import FFTCNN, init_weights
+from FFTCNN.unet import FFTAttentionUNet
 from utils.window_inference import denoise_inference
 from utils.hist_loss import HistLoss
-from pytorch_optimizer import AdaSmooth, Ranger21
+from utils.adasmooth import AdaSmooth
 from utils.adversarial_loss import Adversarial
+from utils.freq_loss import HightFrequencyFFTLoss, HFENLoss
+from utils.tv_loss import CharbonnierLoss, TVLoss
+from utils.tensor_utils import MixUp_AUG
 
 
 class SSIMLoss(SSIM):
@@ -72,7 +77,8 @@ class CustomTrainingPipeline(object):
                  train_workers: int = 0,
                  preload_data: bool = False,
                  lr_steps: int = 4,
-                 no_load_optim: bool = False):
+                 no_load_optim: bool = False,
+                 gradient_accumulation_steps: int =1):
         """
         Train U-Net denoising model
 
@@ -93,6 +99,7 @@ class CustomTrainingPipeline(object):
             preload_data (bool, optional): Load training and validation data to RAM. Defaults to False.
             lr_steps (int, optional): Count of uniformed LR steps. Defaults to 4.
             no_load_optim (bool, optional): Disable load optimizer from checkpoint. Defaults to False.
+            gradient_accumulation_steps (bool, optional): Count of accumulated gradients per train batches.
         """
         self.device = device
         self.experiment_folder = experiment_folder
@@ -106,6 +113,7 @@ class CustomTrainingPipeline(object):
         self.resume_epoch = resume_epoch
         self.stop_criteria = stop_criteria
         self.best_test_score = 0
+        self.gradient_accumulation_steps = gradient_accumulation_steps
 
         self.image_shape = (image_size, image_size)
 
@@ -139,6 +147,7 @@ class CustomTrainingPipeline(object):
         self.val_dataset = PairedDenoiseDataset(
             noisy_images_path=val_data_paths[0],
             clear_images_path=val_data_paths[1],
+            need_crop=False,
             preload=preload_data
         )
 
@@ -154,15 +163,15 @@ class CustomTrainingPipeline(object):
             title='Denoising',
             port=visdom_port,
             vis_step=150,
-            scale=1
+            scale=2
         )
 
         self.attention_visualizer = None if visdom_port is None else VisAttentionMaps(
             title='Denoising',
             port=visdom_port,
             vis_step=150,
-            scale=0.5,
-            maps_count=5
+            scale=1.5,
+            maps_count=4
         )
 
         self.plot_visualizer = None if visdom_port is None else VisPlot(
@@ -185,12 +194,12 @@ class CustomTrainingPipeline(object):
                 legend=['val']
             )
 
-        self.model = FFTCNN()
+        self.model = FFTAttentionUNet()
         self.model.apply(init_weights)
         self.model = self.model.to(device)
-        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=0.00001)
-        self.optimizer = torch.optim.Adam(params=self.model.parameters(), lr=0.001, betas=(0.9, 0.999))
-        # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
+        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.0001, nesterov=True, momentum=0.9, weight_decay=1E-5)
+        self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=0.001, betas=(0.9, 0.999),eps=1e-8, weight_decay=1E-2)
+        # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001, weight_decay=1E-5)
 
         if load_path is not None:
             load_data = torch.load(load_path, map_location=self.device)
@@ -205,16 +214,25 @@ class CustomTrainingPipeline(object):
                 print(
                     '#' * 5 + ' Optimizer has been loaded by path: {} '.format(load_path) + '#' * 5
                 )
+                # self.optimizer.param_groups[0]['lr'] = 0.01
+                print('Optimizer LR: {:.5f}'.format(self.get_lr()))
 
-        self.images_criterion = torch.nn.L1Loss()
+        self.images_criterion = CharbonnierLoss().to(self.device)
         # self.perceptual_loss = DISTS()
         self.perceptual_loss = None
         # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
         self.final_hist_loss = None
         # self.adv_loss = Adversarial(image_size=self.image_shape[0]).to(device)
+        # self.fft_loss = HightFrequencyFFTLoss(self.image_shape).to(device)
+        self.hf_loss = HFENLoss(
+            loss_f=torch.nn.functional.l1_loss,
+            norm=True
+        )
 
         # self.ssim_loss = None
         self.accuracy_measure = TorchPSNR().to(device)
+
+        self.mixup = MixUp_AUG()
 
         if lr_steps > 0:
             _lr_steps = lr_steps + 1
@@ -240,36 +258,61 @@ class CustomTrainingPipeline(object):
         self.model.train()
         avg_epoch_loss = 0
 
+        batches_count = len(self.train_dataloader)
+
         with tqdm.tqdm(total=len(self.train_dataloader)) as pbar:
-            for _noisy_image, _clear_image in self.train_dataloader:
+            for idx, (_noisy_image, _clear_image) in enumerate(self.train_dataloader):
+                # Take YCrCb in 0..1 data range
                 noisy_image = _noisy_image.to(self.device)
                 clear_image = _clear_image.to(self.device)
 
-                self.optimizer.zero_grad()
-                output = self.model(noisy_image)
-                pred_image = output[0]
+                clear_image, noisy_image = self.mixup.aug(clear_image, noisy_image)
 
+                output = self.model(noisy_image)
+
+                pred_image = output[0]
+                spatial_attention_maps = output[1]
+
+                # Pixel-wise loss compuited in 0..1 data range
                 loss = self.images_criterion(pred_image, clear_image)
 
-                # if self.perceptual_loss is not None:
-                #     loss = loss / 2 + self.perceptual_loss(pred_image, clear_image) / 2
+                p_loss = float(0)
+                if self.perceptual_loss is not None:
+                    # Perceptual loss calculated in RGB 0..1
+                    p_loss = self.perceptual_loss(
+                        self._convert_ycrcb_to_rgb(pred_image), 
+                        self._convert_ycrcb_to_rgb(clear_image)
+                    )
                     
                 # hist_loss = self.final_hist_loss(pred_image, clear_image)
                 hist_loss = 0
                 # a_loss = self.adv_loss(pred_image, clear_image)
+                # f_loss = self.fft_loss(
+                #     torch.fft.fft2(pred_image[:, :1], norm='ortho'),
+                #     torch.fft.fft2(clear_image[:, :1], norm='ortho')
+                # )
+                f_loss = self.hf_loss(
+                    pred_image, 
+                    clear_image
+                )
 
                 total_loss = loss
 
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 2.0)
-                self.optimizer.step()
+
+                if (self.gradient_accumulation_steps == 1) or (
+                        (idx + 1) % self.gradient_accumulation_steps == 0) or (
+                        idx + 1 == batches_count):
+                    self.optimizer.step()
+                    self.optimizer.zero_grad()
 
                 pbar.postfix = \
-                    'Epoch: {}/{}, px_loss: {:.7f}, h_loss: {:.7f}'.format(
+                    'Epoch: {}/{}, px_loss: {:.7f}, f_loss: {:.7f}'.format(
                         epoch,
                         self.epochs,
                         loss.item(),
-                        hist_loss.item() if self.final_hist_loss is not None else hist_loss
+                        f_loss.item(),
                     )
                 avg_epoch_loss += loss.item() / len(self.train_dataloader)
 
@@ -283,12 +326,12 @@ class CustomTrainingPipeline(object):
                             }
                         )
 
-                        # self.attention_visualizer.per_batch(
-                        #     {
-                        #         'sa_list': spatial_attention_maps
-                        #     },
-                        #     i=vis_idx
-                        # )
+                        self.attention_visualizer.per_batch(
+                            {
+                                'sa_list': spatial_attention_maps
+                            },
+                            i=vis_idx
+                        )
 
                 pbar.update(1)
 
@@ -305,7 +348,14 @@ class CustomTrainingPipeline(object):
                 _noisy_image, _clear_image = self.val_dataset[sample_i]
 
                 noisy_image = _noisy_image.to(self.device)
-                clear_image = _clear_image.to(self.device)
+                clear_image = _clear_image.to(self.device).unsqueeze(0)
+
+                # # Convert network input to YCrCb
+                # noisy_image = kornia.color.ycbcr.rgb_to_ycbcr(noisy_image).squeeze(0)
+                # clear_image = kornia.color.ycbcr.rgb_to_ycbcr(clear_image)
+                # # Normalize to -1..1
+                # noisy_image = noisy_image * 2 - 1
+                # clear_image = clear_image * 2 - 1
 
                 with torch.no_grad():
                     restored_image = denoise_inference(
@@ -313,16 +363,18 @@ class CustomTrainingPipeline(object):
                         batch_size=self.batch_size, crop_size=self.image_shape[0] // 32
                     ).unsqueeze(0)
 
-                    loss = self.images_criterion(restored_image, clear_image.unsqueeze(0))
+                    loss = self.images_criterion(restored_image, clear_image)
 
-                    if self.perceptual_loss is not None:
-                        loss = loss / 2 + self.perceptual_loss(restored_image, clear_image.unsqueeze(0)) / 2
+                    # if self.perceptual_loss is not None:
+                    #     loss = loss / 2 + self.perceptual_loss(restored_image, clear_image) / 2
                     
                     avg_loss_rate += loss.item()
 
+                    restored_image = torch.clamp(restored_image, 0, 1)
+
                     val_psnr = self.accuracy_measure(
                         restored_image,
-                        clear_image.unsqueeze(0)
+                        clear_image
                     )
 
                     acc_rate = val_psnr.item()
@@ -331,7 +383,7 @@ class CustomTrainingPipeline(object):
                     test_len += 1
 
                     result_path = os.path.join(self.output_val_images_dir, '{}.png'.format(sample_i + 1))
-                    val_img = (torch.clip(restored_image[0].to('cpu').permute(1, 2, 0), 0, 1) * 255.0).numpy().astype(np.uint8)
+                    val_img = (restored_image.squeeze(0).to('cpu').permute(1, 2, 0) * 255.0).numpy().astype(np.uint8)
                     val_img = cv2.cvtColor(val_img, cv2.COLOR_YCrCb2RGB)
                     Image.fromarray(val_img).save(result_path)
 
@@ -343,6 +395,9 @@ class CustomTrainingPipeline(object):
             self.scheduler.step()
 
         return avg_loss_rate, avg_acc_rate
+
+    def _convert_ycrcb_to_rgb(self, _tensor: torch.Tensor) -> torch.Tensor:
+        return kornia.color.ycbcr.ycbcr_to_rgb(_tensor)
 
     def _plot_values(self, epoch, avg_train_loss, avg_val_loss, avg_val_acc):
         if self.plot_visualizer is not None:
@@ -440,6 +495,10 @@ def parse_args() -> Namespace:
         help='Count of dataset workers.'
     )
     parser.add_argument(
+        '--grad_accum_steps', type=int, required=False, default=1,
+        help='Count of batches to accumulate gradiets.'
+    )
+    parser.add_argument(
         '--batch_size', type=int, required=False, default=32,
         help='Training batch size.'
     )
@@ -488,7 +547,8 @@ if __name__ == '__main__':
         train_workers=args.njobs,
         preload_data=args.preload_datasets,
         lr_steps=args.lr_milestones,
-        no_load_optim=args.no_load_optim
+        no_load_optim=args.no_load_optim,
+        gradient_accumulation_steps=args.grad_accum_steps
     ).fit()
 
     exit(0)

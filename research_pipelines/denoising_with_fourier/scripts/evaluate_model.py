@@ -2,6 +2,7 @@ from typing import Tuple
 from argparse import ArgumentParser, Namespace
 import cv2
 import numpy as np
+from skimage.metrics import structural_similarity as ssim
 from tqdm import tqdm
 import torch
 import os
@@ -9,7 +10,7 @@ import os
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 CURRENT_PATH = os.path.dirname(__file__)
 
-from FFTCNN.fftcnn import FFTCNN, init_weights
+from FFTCNN.unet import FFTAttentionUNet as FFTCNN
 from utils.window_inference import eval_denoise_inference
 
 
@@ -39,7 +40,7 @@ def tensor_to_image(t: torch.Tensor) -> np.ndarray:
 if __name__ == '__main__':
     args = parse_args()
 
-    imgsz = 512
+    imgsz = 256
     device = 'cuda'
 
     model = FFTCNN().to(device)
@@ -52,6 +53,7 @@ if __name__ == '__main__':
     print('Best torchmetric PSNR: {:.2f}'.format(load_data['acc']))
 
     psnr_values = []
+    ssim_values = []
 
     if args.output is None:
         output_folder = os.path.join(CURRENT_PATH, '../../../materials/eval_results/')
@@ -86,7 +88,9 @@ if __name__ == '__main__':
         pred_image = torch.clamp(pred_image, 0, 1)
         pred_image = tensor_to_image(pred_image)
 
-        psnr_values.append(cv2.PSNR(pred_image, gt_img))
+        # Calculate PSNR by Y channel (like Uformer paper)
+        psnr_values.append(cv2.PSNR(pred_image[..., 0], gt_img[..., 0]))
+        ssim_values.append(ssim(pred_image[..., 0], gt_img[..., 0]))
 
         print('Image: {}, PSNR: {:.2f}'.format(image_name, psnr_values[-1]))
 
@@ -96,4 +100,6 @@ if __name__ == '__main__':
         )
 
     avg_psnr = np.array(psnr_values).mean()
+    avg_ssim = np.array(ssim_values).mean()
     print('Result PSNR: {:.2f}'.format(avg_psnr))
+    print('Result SSIM: {:.3f}'.format(avg_ssim))

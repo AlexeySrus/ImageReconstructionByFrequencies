@@ -10,9 +10,11 @@ import pywt
 class Rotate(Enum):
     """Rotate enumerates class"""
     NONE = lambda x: x
-    ROTATE_90_CLOCKWISE = lambda x: np.flip(x.transpose(1, 0, 2), axis=1)
-    ROTATE_180 = lambda x: np.flip(np.flip(x, axis=0), axis=1)
-    ROTATE_90_COUNTERCLOCKWISE = lambda x: np.flip(x.transpose(1, 0, 2), axis=0)
+    ROTATE_90_CLOCKWISE = lambda x: np.flip(x.transpose(1, 0, 2), 1)
+    ROTATE_180 = lambda x: np.flip(x, (0, 1))
+    ROTATE_90_COUNTERCLOCKWISE = lambda x: np.flip(x.transpose(1, 0, 2), 0)
+    HORIZONTAL_FLIP = lambda x: np.flip(x, 1)
+    VERTICAL_FLIP = lambda x: np.flip(x, 0)
 
 
 def rotate_crop(img: np.ndarray, rot_value: Rotate) -> np.ndarray:
@@ -25,6 +27,8 @@ def rotate_crop(img: np.ndarray, rot_value: Rotate) -> np.ndarray:
             Rotate.ROTATE_90_CLOCKWISE,
             Rotate.ROTATE_180,
             Rotate.ROTATE_90_COUNTERCLOCKWISE,
+            Rotate.HORIZONTAL_FLIP,
+            Rotate.VERTICAL_FLIP
 
     Returns:
         Rotated image in same of input format
@@ -88,7 +92,9 @@ def apply_transforms(crop1: np.ndarray, crop2: Optional[np.ndarray] = None) -> U
             Rotate.NONE,
             Rotate.ROTATE_90_CLOCKWISE,
             Rotate.ROTATE_180,
-            Rotate.ROTATE_90_COUNTERCLOCKWISE
+            Rotate.ROTATE_90_COUNTERCLOCKWISE,
+            Rotate.HORIZONTAL_FLIP,
+            Rotate.VERTICAL_FLIP
         ]
     )
 
