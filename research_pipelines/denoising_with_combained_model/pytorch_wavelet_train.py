@@ -283,7 +283,7 @@ class CustomTrainingPipeline(object):
 
         result = []
 
-        for _ in range(len(level)):
+        for _ in range(level):
             gt_ll, gt_lh, gt_hl, gt_hh = self.dwt(gt_d0_ll)
             result.append(torch.concatenate((gt_ll, gt_lh, gt_hl, gt_hh), dim=1))
             gt_d0_ll = gt_ll
