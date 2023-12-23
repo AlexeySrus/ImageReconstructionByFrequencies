@@ -14,7 +14,7 @@ import timm
 from PIL import Image
 import os
 from torchmetrics.image import PeakSignalNoiseRatio as TorchPSNR
-from pytorch_msssim import SSIM
+from pytorch_msssim import SSIM, MS_SSIM
 from piq import DISTS
 from haar_pytorch import HaarForward, HaarInverse
 
@@ -34,6 +34,12 @@ from utils.tensor_utils import MixUp_AUG
 class SSIMLoss(SSIM):
     def forward(self, x, y):
         return 1. - super().forward(x, y)
+
+
+class MIXLoss(MS_SSIM):
+    base_loss = CharbonnierLoss()
+    def forward(self, x, y):
+        return (1. - super().forward(x, y)) * (1-0.84) + self.base_loss(x, y) * 0.84
     
 
 class DWTHaar(torch.nn.Module):
@@ -127,7 +133,7 @@ class CustomTrainingPipeline(object):
                 clear_images_path=train_data_paths[1],
                 need_crop=True,
                 window_size=self.image_shape[0],
-                optional_dataset_size=25000,
+                optional_dataset_size=50000,
                 preload=preload_data
             )
 
@@ -136,7 +142,7 @@ class CustomTrainingPipeline(object):
                 clear_images_path=synth_data_paths,
                 window_size=self.image_shape[0],
                 preload=preload_data,
-                optional_dataset_size=5000
+                optional_dataset_size=500
             )
 
             self.train_base_dataset = torch.utils.data.ConcatDataset(
@@ -194,11 +200,20 @@ class CustomTrainingPipeline(object):
                 legend=['val']
             )
 
+            self.plot_visualizer.register_scatterplot(
+                name='validation roc per_epoch',
+                xlabel='Epoch',
+                ylabel='SSIM',
+                legend=['val']
+            )
+
+
         self.model = FFTAttentionUNet()
         self.model.apply(init_weights)
         self.model = self.model.to(device)
-        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.0001, nesterov=True, momentum=0.9, weight_decay=1E-5)
-        self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=0.001, betas=(0.9, 0.999),eps=1e-8, weight_decay=1E-2)
+        self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=1E-2)
+        # self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=0.001, betas=(0.9, 0.999),eps=1e-8, weight_decay=1E-2)
+        # self.optimizer = torch.optim.Adam(params=self.model.parameters(), lr=0.001)
         # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001, weight_decay=1E-5)
 
         if load_path is not None:
@@ -214,15 +229,16 @@ class CustomTrainingPipeline(object):
                 print(
                     '#' * 5 + ' Optimizer has been loaded by path: {} '.format(load_path) + '#' * 5
                 )
-                # self.optimizer.param_groups[0]['lr'] = 0.01
+                self.optimizer.param_groups[0]['lr'] = 0.0001
                 print('Optimizer LR: {:.5f}'.format(self.get_lr()))
 
-        self.images_criterion = CharbonnierLoss().to(self.device)
+        # self.images_criterion = CharbonnierLoss().to(self.device)
+        self.images_criterion = MIXLoss()
         # self.perceptual_loss = DISTS()
         self.perceptual_loss = None
         # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
         self.final_hist_loss = None
-        # self.adv_loss = Adversarial(image_size=self.image_shape[0]).to(device)
+        # self.adv_loss = Adversarial(image_size=self.image_shape[0], gan_type='WGAN_GP').to(device)
         # self.fft_loss = HightFrequencyFFTLoss(self.image_shape).to(device)
         self.hf_loss = HFENLoss(
             loss_f=torch.nn.functional.l1_loss,
@@ -231,6 +247,7 @@ class CustomTrainingPipeline(object):
 
         # self.ssim_loss = None
         self.accuracy_measure = TorchPSNR().to(device)
+        self.ssim_measure = SSIM(data_range=1.0, channel=3)
 
         self.mixup = MixUp_AUG()
 
@@ -266,7 +283,8 @@ class CustomTrainingPipeline(object):
                 noisy_image = _noisy_image.to(self.device)
                 clear_image = _clear_image.to(self.device)
 
-                clear_image, noisy_image = self.mixup.aug(clear_image, noisy_image)
+                if epoch > 30:
+                    clear_image, noisy_image = self.mixup.aug(clear_image, noisy_image)
 
                 output = self.model(noisy_image)
 
@@ -292,14 +310,14 @@ class CustomTrainingPipeline(object):
                 #     torch.fft.fft2(clear_image[:, :1], norm='ortho')
                 # )
                 f_loss = self.hf_loss(
-                    pred_image, 
-                    clear_image
+                    self._convert_ycrcb_to_rgb(pred_image), 
+                    self._convert_ycrcb_to_rgb(clear_image)
                 )
 
                 total_loss = loss
 
                 total_loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 2.0)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
 
                 if (self.gradient_accumulation_steps == 1) or (
                         (idx + 1) % self.gradient_accumulation_steps == 0) or (
@@ -312,7 +330,7 @@ class CustomTrainingPipeline(object):
                         epoch,
                         self.epochs,
                         loss.item(),
-                        f_loss.item(),
+                        f_loss.item()
                     )
                 avg_epoch_loss += loss.item() / len(self.train_dataloader)
 
@@ -340,6 +358,7 @@ class CustomTrainingPipeline(object):
     def _validation_step(self) -> Tuple[float, float]:
         self.model.eval()
         avg_acc_rate = 0
+        avg_ssim_rate = 0
         avg_loss_rate = 0
         test_len = 0
 
@@ -364,9 +383,6 @@ class CustomTrainingPipeline(object):
                     ).unsqueeze(0)
 
                     loss = self.images_criterion(restored_image, clear_image)
-
-                    # if self.perceptual_loss is not None:
-                    #     loss = loss / 2 + self.perceptual_loss(restored_image, clear_image) / 2
                     
                     avg_loss_rate += loss.item()
 
@@ -377,9 +393,16 @@ class CustomTrainingPipeline(object):
                         clear_image
                     )
 
+                    val_ssim = self.ssim_measure(
+                        self._convert_ycrcb_to_rgb(restored_image),
+                        self._convert_ycrcb_to_rgb(clear_image)
+                    )
+
                     acc_rate = val_psnr.item()
 
                     avg_acc_rate += acc_rate
+                    avg_ssim_rate += val_ssim.item()
+                    del val_ssim
                     test_len += 1
 
                     result_path = os.path.join(self.output_val_images_dir, '{}.png'.format(sample_i + 1))
@@ -390,25 +413,30 @@ class CustomTrainingPipeline(object):
         if test_len > 0:
             avg_acc_rate /= test_len
             avg_loss_rate /= test_len
+            avg_ssim_rate /= test_len
 
         if self.scheduler is not None:
             self.scheduler.step()
 
-        return avg_loss_rate, avg_acc_rate
+        return avg_loss_rate, (avg_acc_rate, avg_ssim_rate)
 
     def _convert_ycrcb_to_rgb(self, _tensor: torch.Tensor) -> torch.Tensor:
         return kornia.color.ycbcr.ycbcr_to_rgb(_tensor)
 
     def _plot_values(self, epoch, avg_train_loss, avg_val_loss, avg_val_acc):
+        avg_val_psnr, avg_val_ssim = avg_val_acc
+
         if self.plot_visualizer is not None:
             self.plot_visualizer.per_epoch(
                 {
                     'n': epoch,
                     'val loss': avg_val_loss,
                     'loss': avg_train_loss,
-                    'val acc': avg_val_acc
+                    'val acc': avg_val_psnr,
+                    'val roc': avg_val_ssim,
                 }
             )
+
 
     def _save_best_traced_model(self, save_path: str):
         traced_model = torch.jit.trace(self.model, torch.rand(1, 3, *self.image_shape))
@@ -451,9 +479,9 @@ class CustomTrainingPipeline(object):
     def fit(self):
         for epoch_num in range(self.resume_epoch, self.epochs + 1):
             epoch_train_loss = self._train_step(epoch_num)
-            val_loss, val_acc = self._validation_step()
-            self._plot_values(epoch_num, epoch_train_loss, val_loss, val_acc)
-            self._save_best_checkpoint(epoch_num, val_acc)
+            val_loss, val_accs = self._validation_step()
+            self._plot_values(epoch_num, epoch_train_loss, val_loss, val_accs)
+            self._save_best_checkpoint(epoch_num, val_accs[0])
 
             if self.scheduler is not None and self._check_stop_criteria():
                 break

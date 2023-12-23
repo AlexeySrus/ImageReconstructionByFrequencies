@@ -25,7 +25,7 @@ def retrieve_elements_from_indices(tensor, indices):
 class FullComplexSpatialAttention(nn.Module):
     def __init__(self, kernel_size=7):
         super(FullComplexSpatialAttention, self).__init__()
-        self.conv = nn.Conv2d(2, 1, kernel_size, padding=kernel_size//2, bias=False, dtype=torch.cfloat)
+        self.conv = nn.Conv2d(2, 1, kernel_size, padding=kernel_size//2, bias=False, dtype=torch.cfloat, padding_mode='zeros')
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, z):
@@ -41,7 +41,7 @@ class FullComplexSpatialAttention(nn.Module):
 class ComplexSpatialAttention(nn.Module):
     def __init__(self, kernel_size=7):
         super(ComplexSpatialAttention, self).__init__()
-        self.conv = nn.Conv2d(2, 1, kernel_size, padding=kernel_size//2, bias=False)
+        self.conv = nn.Conv2d(2, 1, kernel_size, padding=kernel_size//2, bias=False, padding_mode='zeros')
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, z):
@@ -60,9 +60,9 @@ class ChannelAttention(nn.Module):
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.max_pool = nn.AdaptiveMaxPool2d(1)
         self.fc = nn.Sequential(
-            nn.Conv2d(channel, channel // reduction, 1, bias=False),
-            nn.ReLU(),
-            nn.Conv2d(channel // reduction, channel, 1, bias=False)
+            nn.Conv2d(channel, channel // reduction, 1, bias=False, padding_mode='reflect'),
+            nn.LeakyReLU(),
+            nn.Conv2d(channel // reduction, channel, 1, bias=False, padding_mode='reflect')
         )
         self.sigmoid = nn.Sigmoid()
 
@@ -77,7 +77,7 @@ class ChannelAttention(nn.Module):
 class SpatialAttention(nn.Module):
     def __init__(self, kernel_size=7):
         super(SpatialAttention, self).__init__()
-        self.conv = nn.Conv2d(2, 1, kernel_size, padding=kernel_size//2, bias=False)
+        self.conv = nn.Conv2d(2, 1, kernel_size, padding=kernel_size//2, bias=False, padding_mode='reflect')
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
