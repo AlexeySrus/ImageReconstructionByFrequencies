@@ -3,7 +3,7 @@ from collections import OrderedDict
 import torch
 import torch.nn as nn
 
-from FFTCNN.attention import CBAM
+from FFTCNN.attention import FullComplexSpatialAttention as ComplexSpatialAttention, SpatialAttention, ChannelAttention, CBAM
 
 
 padding_mode: str = 'reflect'
@@ -40,6 +40,7 @@ def conv1x1(in_ch, out_ch):
     )
 
 
+
 def conv3x3(in_ch, out_ch):
     return nn.Conv2d(
         in_channels=in_ch,
@@ -49,6 +50,104 @@ def conv3x3(in_ch, out_ch):
         padding=1,
         padding_mode=padding_mode
     )
+
+
+class ReBNConv(nn.Module):
+    def __init__(self,in_ch=3,out_ch=3,dirate=1,stride=1):
+        super(ReBNConv,self).__init__()
+
+        self.conv_s1 = nn.Conv2d(in_ch,out_ch,3,padding=1*dirate,dilation=1*dirate,stride=stride, padding_mode=padding_mode)
+        self.bn_s1 = nn.BatchNorm2d(out_ch)
+        self.relu_s1 = nn.LeakyReLU(inplace=True)
+
+    def forward(self,x):
+
+        hx = x
+        xout = self.relu_s1(self.bn_s1(self.conv_s1(hx)))
+
+        return xout
+
+
+def gem(x, kernel_size: int, stride: int, p=3, eps=1e-6):
+    return nn.functional.avg_pool2d(x.clamp(min=eps).pow(p), kernel_size, stride).pow(1.0 / p)
+
+
+class GeneralizedMeanPooling2d(nn.Module):
+    def __init__(self, kernel_size: int, stride: int, p=3, eps=1e-6):
+        super(GeneralizedMeanPooling2d, self).__init__()
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.p = nn.Parameter(torch.ones(1) * p, requires_grad=True)
+        self.eps = eps
+
+    def forward(self, x):
+        x = gem(x, self.kernel_size, self.stride, p=self.p.clamp_min(1), eps=self.eps)
+        return x
+
+    def __repr__(self):
+        return (
+            self.__class__.__name__
+            + "("
+            + "p="
+            + "{:.4f}".format(self.p.data.tolist()[0])
+            + ", "
+            + "eps="
+            + str(self.eps)
+            + ")"
+        )
+
+
+def _upsample_like(src,tar):
+    src = torch.nn.functional.upsample(src,size=tar.shape[2:], mode='bilinear')
+    return src
+
+
+class MiniUnet(nn.Module):
+
+    def __init__(self, in_ch=3, mid_ch=12, out_ch=3):
+        super(MiniUnet,self).__init__()
+
+        self.rebnconvin = ReBNConv(in_ch,out_ch,dirate=1)
+
+        self.rebnconv1 = ReBNConv(out_ch,mid_ch,dirate=1)
+        self.pool1 = nn.MaxPool2d(2, 2)
+
+        self.rebnconv2 = ReBNConv(mid_ch,mid_ch,dirate=1)
+        self.pool2 = nn.MaxPool2d(2, 2)
+
+        self.rebnconv3 = ReBNConv(mid_ch,mid_ch,dirate=1)
+
+        self.rebnconv4 = ReBNConv(mid_ch,mid_ch,dirate=2)
+
+        self.rebnconv3d = ReBNConv(mid_ch*2,mid_ch,dirate=1)
+        self.rebnconv2d = ReBNConv(mid_ch*2,mid_ch,dirate=1)
+        self.rebnconv1d = ReBNConv(mid_ch*2,out_ch,dirate=1)
+
+    def forward(self,x):
+
+        hx = x
+
+        hxin = self.rebnconvin(hx)
+
+        hx1 = self.rebnconv1(hxin)
+        hx = self.pool1(hx1)
+
+        hx2 = self.rebnconv2(hx)
+        hx = self.pool2(hx2)
+
+        hx3 = self.rebnconv3(hx)
+
+        hx4 = self.rebnconv4(hx3)
+
+        hx3d = self.rebnconv3d(torch.cat((hx4,hx3),1))
+        hx3dup = _upsample_like(hx3d,hx2)
+
+        hx2d = self.rebnconv2d(torch.cat((hx3dup,hx2),1))
+        hx2dup = _upsample_like(hx2d,hx1)
+
+        hx1d = self.rebnconv1d(torch.cat((hx2dup,hx1),1))
+
+        return hx1d
 
 
 def complex_conv_block(in_ch, out_ch):
@@ -81,39 +180,51 @@ class SpectralPooling(nn.Module):
         return new_x
 
 
-def gem(x, kernel_size: int, stride: int, p=3, eps=1e-6):
-    return nn.functional.avg_pool2d(x.clamp(min=eps).pow(p), kernel_size, stride).pow(1.0 / p)
-
-
-class GeneralizedMeanPooling2d(nn.Module):
-    def __init__(self, kernel_size: int, stride: int, p=3, eps=1e-6):
-        super(GeneralizedMeanPooling2d, self).__init__()
-        self.kernel_size = kernel_size
-        self.stride = stride
-        self.p = nn.Parameter(torch.ones(1) * p, requires_grad=True)
-        self.eps = eps
+class FFTAttention(nn.Module):
+    def __init__(self, in_ch: int, reduction: int = 16, kernel_size: int = 7):
+        super().__init__()
+        self.fft_sa = ComplexSpatialAttention(kernel_size)
+        # self.fft_sa_fp = MiniUnet(in_ch, in_ch * 2, in_ch)
+        self.post_conv = nn.Sequential(
+            nn.Conv2d(in_ch, in_ch // reduction, kernel_size=5, stride=1, padding=2, padding_mode=padding_mode),
+            nn.BatchNorm2d(in_ch // reduction),
+            nn.LeakyReLU(),
+            nn.Conv2d(in_ch // reduction, 1, kernel_size=3, stride=1, padding=1, padding_mode=padding_mode),
+            nn.Sigmoid()
+        )
+        self.sa = SpatialAttention(kernel_size)
+        self.final_ca = ChannelAttention(in_ch * 2, reduction)
+        self.final_conv = nn.Conv2d(in_ch * 2, in_ch, 1)
 
     def forward(self, x):
-        x = gem(x, self.kernel_size, self.stride, p=self.p.clamp_min(1), eps=self.eps)
-        return x
+        # x_feats = self.fft_in_conv(x)
 
-    def __repr__(self):
-        return (
-            self.__class__.__name__
-            + "("
-            + "p="
-            + "{:.4f}".format(self.p.data.tolist()[0])
-            + ", "
-            + "eps="
-            + str(self.eps)
-            + ")"
-        )
+        z = torch.fft.fft2(x, norm='ortho')
+        z = torch.fft.fftshift(z)
+
+        z, complex_sa = self.fft_sa(z)
+
+        z = torch.fft.ifftshift(z)
+        out_1 = torch.fft.ifft2(z, norm='ortho')
+        out_1 = out_1.real
+        fft_attn = self.post_conv(out_1)
+        out_1 = x * fft_attn
+
+        # out_1 = self.fft_sa_fp(out_1)
+        # out_1 = x * out_1
+
+        out_2, float_sa = self.sa(x)
+
+        out, _ = self.final_ca(torch.concat((out_1, out_2), dim=1))
+        out = self.final_conv(out)
+
+        return out, [complex_sa, fft_attn, float_sa]
 
 
 class FeaturesProcessing(nn.Module):
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
-        self.attn1 = CBAM(in_ch)
+        self.attn1 = FFTAttention(in_ch)
         self.conv1 = conv3x3(in_ch, in_ch * 2)
         self.norm1 = nn.BatchNorm2d(in_ch * 2)
         self.act1 = nn.LeakyReLU()
@@ -126,7 +237,7 @@ class FeaturesProcessing(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         hx = x
-        y, _, sa_1 = self.attn1(x)
+        y, sa_1 = self.attn1(x)
         y = self.conv1(y)
         y = self.norm1(y)
         y = self.act1(y)
@@ -136,7 +247,7 @@ class FeaturesProcessing(nn.Module):
         hx = self.down_bneck(hx)
 
         y = self.act_final(hx + y)
-        return y, [sa_1]
+        return y, sa_1
     
 
 class FeaturesProcessingWithLastConv(nn.Module):
@@ -155,8 +266,8 @@ class FeaturesDownsample(nn.Module):
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
         self.features = FeaturesProcessing(in_ch, out_ch)
-        self.pool = GeneralizedMeanPooling2d(2, 2)
-        # self.pool = nn.MaxPool2d(2, 2)
+        # self.pool = GeneralizedMeanPooling2d(2, 2)
+        self.pool = nn.MaxPool2d(2, 2)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y, sa = self.features(x)
@@ -192,7 +303,7 @@ class FeaturesUpsample(nn.Module):
         return y, sa
 
 
-class AttentionUNetModule(nn.Module):
+class FFTAttentionUNetModule(nn.Module):
     def __init__(self, in_ch: int, mid_ch: int, out_ch: int, need_up_features: bool = False):
         super().__init__()
         self.init_block = FeaturesProcessing(in_ch, mid_ch)
@@ -204,10 +315,10 @@ class AttentionUNetModule(nn.Module):
 
         self.deep_conv_block = FeaturesProcessing(mid_ch * 4, mid_ch * 4)
 
-        self.upsample4 = FeaturesConvTransposeUpsample(mid_ch * 4, mid_ch * 3)
-        self.upsample3 = FeaturesConvTransposeUpsample(mid_ch * 3, mid_ch * 2)
-        self.upsample2 = FeaturesConvTransposeUpsample(mid_ch * 2, mid_ch)
-        self.upsample1 = FeaturesConvTransposeUpsample(mid_ch, mid_ch)
+        self.upsample4 = FeaturesUpsample(mid_ch * 4, mid_ch * 3)
+        self.upsample3 = FeaturesUpsample(mid_ch * 3, mid_ch * 2)
+        self.upsample2 = FeaturesUpsample(mid_ch * 2, mid_ch)
+        self.upsample1 = FeaturesUpsample(mid_ch, mid_ch)
         
         self.upsample_features_block4 = FeaturesProcessing(mid_ch * 3 + mid_ch * 3, mid_ch * 3)
         self.upsample_features_block3 = FeaturesProcessing(mid_ch * 2 + mid_ch * 2, mid_ch * 2)
@@ -243,14 +354,14 @@ class AttentionUNetModule(nn.Module):
         return decoded_f1, sa_init + sa_f1 + sa_f2 + sa_f3 + sa_f4 + sa_f + sa_up_4 + sa_up_3 + sa_up_2 + sa_up_1 + sa_df4 + sa_df3 + sa_df2 + sa_df1
 
 
-class AttentionUNet(nn.Module):
+class FFTAttentionUNet(nn.Module):
     def __init__(self, in_ch: int = 3,  out_ch: int = 3):
         super().__init__()
 
         middle_channels = 16
 
         self.in_conv = nn.Conv2d(in_ch, middle_channels, 1)
-        self.unet = AttentionUNetModule(middle_channels, middle_channels * 2, middle_channels)
+        self.unet = FFTAttentionUNetModule(middle_channels, middle_channels * 2, middle_channels)
         self.out_conv = nn.Conv2d(middle_channels, out_ch, 1)
         self.export = False
 
@@ -271,7 +382,7 @@ class AttentionUNet(nn.Module):
         y = self.out_conv(y)
 
         if self.export:
-            return self.denorm_input(hx + y)
+            return self.denorm_input(y)
 
         if self.training:
             sa_list = [
@@ -279,7 +390,7 @@ class AttentionUNet(nn.Module):
                 for sa in sa_list
             ]
 
-        return self.denorm_input(hx + y), sa_list
+        return self.denorm_input(y), sa_list
 
 
 
@@ -290,7 +401,7 @@ if __name__ == '__main__':
     import segmentation_models_pytorch as smp
 
 
-    model = AttentionUNet(3, 3)
+    model = FFTAttentionUNet(3, 3)
 
     m_params = sum(p.numel() for p in model.parameters())
 

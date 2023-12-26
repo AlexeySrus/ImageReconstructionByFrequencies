@@ -21,7 +21,7 @@ from haar_pytorch import HaarForward, HaarInverse
 from dataloader import PairedDenoiseDataset, SyntheticNoiseDataset
 from callbacks import VisImage, VisAttentionMaps, VisPlot
 from FFTCNN.fftcnn import FFTCNN, init_weights
-from FFTCNN.unet import FFTAttentionUNet
+from FFTCNN.combined_attn_unet import FFTAttentionUNet as FFTAttentionUNet
 from utils.window_inference import denoise_inference
 from utils.hist_loss import HistLoss
 from utils.adasmooth import AdaSmooth
@@ -211,9 +211,9 @@ class CustomTrainingPipeline(object):
         self.model = FFTAttentionUNet()
         self.model.apply(init_weights)
         self.model = self.model.to(device)
-        self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=1E-2)
-        # self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=0.001, betas=(0.9, 0.999),eps=1e-8, weight_decay=1E-2)
-        # self.optimizer = torch.optim.Adam(params=self.model.parameters(), lr=0.001)
+        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=1E-2)
+        self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=0.001, betas=(0.9, 0.999),eps=1e-8, weight_decay=1E-3)
+        # self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001, weight_decay=1E-4)
         # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001, weight_decay=1E-5)
 
         if load_path is not None:
@@ -229,11 +229,11 @@ class CustomTrainingPipeline(object):
                 print(
                     '#' * 5 + ' Optimizer has been loaded by path: {} '.format(load_path) + '#' * 5
                 )
-                self.optimizer.param_groups[0]['lr'] = 0.0001
+                self.optimizer.param_groups[0]['lr'] = 0.001
                 print('Optimizer LR: {:.5f}'.format(self.get_lr()))
 
-        # self.images_criterion = CharbonnierLoss().to(self.device)
-        self.images_criterion = MIXLoss()
+        self.images_criterion = CharbonnierLoss().to(self.device)
+        # self.images_criterion = MIXLoss()
         # self.perceptual_loss = DISTS()
         self.perceptual_loss = None
         # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
@@ -298,8 +298,10 @@ class CustomTrainingPipeline(object):
                 if self.perceptual_loss is not None:
                     # Perceptual loss calculated in RGB 0..1
                     p_loss = self.perceptual_loss(
-                        self._convert_ycrcb_to_rgb(pred_image), 
-                        self._convert_ycrcb_to_rgb(clear_image)
+                        pred_image,
+                        clear_image
+                        # self._convert_ycrcb_to_rgb(pred_image), 
+                        # self._convert_ycrcb_to_rgb(clear_image)
                     )
                     
                 # hist_loss = self.final_hist_loss(pred_image, clear_image)
@@ -310,11 +312,13 @@ class CustomTrainingPipeline(object):
                 #     torch.fft.fft2(clear_image[:, :1], norm='ortho')
                 # )
                 f_loss = self.hf_loss(
-                    self._convert_ycrcb_to_rgb(pred_image), 
-                    self._convert_ycrcb_to_rgb(clear_image)
+                    pred_image,
+                    clear_image
+                    # self._convert_ycrcb_to_rgb(pred_image), 
+                    # self._convert_ycrcb_to_rgb(clear_image)
                 )
 
-                total_loss = loss
+                total_loss = loss + f_loss
 
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
@@ -379,7 +383,7 @@ class CustomTrainingPipeline(object):
                 with torch.no_grad():
                     restored_image = denoise_inference(
                         tensor_img=noisy_image, model=self.model, window_size=self.image_shape[0], 
-                        batch_size=self.batch_size, crop_size=self.image_shape[0] // 32
+                        batch_size=self.batch_size, crop_size=0
                     ).unsqueeze(0)
 
                     loss = self.images_criterion(restored_image, clear_image)
@@ -391,11 +395,15 @@ class CustomTrainingPipeline(object):
                     val_psnr = self.accuracy_measure(
                         restored_image,
                         clear_image
+                        # self._convert_ycrcb_to_rgb(restored_image),
+                        # self._convert_ycrcb_to_rgb(clear_image)
                     )
 
                     val_ssim = self.ssim_measure(
-                        self._convert_ycrcb_to_rgb(restored_image),
-                        self._convert_ycrcb_to_rgb(clear_image)
+                        restored_image,
+                        clear_image
+                        # self._convert_ycrcb_to_rgb(restored_image),
+                        # self._convert_ycrcb_to_rgb(clear_image)
                     )
 
                     acc_rate = val_psnr.item()
@@ -407,7 +415,7 @@ class CustomTrainingPipeline(object):
 
                     result_path = os.path.join(self.output_val_images_dir, '{}.png'.format(sample_i + 1))
                     val_img = (restored_image.squeeze(0).to('cpu').permute(1, 2, 0) * 255.0).numpy().astype(np.uint8)
-                    val_img = cv2.cvtColor(val_img, cv2.COLOR_YCrCb2RGB)
+                    # val_img = cv2.cvtColor(val_img, cv2.COLOR_YCrCb2RGB)
                     Image.fromarray(val_img).save(result_path)
 
         if test_len > 0:
@@ -436,7 +444,6 @@ class CustomTrainingPipeline(object):
                     'val roc': avg_val_ssim,
                 }
             )
-
 
     def _save_best_traced_model(self, save_path: str):
         traced_model = torch.jit.trace(self.model, torch.rand(1, 3, *self.image_shape))
