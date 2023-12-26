@@ -133,7 +133,7 @@ class CustomTrainingPipeline(object):
                 clear_images_path=train_data_paths[1],
                 need_crop=True,
                 window_size=self.image_shape[0],
-                optional_dataset_size=50000,
+                optional_dataset_size=25000,
                 preload=preload_data
             )
 
@@ -212,7 +212,7 @@ class CustomTrainingPipeline(object):
         self.model.apply(init_weights)
         self.model = self.model.to(device)
         # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=1E-2)
-        self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=0.001, betas=(0.9, 0.999),eps=1e-8, weight_decay=1E-3)
+        self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=0.0001, betas=(0.9, 0.999),eps=1e-8, weight_decay=1E-2)
         # self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001, weight_decay=1E-4)
         # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001, weight_decay=1E-5)
 
