@@ -198,7 +198,4 @@ class WindowBasedSelfAttention(nn.Module):
         out = torch.cat([out[:, :, :, i] for i in range(out.size(3))], dim=4)
         out = torch.cat([out[:, :, i] for i in range(out.size(2))], dim=2)
 
-        out = torch.cat([out[:, :, :, i] for i in range(out.size(3))], dim=4)
-        out = torch.cat([out[:, :, i] for i in range(out.size(2))], dim=2)
-
         return out
