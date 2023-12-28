@@ -124,7 +124,7 @@ class ComplexSelfAttention(nn.Module):
         scores = torch.bmm(queries, keys.transpose(1, 2)) / (self.input_dim ** 0.5)
         attention = self.softmax(torch.abs(scores)).to(torch.cfloat)
         weighted = torch.bmm(attention, values)
-        return weighted, attention
+        return weighted
 
 
 def real_imaginary_leaky_relu(z):
@@ -182,8 +182,11 @@ class WindowBasedSelfAttention(nn.Module):
         # fft_filter = fft_filter.view(*init_folds_shape)
         # out = four_folds * fft_filter
         
-        out, fft_filter = self.mlp(folds)
+        out = self.mlp(folds)
         out = out.view(*init_folds_shape)
+
+        with torch.no_grad():
+            fft_filter = torch.clone(out)
 
         out = torch.fft.ifftshift(out)
         out = torch.fft.ifft2(out, norm='ortho').real
