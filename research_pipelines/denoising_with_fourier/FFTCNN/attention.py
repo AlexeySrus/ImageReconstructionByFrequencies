@@ -153,10 +153,7 @@ class ComplexAttnMLP(nn.Module):
 class WindowBasedSelfAttention(nn.Module):
     def __init__(self, window_size:int = 64):
         super(WindowBasedSelfAttention, self).__init__()
-        self.self_attention = ComplexSelfAttention(window_size ** 2 // 4)
-
-        self.mlp = ComplexAttnMLP(window_size ** 2)
-
+        self.mlp = ComplexAttnMLP(window_size ** 2, window_size ** 2 // 2, window_size ** 2)
         self.wsize = window_size
 
     def forward(self, x):
