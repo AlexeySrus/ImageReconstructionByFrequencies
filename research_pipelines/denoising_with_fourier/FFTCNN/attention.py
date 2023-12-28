@@ -15,7 +15,7 @@ of the image based on their channel relationships.
 import torch
 from torch import nn
 
-from FFTCNN.mixvit import LayerNorm
+from .mixvit import LayerNorm
 
 
 def retrieve_elements_from_indices(tensor, indices):
@@ -157,13 +157,9 @@ class WindowBasedSelfAttention(nn.Module):
         self.wsize = window_size
 
     def forward(self, x):
-        # features_folds = x.unfold(
-        #     2, size=self.wsize, step=self.wsize).unfold(
-        #         3, size=self.wsize, step=self.wsize).contiguous()
-        
         features_folds = x.unfold(
-            2, size=self.wsize, step=7 * self.wsize // 8).unfold(
-                3, self.wsize, step=7 * self.wsize // 8).contiguous()
+            2, size=self.wsize, step=self.wsize).unfold(
+                3, size=self.wsize, step=self.wsize).contiguous()
 
         four_folds = torch.fft.fft2(features_folds, norm='ortho')
         four_folds = torch.fft.fftshift(four_folds)
@@ -187,19 +183,6 @@ class WindowBasedSelfAttention(nn.Module):
 
         out = torch.fft.ifftshift(out)
         out = torch.fft.ifft2(out, norm='ortho').real
-
-        res = torch.zeros_like(x)
-        mask = torch.zeros(x.size(0), 1, x.size(2), x.size(3)).to(torch.float32)
-        path_size = self.wsize
-        for i in range(out.size(2)):
-            for j in range(out.size(3)):
-                i_coord = i * 7 * path_size // 8
-                j_coord = j * 7 * path_size // 8
-                
-                res[:, :, i_coord:i_coord+path_size, j_coord:j_coord+path_size] += out[:, :, i, j]
-                mask[:, :, i_coord:i_coord+path_size, j_coord:j_coord+path_size] += 1
-                
-        out = res / mask
 
         # corners = out[:, :, ::2, ::2]
         # anchors = out[:, :, 1::2, 1::2]
@@ -227,16 +210,7 @@ class WindowBasedSelfAttention(nn.Module):
         out = torch.cat([out[:, :, i] for i in range(out.size(2))], dim=2)
 
         with torch.no_grad():
-            filter_res = torch.zeros_like(x).to(torch.cfloat)
-            for i in range(out.size(2)):
-                for j in range(out.size(3)):
-                    i_coord = i * 7 * path_size // 8
-                    j_coord = j * 7 * path_size // 8
-                    
-                    filter_res[:, :, i_coord:i_coord+path_size, j_coord:j_coord+path_size] += fft_filter[:, :, i, j]
-                    
-            # fft_filter = torch.cat([fft_filter[:, :, :, i] for i in range(fft_filter.size(3))], dim=4)
-            # fft_filter = torch.cat([fft_filter[:, :, i] for i in range(fft_filter.size(2))], dim=2)
-            filter_res = filter_res / mask.to(torch.cfloat)
+            fft_filter = torch.cat([fft_filter[:, :, :, i] for i in range(fft_filter.size(3))], dim=4)
+            fft_filter = torch.cat([fft_filter[:, :, i] for i in range(fft_filter.size(2))], dim=2)
 
-        return out, filter_res
+        return out, fft_filter
