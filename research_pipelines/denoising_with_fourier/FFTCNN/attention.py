@@ -14,8 +14,6 @@ of the image based on their channel relationships.
 
 import torch
 from torch import nn
-from einops import rearrange, repeat
-from einops.layers.torch import Rearrange
 
 from FFTCNN.mixvit import LayerNorm, RISwish
 
@@ -137,100 +135,16 @@ class ComplexAttnMLP(nn.Module):
     def __init__(self, in_feats: int, mid_feats: int, out_feats: int):
             super(ComplexAttnMLP, self).__init__()
 
-            # self.layer1 = nn.Linear(in_feats, mid_feats, dtype=torch.cfloat)
-            # self.norm1 = LayerNorm(mid_feats, dtype=torch.cfloat)
-            # self.self_attn = ComplexSelfAttention(in_feats)
-            # self.layer2 = nn.Linear(mid_feats, out_feats, dtype=torch.cfloat)
-            # self.norm2 = LayerNorm(out_feats, dtype=torch.cfloat)
-
-            self.patch_embedding = nn.Linear(in_feats, in_feats, dtype=torch.cfloat)
-            self.transformer = Transformer(in_feats, 2, 1, mid_feats, mid_feats)
+            self.layer1 = nn.Linear(in_feats, mid_feats, dtype=torch.cfloat)
+            self.self_attn = ComplexSelfAttention(in_feats)
+            self.layer2 = nn.Linear(mid_feats, out_feats, dtype=torch.cfloat)
 
     def forward(self, x):
-        # y = self.layer1(x)
-        # y = self.norm1(y)
-        # y = real_imaginary_leaky_relu(y)
-        # y = self.self_attn(y)
-        # y = self.layer2(y)
-        # out = self.norm2(y)
-        # return out
-        return self.transformer(self.patch_embedding(x))
-    
-
-def pair(t):
-    return t if isinstance(t, tuple) else (t, t)
-
-
-class FeedForward(nn.Module):
-    def __init__(self, dim, hidden_dim, dropout = 0.):
-        super().__init__()
-        self.net = nn.Sequential(
-            LayerNorm(dim, dtype=torch.cfloat),
-            nn.Linear(dim, hidden_dim, dtype=torch.cfloat),
-            RISwish(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, dim, dtype=torch.cfloat),
-            nn.Dropout(dropout)
-        )
-
-    def forward(self, x):
-        return self.net(x)
-
-
-class Attention(nn.Module):
-    def __init__(self, dim, heads = 8, dim_head = 64, dropout = 0.):
-        super().__init__()
-        inner_dim = dim_head *  heads
-        project_out = not (heads == 1 and dim_head == dim)
-
-        self.heads = heads
-        self.scale = dim_head ** -0.5
-
-        self.norm = LayerNorm(dim)
-
-        self.attend = nn.Softmax(dim = -1)
-        self.dropout = nn.Dropout(dropout)
-
-        self.to_qkv = nn.Linear(dim, inner_dim * 3, bias = False, dtype=torch.cfloat)
-
-        self.to_out = nn.Sequential(
-            nn.Linear(inner_dim, dim, dtype=torch.cfloat),
-            nn.Dropout(dropout)
-        ) if project_out else nn.Identity()
-
-    def forward(self, x):
-        x = self.norm(x)
-
-        qkv = self.to_qkv(x).chunk(3, dim = -1)
-        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = self.heads), qkv)
-
-        dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
-
-        attn = self.attend(torch.abs(dots)).to(torch.cfloat)
-        attn = self.dropout(attn)
-
-        out = torch.matmul(attn, v)
-        out = rearrange(out, 'b h n d -> b n (h d)')
-        return self.to_out(out)
-
-
-class Transformer(nn.Module):
-    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout = 0.):
-        super().__init__()
-        self.norm = LayerNorm(dim)
-        self.layers = nn.ModuleList([])
-        for _ in range(depth):
-            self.layers.append(nn.ModuleList([
-                Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout),
-                FeedForward(dim, mlp_dim, dropout = dropout)
-            ]))
-
-    def forward(self, x):
-        for attn, ff in self.layers:
-            x = attn(x) + x
-            x = ff(x) + x
-
-        return self.norm(x)
+        y = self.layer1(x)
+        y = real_imaginary_leaky_relu(y)
+        y = self.self_attn(y)
+        y = self.layer2(y)
+        return y
 
 
 
@@ -266,11 +180,12 @@ class WindowBasedSelfAttention(nn.Module):
         # fft_filter = fft_filter.view(*init_folds_shape)
         # out = four_folds * fft_filter
         
-        out = self.mlp(folds)
-        out = out.view(*init_folds_shape)
+        attn = self.mlp(folds)
+        attn = attn.view(*init_folds_shape)
+        out = four_folds + attn
 
         with torch.no_grad():
-            fft_filter = torch.clone(out[:, :1])
+            fft_filter = torch.clone(attn.mean(dim=1).unsqueeze(1))
 
         out = torch.fft.ifftshift(out)
         out = torch.fft.ifft2(out, norm='ortho').real
