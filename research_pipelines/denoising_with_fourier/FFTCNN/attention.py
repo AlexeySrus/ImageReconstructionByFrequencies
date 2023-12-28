@@ -178,8 +178,8 @@ class WindowBasedSelfAttention(nn.Module):
 
         fft_filter = torch.sigmoid(self.mlp(folds))
 
+        fft_filter = fft_filter.view(*init_folds_shape)
         out = four_folds * fft_filter
-        out = out.view(*init_folds_shape)
 
         out = torch.fft.ifftshift(out)
         out = torch.fft.ifft2(out, norm='ortho').real
@@ -210,7 +210,6 @@ class WindowBasedSelfAttention(nn.Module):
         out = torch.cat([out[:, :, i] for i in range(out.size(2))], dim=2)
 
         with torch.no_grad():
-            fft_filter = fft_filter.view(*init_folds_shape)
             fft_filter = torch.cat([fft_filter[:, :, :, i] for i in range(fft_filter.size(3))], dim=4)
             fft_filter = torch.cat([fft_filter[:, :, i] for i in range(fft_filter.size(2))], dim=2)
 
