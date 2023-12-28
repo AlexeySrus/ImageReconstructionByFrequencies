@@ -124,7 +124,7 @@ class ComplexSelfAttention(nn.Module):
         scores = torch.bmm(queries, keys.transpose(1, 2)) / (self.input_dim ** 0.5)
         attention = self.softmax(torch.abs(scores)).to(torch.cfloat)
         weighted = torch.bmm(attention, values)
-        return weighted
+        return weighted, attention
 
 
 def real_imaginary_leaky_relu(z):
@@ -135,20 +135,21 @@ class ComplexAttnMLP(nn.Module):
     def __init__(self, in_feats: int, mid_feats: int, out_feats: int):
             super(ComplexAttnMLP, self).__init__()
 
-            self.layer1 = nn.Linear(in_feats, mid_feats, dtype=torch.cfloat)
-            self.norm1 = LayerNorm(mid_feats, dtype=torch.cfloat)
-            self.self_attn = ComplexSelfAttention(mid_feats)
-            self.layer2 = nn.Linear(mid_feats, out_feats, dtype=torch.cfloat)
-            self.norm2 = LayerNorm(out_feats, dtype=torch.cfloat)
+            # self.layer1 = nn.Linear(in_feats, mid_feats, dtype=torch.cfloat)
+            # self.norm1 = LayerNorm(mid_feats, dtype=torch.cfloat)
+            self.self_attn = ComplexSelfAttention(in_feats)
+            # self.layer2 = nn.Linear(mid_feats, out_feats, dtype=torch.cfloat)
+            # self.norm2 = LayerNorm(out_feats, dtype=torch.cfloat)
 
     def forward(self, x):
-        y = self.layer1(x)
-        y = self.norm1(y)
-        y = real_imaginary_leaky_relu(y)
-        y = self.self_attn(y)
-        y = self.layer2(y)
-        out = self.norm2(y)
-        return out
+        # y = self.layer1(x)
+        # y = self.norm1(y)
+        # y = real_imaginary_leaky_relu(y)
+        # y = self.self_attn(y)
+        # y = self.layer2(y)
+        # out = self.norm2(y)
+        # return out
+        return self.self_attn(x)
 
 class WindowBasedSelfAttention(nn.Module):
     def __init__(self, window_size:int = 64):
@@ -176,10 +177,13 @@ class WindowBasedSelfAttention(nn.Module):
             folds.size(4) * folds.size(5)
         )
 
-        fft_filter = torch.sigmoid(self.mlp(folds))
+        # fft_filter = torch.sigmoid(self.mlp(folds))
 
-        fft_filter = fft_filter.view(*init_folds_shape)
-        out = four_folds * fft_filter
+        # fft_filter = fft_filter.view(*init_folds_shape)
+        # out = four_folds * fft_filter
+        
+        out, fft_filter = self.mlp(folds)
+        out = out.view(*init_folds_shape)
 
         out = torch.fft.ifftshift(out)
         out = torch.fft.ifft2(out, norm='ortho').real
