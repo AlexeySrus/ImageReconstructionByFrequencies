@@ -210,6 +210,7 @@ class WindowBasedSelfAttention(nn.Module):
         out = torch.cat([out[:, :, i] for i in range(out.size(2))], dim=2)
 
         with torch.no_grad():
+            fft_filter = fft_filter[:, :, ::2, ::2]
             fft_filter = torch.cat([fft_filter[:, :, :, i] for i in range(fft_filter.size(3))], dim=4)
             fft_filter = torch.cat([fft_filter[:, :, i] for i in range(fft_filter.size(2))], dim=2)
 
