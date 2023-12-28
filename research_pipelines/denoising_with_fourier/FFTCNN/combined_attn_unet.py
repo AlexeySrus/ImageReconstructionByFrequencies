@@ -159,7 +159,7 @@ class SpectralPooling(nn.Module):
 class FFTAttention(nn.Module):
     def __init__(self, in_ch: int, reduction: int = 16, kernel_size: int = 7, window_size: int = 64):
         super().__init__()
-        self.fft_sa = ComplexSpatialAttention(window_size)
+        self.fft_sa = ComplexSpatialAttention(kernel_size)
         self.sa = SpatialAttention(kernel_size)
         self.final_ca = ChannelAttention(in_ch * 2, reduction)
         self.final_conv = nn.Conv2d(in_ch * 2, in_ch, 1)
@@ -167,14 +167,12 @@ class FFTAttention(nn.Module):
     def forward(self, x):
         z = torch.fft.fft2(x, norm='ortho')
         z = torch.fft.fftshift(z)
-
+        
         out_1, fft_attn = self.fft_sa(z)
 
         z = torch.fft.ifftshift(z)
         out_1 = torch.fft.ifft2(z, norm='ortho')
         out_1 = out_1.real
-        # fft_attn = self.post_attn(out_1)
-        # out_1 = x * fft_attn
 
         out_2, float_sa = self.sa(x)
 
