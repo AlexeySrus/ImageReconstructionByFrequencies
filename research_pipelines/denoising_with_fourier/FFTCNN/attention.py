@@ -32,6 +32,11 @@ class FullComplexSpatialAttention(nn.Module):
         avg_out = torch.mean(z, dim=1, keepdim=True)
         _, max_indices = torch.max(torch.abs(z), dim=1, keepdim=True)
         max_out = retrieve_elements_from_indices(z, max_indices)
+        
+        # x_max, _ = torch.max(x, dim=1, keepdim=True)
+        # max_out = torch.fft.fft2(x_max, norm='ortho')
+        # max_out = torch.fft.fftshift(max_out)
+        
         out = torch.concat([avg_out, max_out], dim=1)
         out = self.conv(out)
         attn = self.sigmoid(out)
@@ -99,3 +104,73 @@ class CBAM(nn.Module):
         x, ca_tensor = self.ca(x)
         x, sa_tensor = self.sa(x)
         return x, ca_tensor, sa_tensor
+
+
+class ComplexSelfAttention(nn.Module):
+    def __init__(self, input_dim):
+        super(ComplexSelfAttention, self).__init__()
+        self.input_dim = input_dim
+        self.query = nn.Linear(input_dim, input_dim, dtype=torch.cfloat)
+        self.key = nn.Linear(input_dim, input_dim, dtype=torch.cfloat)
+        self.value = nn.Linear(input_dim, input_dim, dtype=torch.cfloat)
+        self.softmax = nn.Softmax(dim=2)
+        
+    def forward(self, x):
+        queries = self.query(x)
+        keys = self.key(x)
+        values = self.value(x)
+        scores = torch.bmm(queries, keys.transpose(1, 2)) / (self.input_dim ** 0.5)
+        attention = self.softmax(torch.abs(scores)).to(torch.cfloat)
+        weighted = torch.bmm(attention, values)
+        return weighted
+
+
+def real_imaginary_relu(z):
+    return nn.functional.leaky_relu(z.real) + 1.j * nn.functional.leaky_relu(z.imag)
+
+
+class WindowBasedSelfAttention(nn.Module):
+    def __init__(self, window_size:int = 64):
+        super(WindowBasedSelfAttention, self).__init__()
+        self.self_attention = ComplexSelfAttention(window_size ** 2 // 4)
+
+        self.down = nn.Linear(window_size ** 2, window_size ** 2 // 4, dtype=torch.cfloat)
+        self.up = nn.Linear(window_size ** 2 // 4, window_size ** 2, dtype=torch.cfloat)
+
+        self.wsize = window_size
+
+    def forward(self, x):
+        features_folds = x.unfold(2, size=self.wsize, step=self.wsize).unfold(3, self.wsize, step=self.wsize).contiguous()
+
+        four_folds = torch.fft.fft2(features_folds)
+        four_folds = torch.fft.fftshift(four_folds)
+
+        _, max_indices = torch.max(torch.abs(four_folds), dim=1, keepdim=True)
+        folds = retrieve_elements_from_indices(four_folds, max_indices)
+
+        init_folds_shape = folds.shape        
+
+        folds = folds.view(
+            folds.size(0), 
+            folds.size(1) * folds.size(2) * folds.size(3),
+            folds.size(4) * folds.size(5)
+        )
+
+        dfolds = self.down(folds)
+        dfolds = real_imaginary_relu(dfolds)
+        out = self.self_attention(dfolds)
+        out = self.up(out)
+
+        out = out.view(*init_folds_shape)
+
+        loc_attn = torch.sigmoid(out)
+
+        out = four_folds * loc_attn
+
+        out = torch.fft.ifftshift(out)
+        out = torch.fft.ifft2(out).real
+
+        out = torch.cat([out[:, :, :, i] for i in range(out.size(3))], dim=4)
+        out = torch.cat([out[:, :, i] for i in range(out.size(2))], dim=2)
+
+        return out

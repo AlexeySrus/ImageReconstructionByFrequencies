@@ -212,7 +212,7 @@ class CustomTrainingPipeline(object):
         self.model.apply(init_weights)
         self.model = self.model.to(device)
         # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=1E-2)
-        self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=0.0001, betas=(0.9, 0.999),eps=1e-8, weight_decay=1E-2)
+        self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=0.001, betas=(0.9, 0.999),eps=1e-8, weight_decay=1E-2)
         # self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001, weight_decay=1E-4)
         # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001, weight_decay=1E-5)
 
@@ -229,10 +229,10 @@ class CustomTrainingPipeline(object):
                 print(
                     '#' * 5 + ' Optimizer has been loaded by path: {} '.format(load_path) + '#' * 5
                 )
-                self.optimizer.param_groups[0]['lr'] = 0.001
+                # self.optimizer.param_groups[0]['lr'] = 0.00001
                 print('Optimizer LR: {:.5f}'.format(self.get_lr()))
 
-        self.images_criterion = CharbonnierLoss().to(self.device)
+        self.images_criterion = torch.nn.MSELoss() # CharbonnierLoss().to(self.device)
         # self.images_criterion = MIXLoss()
         # self.perceptual_loss = DISTS()
         self.perceptual_loss = None
@@ -283,7 +283,7 @@ class CustomTrainingPipeline(object):
                 noisy_image = _noisy_image.to(self.device)
                 clear_image = _clear_image.to(self.device)
 
-                if epoch > 30:
+                if epoch > 15:
                     clear_image, noisy_image = self.mixup.aug(clear_image, noisy_image)
 
                 output = self.model(noisy_image)
@@ -298,10 +298,10 @@ class CustomTrainingPipeline(object):
                 if self.perceptual_loss is not None:
                     # Perceptual loss calculated in RGB 0..1
                     p_loss = self.perceptual_loss(
-                        pred_image,
-                        clear_image
-                        # self._convert_ycrcb_to_rgb(pred_image), 
-                        # self._convert_ycrcb_to_rgb(clear_image)
+                        # pred_image,
+                        # clear_image
+                        self._convert_ycrcb_to_rgb(pred_image), 
+                        self._convert_ycrcb_to_rgb(clear_image)
                     )
                     
                 # hist_loss = self.final_hist_loss(pred_image, clear_image)
@@ -312,10 +312,10 @@ class CustomTrainingPipeline(object):
                 #     torch.fft.fft2(clear_image[:, :1], norm='ortho')
                 # )
                 f_loss = self.hf_loss(
-                    pred_image,
-                    clear_image
-                    # self._convert_ycrcb_to_rgb(pred_image), 
-                    # self._convert_ycrcb_to_rgb(clear_image)
+                    # pred_image,
+                    # clear_image
+                    self._convert_ycrcb_to_rgb(pred_image), 
+                    self._convert_ycrcb_to_rgb(clear_image)
                 )
 
                 total_loss = loss + f_loss
@@ -393,17 +393,17 @@ class CustomTrainingPipeline(object):
                     restored_image = torch.clamp(restored_image, 0, 1)
 
                     val_psnr = self.accuracy_measure(
-                        restored_image,
-                        clear_image
-                        # self._convert_ycrcb_to_rgb(restored_image),
-                        # self._convert_ycrcb_to_rgb(clear_image)
+                        # restored_image,
+                        # clear_image
+                        self._convert_ycrcb_to_rgb(restored_image),
+                        self._convert_ycrcb_to_rgb(clear_image)
                     )
 
                     val_ssim = self.ssim_measure(
-                        restored_image,
-                        clear_image
-                        # self._convert_ycrcb_to_rgb(restored_image),
-                        # self._convert_ycrcb_to_rgb(clear_image)
+                        # restored_image,
+                        # clear_image
+                        self._convert_ycrcb_to_rgb(restored_image),
+                        self._convert_ycrcb_to_rgb(clear_image)
                     )
 
                     acc_rate = val_psnr.item()
@@ -415,7 +415,7 @@ class CustomTrainingPipeline(object):
 
                     result_path = os.path.join(self.output_val_images_dir, '{}.png'.format(sample_i + 1))
                     val_img = (restored_image.squeeze(0).to('cpu').permute(1, 2, 0) * 255.0).numpy().astype(np.uint8)
-                    # val_img = cv2.cvtColor(val_img, cv2.COLOR_YCrCb2RGB)
+                    val_img = cv2.cvtColor(val_img, cv2.COLOR_YCrCb2RGB)
                     Image.fromarray(val_img).save(result_path)
 
         if test_len > 0:

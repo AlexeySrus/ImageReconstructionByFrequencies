@@ -3,7 +3,7 @@ from collections import OrderedDict
 import torch
 import torch.nn as nn
 
-from FFTCNN.attention import FullComplexSpatialAttention as ComplexSpatialAttention, SpatialAttention, ChannelAttention, CBAM
+from FFTCNN.attention import WindowBasedSelfAttention as ComplexSpatialAttention, SpatialAttention, ChannelAttention, CBAM
 
 
 padding_mode: str = 'reflect'
@@ -157,13 +157,13 @@ class SpectralPooling(nn.Module):
 
 
 class FFTAttention(nn.Module):
-    def __init__(self, in_ch: int, reduction: int = 16, kernel_size: int = 7):
+    def __init__(self, in_ch: int, reduction: int = 16, kernel_size: int = 7, window_size: int = 64):
         super().__init__()
-        self.fft_sa = ComplexSpatialAttention(kernel_size)
-        self.post_attn = nn.Sequential(
-            Unet1lvl(in_ch, in_ch, 1),
-            nn.Sigmoid()
-        )
+        self.fft_sa = ComplexSpatialAttention(window_size)
+        # self.post_attn = nn.Sequential(
+        #     Unet1lvl(in_ch, in_ch, 1),
+        #     nn.Sigmoid()
+        # )
         # self.post_attn = nn.Sequential(
         #     nn.Conv2d(in_ch, in_ch // reduction, kernel_size=5, stride=1, padding=2, padding_mode=padding_mode),
         #     nn.BatchNorm2d(in_ch // reduction),
@@ -179,26 +179,30 @@ class FFTAttention(nn.Module):
         z = torch.fft.fft2(x, norm='ortho')
         z = torch.fft.fftshift(z)
 
-        z, complex_sa = self.fft_sa(z)
+        z = self.fft_sa(z)
 
         z = torch.fft.ifftshift(z)
         out_1 = torch.fft.ifft2(z, norm='ortho')
         out_1 = out_1.real
-        fft_attn = self.post_attn(out_1)
-        out_1 = x * fft_attn
+        # fft_attn = self.post_attn(out_1)
+        # out_1 = x * fft_attn
 
         out_2, float_sa = self.sa(x)
 
         out, _ = self.final_ca(torch.concat((out_1, out_2), dim=1))
         out = self.final_conv(out)
 
-        return out, [complex_sa, fft_attn, float_sa]
+        with torch.no_grad():
+            inv_attn = torch.abs(out_1 - x).mean(dim=1).unsqueeze(1)
+            inv_attn /= inv_attn.max()
+
+        return out, [torch.clamp(inv_attn, 0, 1), float_sa]
 
 
 class FeaturesProcessing(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int):
+    def __init__(self, in_ch: int, out_ch: int, window_size: int):
         super().__init__()
-        self.attn1 = FFTAttention(in_ch)
+        self.attn1 = FFTAttention(in_ch, window_size=window_size)
         self.conv1 = conv3x3(in_ch, in_ch * 2)
         self.norm1 = nn.BatchNorm2d(in_ch * 2)
         self.act1 = nn.LeakyReLU()
@@ -225,9 +229,9 @@ class FeaturesProcessing(nn.Module):
     
 
 class FeaturesProcessingWithLastConv(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int):
+    def __init__(self, in_ch: int, out_ch: int, window_size: int):
         super().__init__()
-        self.features = FeaturesProcessing(in_ch, out_ch)
+        self.features = FeaturesProcessing(in_ch, out_ch, window_size=window_size)
         self.final_conv = conv1x1(out_ch, out_ch)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -237,9 +241,9 @@ class FeaturesProcessingWithLastConv(nn.Module):
 
 
 class FeaturesDownsample(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int):
+    def __init__(self, in_ch: int, out_ch: int, window_size: int):
         super().__init__()
-        self.features = FeaturesProcessing(in_ch, out_ch)
+        self.features = FeaturesProcessing(in_ch, out_ch, window_size=window_size)
         # self.pool = GeneralizedMeanPooling2d(2, 2)
         self.pool = nn.MaxPool2d(2, 2)
 
@@ -250,12 +254,12 @@ class FeaturesDownsample(nn.Module):
     
 
 class FeaturesConvTransposeUpsample(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int):
+    def __init__(self, in_ch: int, out_ch: int, window_size: int):
         super().__init__()
         self.up = torch.nn.ConvTranspose2d(in_ch, in_ch // 2, kernel_size=3, stride=2, padding=1, output_padding=1)
         self.norm = nn.BatchNorm2d(in_ch // 2)
         self.act = nn.LeakyReLU()
-        self.features = FeaturesProcessing(in_ch // 2, out_ch)
+        self.features = FeaturesProcessing(in_ch // 2, out_ch, window_size=window_size)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y = self.up(x)
@@ -266,10 +270,10 @@ class FeaturesConvTransposeUpsample(nn.Module):
 
 
 class FeaturesUpsample(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int):
+    def __init__(self, in_ch: int, out_ch: int, window_size: int):
         super().__init__()
         self.up = torch.nn.UpsamplingBilinear2d(scale_factor=2)
-        self.features = FeaturesProcessing(in_ch, out_ch)
+        self.features = FeaturesProcessing(in_ch, out_ch, window_size=window_size)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y = self.up(x)
@@ -280,24 +284,24 @@ class FeaturesUpsample(nn.Module):
 class FFTAttentionUNetModule(nn.Module):
     def __init__(self, in_ch: int, mid_ch: int, out_ch: int, need_up_features: bool = False):
         super().__init__()
-        self.init_block = FeaturesProcessing(in_ch, mid_ch)
+        self.init_block = FeaturesProcessing(in_ch, mid_ch, window_size=64)
 
-        self.downsample_block1 = FeaturesDownsample(mid_ch, mid_ch)
-        self.downsample_block2 = FeaturesDownsample(mid_ch, mid_ch * 2)
-        self.downsample_block3 = FeaturesDownsample(mid_ch * 2, mid_ch * 3)
-        self.downsample_block4 = FeaturesDownsample(mid_ch * 3, mid_ch * 4)
+        self.downsample_block1 = FeaturesDownsample(mid_ch, mid_ch, window_size=64)
+        self.downsample_block2 = FeaturesDownsample(mid_ch, mid_ch * 2, window_size=32)
+        self.downsample_block3 = FeaturesDownsample(mid_ch * 2, mid_ch * 3, window_size=16)
+        self.downsample_block4 = FeaturesDownsample(mid_ch * 3, mid_ch * 4, window_size=8)
 
-        self.deep_conv_block = FeaturesProcessing(mid_ch * 4, mid_ch * 4)
+        self.deep_conv_block = FeaturesProcessing(mid_ch * 4, mid_ch * 4, window_size=8)
 
-        self.upsample4 = FeaturesUpsample(mid_ch * 4, mid_ch * 3)
-        self.upsample3 = FeaturesUpsample(mid_ch * 3, mid_ch * 2)
-        self.upsample2 = FeaturesUpsample(mid_ch * 2, mid_ch)
-        self.upsample1 = FeaturesUpsample(mid_ch, mid_ch)
+        self.upsample4 = FeaturesUpsample(mid_ch * 4, mid_ch * 3, window_size=16)
+        self.upsample3 = FeaturesUpsample(mid_ch * 3, mid_ch * 2, window_size=32)
+        self.upsample2 = FeaturesUpsample(mid_ch * 2, mid_ch, window_size=64)
+        self.upsample1 = FeaturesUpsample(mid_ch, mid_ch, window_size=64)
         
-        self.upsample_features_block4 = FeaturesProcessing(mid_ch * 3 + mid_ch * 3, mid_ch * 3)
-        self.upsample_features_block3 = FeaturesProcessing(mid_ch * 2 + mid_ch * 2, mid_ch * 2)
-        self.upsample_features_block2 = FeaturesProcessing(mid_ch + mid_ch, mid_ch)
-        self.upsample_features_block1 = FeaturesProcessing(mid_ch + mid_ch, out_ch)
+        self.upsample_features_block4 = FeaturesProcessing(mid_ch * 3 + mid_ch * 3, mid_ch * 3, window_size=8)
+        self.upsample_features_block3 = FeaturesProcessing(mid_ch * 2 + mid_ch * 2, mid_ch * 2, window_size=16)
+        self.upsample_features_block2 = FeaturesProcessing(mid_ch + mid_ch, mid_ch, window_size=32)
+        self.upsample_features_block1 = FeaturesProcessing(mid_ch + mid_ch, out_ch, window_size=64)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         hx, sa_init = self.init_block(x)
