@@ -178,7 +178,7 @@ class WindowBasedSelfAttention(nn.Module):
 
         fft_filter = torch.sigmoid(self.mlp(folds))
 
-        out = out * fft_filter
+        out = four_folds * fft_filter
         out = out.view(*init_folds_shape)
 
         out = torch.fft.ifftshift(out)
