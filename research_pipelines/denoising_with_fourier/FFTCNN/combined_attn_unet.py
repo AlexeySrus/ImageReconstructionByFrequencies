@@ -160,30 +160,19 @@ class FFTAttention(nn.Module):
     def __init__(self, in_ch: int, reduction: int = 16, kernel_size: int = 7, window_size: int = 64):
         super().__init__()
         self.fft_sa = ComplexSpatialAttention(window_size)
-        # self.post_attn = nn.Sequential(
-        #     Unet1lvl(in_ch, in_ch, 1),
-        #     nn.Sigmoid()
-        # )
-        # self.post_attn = nn.Sequential(
-        #     nn.Conv2d(in_ch, in_ch // reduction, kernel_size=5, stride=1, padding=2, padding_mode=padding_mode),
-        #     nn.BatchNorm2d(in_ch // reduction),
-        #     nn.LeakyReLU(),
-        #     nn.Conv2d(in_ch // reduction, 1, kernel_size=3, stride=1, padding=1, padding_mode=padding_mode),
-        #     nn.Sigmoid()
-        # )
         self.sa = SpatialAttention(kernel_size)
         self.final_ca = ChannelAttention(in_ch * 2, reduction)
         self.final_conv = nn.Conv2d(in_ch * 2, in_ch, 1)
 
     def forward(self, x):
-        z = torch.fft.fft2(x, norm='ortho')
-        z = torch.fft.fftshift(z)
+        # z = torch.fft.fft2(x, norm='ortho')
+        # z = torch.fft.fftshift(z)
 
-        z = self.fft_sa(z)
+        out_1, fft_attn = self.fft_sa(x)
 
-        z = torch.fft.ifftshift(z)
-        out_1 = torch.fft.ifft2(z, norm='ortho')
-        out_1 = out_1.real
+        # z = torch.fft.ifftshift(z)
+        # out_1 = torch.fft.ifft2(z, norm='ortho')
+        # out_1 = out_1.real
         # fft_attn = self.post_attn(out_1)
         # out_1 = x * fft_attn
 
@@ -196,7 +185,7 @@ class FFTAttention(nn.Module):
             inv_attn = torch.abs(out_1 - x).mean(dim=1).unsqueeze(1)
             inv_attn /= inv_attn.max()
 
-        return out, [torch.clamp(inv_attn, 0, 1), float_sa]
+        return out, [fft_attn, torch.clamp(inv_attn, 0, 1), float_sa]
 
 
 class FeaturesProcessing(nn.Module):

@@ -15,6 +15,8 @@ of the image based on their channel relationships.
 import torch
 from torch import nn
 
+from .mixvit import LayerNorm
+
 
 def retrieve_elements_from_indices(tensor, indices):
     flattened_tensor = tensor.flatten(start_dim=2)
@@ -125,17 +127,35 @@ class ComplexSelfAttention(nn.Module):
         return weighted
 
 
-def real_imaginary_relu(z):
+def real_imaginary_leaky_relu(z):
     return nn.functional.leaky_relu(z.real) + 1.j * nn.functional.leaky_relu(z.imag)
 
+
+class ComplexAttnMLP(nn.Module):
+    def __init__(self, in_feats: int, out_feats: int):
+            super(ComplexAttnMLP, self).__init__()
+
+            self.layer1 = nn.Linear(in_feats, in_feats // 4, dtype=torch.cfloat)
+            self.norm1 = LayerNorm(out_feats, dtype=torch.cfloat)
+            self.self_attn = ComplexSelfAttention(in_feats // 4)
+            self.layer2 = nn.Linear(in_feats // 4, out_feats, dtype=torch.cfloat)
+            self.norm2 = LayerNorm(out_feats, dtype=torch.cfloat)
+
+    def forward(self, x):
+        y = self.layer1(x)
+        y = self.norm1(y)
+        y = real_imaginary_leaky_relu(y)
+        y = self.self_attn(y)
+        y = self.layer2(y)
+        out = self.norm2(y)
+        return out
 
 class WindowBasedSelfAttention(nn.Module):
     def __init__(self, window_size:int = 64):
         super(WindowBasedSelfAttention, self).__init__()
         self.self_attention = ComplexSelfAttention(window_size ** 2 // 4)
 
-        self.down = nn.Linear(window_size ** 2, window_size ** 2 // 4, dtype=torch.cfloat)
-        self.up = nn.Linear(window_size ** 2 // 4, window_size ** 2, dtype=torch.cfloat)
+        self.mlp = ComplexAttnMLP(window_size ** 2)
 
         self.wsize = window_size
 
@@ -144,12 +164,12 @@ class WindowBasedSelfAttention(nn.Module):
             2, size=self.wsize, step=self.wsize // 2).unfold(
                 3, size=self.wsize, step=self.wsize // 2).contiguous()
 
-        four_folds = torch.fft.fft2(features_folds)
+        four_folds = torch.fft.fft2(features_folds, norm='ortho')
         four_folds = torch.fft.fftshift(four_folds)
 
-        # _, max_indices = torch.max(torch.abs(four_folds), dim=1, keepdim=True)
-        # folds = retrieve_elements_from_indices(four_folds, max_indices)
-        folds = torch.mean(four_folds, dim=1, keepdim=True)
+        _, max_indices = torch.max(torch.abs(four_folds), dim=1, keepdim=True)
+        folds = retrieve_elements_from_indices(four_folds, max_indices)
+        # folds = torch.mean(four_folds, dim=1, keepdim=True)
 
         init_folds_shape = folds.shape        
 
@@ -159,19 +179,13 @@ class WindowBasedSelfAttention(nn.Module):
             folds.size(4) * folds.size(5)
         )
 
-        dfolds = self.down(folds)
-        dfolds = real_imaginary_relu(dfolds)
-        out = self.self_attention(dfolds)
-        out = self.up(out)
+        fft_filter = torch.sigmoid(self.mlp(folds))
 
+        out = out * fft_filter
         out = out.view(*init_folds_shape)
 
-        loc_attn = torch.sigmoid(out)
-
-        out = four_folds * loc_attn
-
         out = torch.fft.ifftshift(out)
-        out = torch.fft.ifft2(out).real
+        out = torch.fft.ifft2(out, norm='ortho').real
 
         corners = out[:, :, ::2, ::2]
         anchors = out[:, :, 1::2, 1::2]
@@ -198,4 +212,9 @@ class WindowBasedSelfAttention(nn.Module):
         out = torch.cat([out[:, :, :, i] for i in range(out.size(3))], dim=4)
         out = torch.cat([out[:, :, i] for i in range(out.size(2))], dim=2)
 
-        return out
+        with torch.no_grad():
+            fft_filter = fft_filter.view(*init_folds_shape)
+            fft_filter = torch.cat([fft_filter[:, :, :, i] for i in range(fft_filter.size(3))], dim=4)
+            fft_filter = torch.cat([fft_filter[:, :, i] for i in range(fft_filter.size(2))], dim=2)
+
+        return out, fft_filter
