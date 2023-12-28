@@ -140,13 +140,16 @@ class WindowBasedSelfAttention(nn.Module):
         self.wsize = window_size
 
     def forward(self, x):
-        features_folds = x.unfold(2, size=self.wsize, step=self.wsize).unfold(3, self.wsize, step=self.wsize).contiguous()
+        features_folds = x.unfold(
+            2, size=self.wsize, step=self.wsize // 2).unfold(
+                3, size=self.wsize, step=self.wsize // 2).contiguous()
 
         four_folds = torch.fft.fft2(features_folds)
         four_folds = torch.fft.fftshift(four_folds)
 
-        _, max_indices = torch.max(torch.abs(four_folds), dim=1, keepdim=True)
-        folds = retrieve_elements_from_indices(four_folds, max_indices)
+        # _, max_indices = torch.max(torch.abs(four_folds), dim=1, keepdim=True)
+        # folds = retrieve_elements_from_indices(four_folds, max_indices)
+        four_folds = torch.mean(four_folds, dim=1, keepdim=True)
 
         init_folds_shape = folds.shape        
 
@@ -169,6 +172,31 @@ class WindowBasedSelfAttention(nn.Module):
 
         out = torch.fft.ifftshift(out)
         out = torch.fft.ifft2(out).real
+
+        corners = out[:, :, ::2, ::2]
+        anchors = out[:, :, 1::2, 1::2]
+        path_size = self.wsize
+
+        corners[:, :, :-1, :-1, path_size//2:, path_size//2:] = \
+                                        corners[:, :, :-1, :-1, path_size//2:, path_size//2:] / 2 + \
+                                        anchors[:, :, :, :, :path_size//2, :path_size//2] / 2
+
+        corners[:, :, :-1, 1:, path_size//2:, :path_size//2] = \
+                                                corners[:, :, :-1, 1:, path_size//2:, :path_size//2] / 2 + \
+                                                anchors[:, :, :, :, :path_size//2, path_size//2:] / 2
+
+        corners[:, :, 1:, :-1, :path_size//2, path_size//2:] = \
+                                                corners[:, :, 1:, :-1, :path_size//2, path_size//2:] / 2 + \
+                                                anchors[:, :, :, :, path_size//2:, :path_size//2] / 2
+
+        corners[:, :, 1:, 1:, :path_size//2, :path_size//2] = \
+                                                corners[:, :, 1:, 1:, :path_size//2, :path_size//2] / 2 + \
+                                                anchors[:, :, :, :, path_size//2:, path_size//2:] / 2
+
+
+        out = corners
+        out = torch.cat([out[:, :, :, i] for i in range(out.size(3))], dim=4)
+        out = torch.cat([out[:, :, i] for i in range(out.size(2))], dim=2)
 
         out = torch.cat([out[:, :, :, i] for i in range(out.size(3))], dim=4)
         out = torch.cat([out[:, :, i] for i in range(out.size(2))], dim=2)
