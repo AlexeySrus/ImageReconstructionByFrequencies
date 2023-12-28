@@ -165,9 +165,10 @@ class WindowBasedSelfAttention(nn.Module):
         four_folds = torch.fft.fft2(features_folds, norm='ortho')
         four_folds = torch.fft.fftshift(four_folds)
 
-        _, max_indices = torch.max(torch.abs(four_folds), dim=1, keepdim=True)
-        folds = retrieve_elements_from_indices(four_folds, max_indices)
+        # _, max_indices = torch.max(torch.abs(four_folds), dim=1, keepdim=True)
+        # folds = retrieve_elements_from_indices(four_folds, max_indices)
         # folds = torch.mean(four_folds, dim=1, keepdim=True)
+        folds = four_folds
 
         init_folds_shape = folds.shape        
 
@@ -186,7 +187,7 @@ class WindowBasedSelfAttention(nn.Module):
         out = out.view(*init_folds_shape)
 
         with torch.no_grad():
-            fft_filter = torch.clone(out)
+            fft_filter = torch.clone(out[:, :1])
 
         out = torch.fft.ifftshift(out)
         out = torch.fft.ifft2(out, norm='ortho').real
