@@ -132,13 +132,13 @@ def real_imaginary_leaky_relu(z):
 
 
 class ComplexAttnMLP(nn.Module):
-    def __init__(self, in_feats: int, out_feats: int):
+    def __init__(self, in_feats: int, mid_feats: int, out_feats: int):
             super(ComplexAttnMLP, self).__init__()
 
-            self.layer1 = nn.Linear(in_feats, in_feats // 4, dtype=torch.cfloat)
-            self.norm1 = LayerNorm(out_feats, dtype=torch.cfloat)
-            self.self_attn = ComplexSelfAttention(in_feats // 4)
-            self.layer2 = nn.Linear(in_feats // 4, out_feats, dtype=torch.cfloat)
+            self.layer1 = nn.Linear(in_feats, mid_feats, dtype=torch.cfloat)
+            self.norm1 = LayerNorm(mid_feats, dtype=torch.cfloat)
+            self.self_attn = ComplexSelfAttention(mid_feats)
+            self.layer2 = nn.Linear(mid_feats, out_feats, dtype=torch.cfloat)
             self.norm2 = LayerNorm(out_feats, dtype=torch.cfloat)
 
     def forward(self, x):
