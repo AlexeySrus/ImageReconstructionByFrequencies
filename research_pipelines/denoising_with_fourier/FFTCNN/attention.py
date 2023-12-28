@@ -149,7 +149,7 @@ class WindowBasedSelfAttention(nn.Module):
 
         # _, max_indices = torch.max(torch.abs(four_folds), dim=1, keepdim=True)
         # folds = retrieve_elements_from_indices(four_folds, max_indices)
-        four_folds = torch.mean(four_folds, dim=1, keepdim=True)
+        folds = torch.mean(four_folds, dim=1, keepdim=True)
 
         init_folds_shape = folds.shape        
 
