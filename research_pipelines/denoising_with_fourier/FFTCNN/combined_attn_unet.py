@@ -168,7 +168,7 @@ class FFTAttention(nn.Module):
         z = torch.fft.fft2(x, norm='ortho')
         z = torch.fft.fftshift(z)
 
-        out_1, fft_attn = self.fft_sa(x)
+        out_1, fft_attn = self.fft_sa(z)
 
         z = torch.fft.ifftshift(z)
         out_1 = torch.fft.ifft2(z, norm='ortho')
