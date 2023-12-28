@@ -3,7 +3,7 @@ from collections import OrderedDict
 import torch
 import torch.nn as nn
 
-from FFTCNN.attention import WindowBasedSelfAttention as ComplexSpatialAttention, SpatialAttention, ChannelAttention, CBAM
+from FFTCNN.attention import FullComplexSpatialAttention as ComplexSpatialAttention, SpatialAttention, ChannelAttention, CBAM
 
 
 padding_mode: str = 'reflect'
@@ -165,14 +165,14 @@ class FFTAttention(nn.Module):
         self.final_conv = nn.Conv2d(in_ch * 2, in_ch, 1)
 
     def forward(self, x):
-        # z = torch.fft.fft2(x, norm='ortho')
-        # z = torch.fft.fftshift(z)
+        z = torch.fft.fft2(x, norm='ortho')
+        z = torch.fft.fftshift(z)
 
         out_1, fft_attn = self.fft_sa(x)
 
-        # z = torch.fft.ifftshift(z)
-        # out_1 = torch.fft.ifft2(z, norm='ortho')
-        # out_1 = out_1.real
+        z = torch.fft.ifftshift(z)
+        out_1 = torch.fft.ifft2(z, norm='ortho')
+        out_1 = out_1.real
         # fft_attn = self.post_attn(out_1)
         # out_1 = x * fft_attn
 
