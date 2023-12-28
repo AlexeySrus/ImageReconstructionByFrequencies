@@ -136,7 +136,7 @@ class ComplexAttnMLP(nn.Module):
             super(ComplexAttnMLP, self).__init__()
 
             self.layer1 = nn.Linear(in_feats, mid_feats, dtype=torch.cfloat)
-            self.self_attn = ComplexSelfAttention(in_feats)
+            self.self_attn = ComplexSelfAttention(mid_feats)
             self.layer2 = nn.Linear(mid_feats, out_feats, dtype=torch.cfloat)
 
     def forward(self, x):
