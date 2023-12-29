@@ -91,7 +91,7 @@ class ChannelAttention(nn.Module):
 
 class FFTChannelAttention(nn.Module):
     def __init__(self, channel, reduction=16):
-        super(ChannelAttention, self).__init__()
+        super(FFTChannelAttention, self).__init__()
 
         self.preprocess = nn.Sequential(
             nn.Conv2d(channel, channel * 2, 3, 1, 1, padding_mode='reflect'),
