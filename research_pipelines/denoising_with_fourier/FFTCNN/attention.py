@@ -291,7 +291,7 @@ class FrequencySplitSpatialAttention(nn.Module):
     def __init__(self, channel: int, image_size: int, kernel_size=7):
         super(FrequencySplitSpatialAttention, self).__init__()
 
-        self.freq_slitter = LowHightFrequencyImageComponents(image_size)
+        self.freq_slitter = LowHightFrequencyImageComponents((image_size, image_size))
 
         self.hlf = nn.Conv2d(channel, channel, 3, 1, 1, padding_mode='reflect')
         self.llf = nn.Conv2d(channel, channel, 3, 1, 1, padding_mode='reflect')
