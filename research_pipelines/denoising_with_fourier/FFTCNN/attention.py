@@ -89,51 +89,6 @@ class ChannelAttention(nn.Module):
         return x * attn, attn
 
 
-class FFTChannelAttention(nn.Module):
-    def __init__(self, channel, reduction=16):
-        super(FFTChannelAttention, self).__init__()
-
-        self.preprocess = nn.Sequential(
-            nn.Conv2d(channel, channel * 2, 3, 1, 1, padding_mode='reflect'),
-            nn.BatchNorm2d(channel * 2),
-            nn.LeakyReLU(),
-            nn.Conv2d(channel * 2, channel, 3, 1, 1, padding_mode='reflect'),
-            nn.BatchNorm2d(channel),
-            nn.LeakyReLU()
-        )
-        self.conv1 = nn.Conv2d(channel, channel, 1)
-
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.max_pool = nn.AdaptiveMaxPool2d(1)
-
-        self.fc = nn.Sequential(
-            nn.Conv2d(channel, channel // reduction, 1, bias=False, padding_mode='reflect'),
-            nn.LeakyReLU(),
-            nn.Conv2d(channel // reduction, channel, 1, bias=False, padding_mode='reflect')
-        )
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, x):
-        pre_fft = self.preprocess(x)
-
-        z = torch.fft.fft2(pre_fft, norm='ortho')
-        z = torch.fft.fftshift(z)
-
-        z = torch.abs(z)
-        z = self.conv1(z)
-        z = nn.functional.leaky_relu(z)
-
-        avg_out = self.fc(self.avg_pool(z))
-        max_out = self.fc(self.max_pool(z))
-        out = avg_out + max_out
-        attn = self.sigmoid(out)
-        
-        after_attn = pre_fft * attn
-        out = after_attn + x
-
-        return out
-
-
 class SpatialAttention(nn.Module):
     def __init__(self, kernel_size=7):
         super(SpatialAttention, self).__init__()
@@ -330,3 +285,98 @@ class LowHightFrequencyImageComponents(nn.Module):
         low_freq_x = torch.fft.ifft2(low_freq_z, norm='ortho').real
         
         return low_freq_x, hight_freq_x
+
+
+class FrequencySplitSpatialAttention(nn.Module):
+    def __init__(self, channel: int, image_size: int, kernel_size=7):
+        super(SpatialAttention, self).__init__()
+
+        self.freq_slitter = LowHightFrequencyImageComponents(image_size)
+
+        self.hlf = nn.Conv2d(channel, channel, 3, 1, 1, padding_mode='reflect')
+        self.llf = nn.Conv2d(channel, channel, 3, 1, 1, padding_mode='reflect')
+
+        self.preprocess = nn.Sequential(
+            nn.Conv2d(channel * 2, channel, 3, 1, 1, padding_mode='reflect'),
+            nn.BatchNorm2d(channel),
+            nn.LeakyReLU(),
+            nn.Conv2d(channel, channel, 3, 1, 1, padding_mode='reflect'),
+            nn.BatchNorm2d(channel),
+            nn.LeakyReLU()
+        )
+
+        self.conv = nn.Conv2d(2, 1, kernel_size, padding=kernel_size//2, bias=False, padding_mode='reflect')
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        low_freq_features, hight_freq_features = self.freq_slitter(x)
+
+        low_freq_features = self.llf(low_freq_features)
+        hight_freq_features = self.hlf(hight_freq_features)
+
+        united_features = torch.cat((low_freq_features, hight_freq_features), dim=1)
+        united_features = self.preprocess(united_features)
+
+        avg_out = torch.mean(united_features, dim=1, keepdim=True)
+        max_out, _ = torch.max(united_features, dim=1, keepdim=True)
+        out = torch.concat([avg_out, max_out], dim=1)
+        out = self.conv(out)
+        attn = self.sigmoid(out)
+        return x * attn, attn
+
+
+class FFTChannelAttention(nn.Module):
+    def __init__(self, channel, reduction=16):
+        super(FFTChannelAttention, self).__init__()
+
+        self.preprocess = nn.Sequential(
+            nn.Conv2d(channel, channel * 2, 3, 1, 1, padding_mode='reflect'),
+            nn.BatchNorm2d(channel * 2),
+            nn.LeakyReLU(),
+            nn.Conv2d(channel * 2, channel, 3, 1, 1, padding_mode='reflect'),
+            nn.BatchNorm2d(channel),
+            nn.LeakyReLU()
+        )
+        self.conv1 = nn.Conv2d(channel, channel, 1)
+
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.max_pool = nn.AdaptiveMaxPool2d(1)
+
+        self.fc = nn.Sequential(
+            nn.Conv2d(channel, channel // reduction, 1, bias=False, padding_mode='reflect'),
+            nn.LeakyReLU(),
+            nn.Conv2d(channel // reduction, channel, 1, bias=False, padding_mode='reflect')
+        )
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        pre_fft = self.preprocess(x)
+
+        z = torch.fft.fft2(pre_fft, norm='ortho')
+        z = torch.fft.fftshift(z)
+
+        z = torch.abs(z)
+        z = self.conv1(z)
+        z = nn.functional.leaky_relu(z)
+
+        avg_out = self.fc(self.avg_pool(z))
+        max_out = self.fc(self.max_pool(z))
+        out = avg_out + max_out
+        attn = self.sigmoid(out)
+        
+        after_attn = pre_fft * attn
+        out = after_attn + x
+
+        return out
+
+
+class FFTCBAM(nn.Module):
+    def __init__(self, image_size: int, channel: int, kernel_size, reduction: int = 16) -> None:
+        super().__init__()
+        self.fft_sa = FrequencySplitSpatialAttention(channel, image_size, kernel_size)
+        self.fft_ca = FFTChannelAttention(channel, reduction)
+
+    def forward(self, x):
+        x = self.fft_ca(x)
+        x, sa_tensor = self.fft_sa(x)
+        return x, sa_tensor

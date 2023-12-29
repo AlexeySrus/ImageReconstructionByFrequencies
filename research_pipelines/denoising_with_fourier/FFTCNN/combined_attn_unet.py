@@ -3,7 +3,7 @@ from collections import OrderedDict
 import torch
 import torch.nn as nn
 
-from FFTCNN.attention import FFTChannelAttention as ComplexSpatialAttention, SpatialAttention, ChannelAttention, CBAM
+from FFTCNN.attention import FFTCBAM, SpatialAttention, ChannelAttention
 
 
 padding_mode: str = 'reflect'
@@ -159,7 +159,7 @@ class SpectralPooling(nn.Module):
 class FFTAttention(nn.Module):
     def __init__(self, in_ch: int, reduction: int = 16, kernel_size: int = 7, window_size: int = 64, image_size: int = 256):
         super().__init__()
-        self.fft_sa = ComplexSpatialAttention(channel=in_ch, reduction=reduction)
+        self.fft_sa = FFTCBAM(channel=in_ch, reduction=reduction, image_size=image_size, kernel_size=kernel_size)
         self.sa = SpatialAttention(kernel_size)
         self.final_ca = ChannelAttention(in_ch * 2, reduction)
         self.final_conv = nn.Conv2d(in_ch * 2, in_ch, 1)
