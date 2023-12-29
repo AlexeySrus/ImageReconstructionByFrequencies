@@ -15,7 +15,7 @@ of the image based on their channel relationships.
 import torch
 from torch import nn
 
-from FFTCNN.mixvit import LayerNorm, RISwish
+from FFTCNN.mixvit import LayerNorm, RISwish, OverlapPatchEmbed, Block
 
 
 def retrieve_elements_from_indices(tensor, indices):
@@ -34,10 +34,6 @@ class FullComplexSpatialAttention(nn.Module):
         avg_out = torch.mean(z, dim=1, keepdim=True)
         _, max_indices = torch.max(torch.abs(z), dim=1, keepdim=True)
         max_out = retrieve_elements_from_indices(z, max_indices)
-        
-        # x_max, _ = torch.max(x, dim=1, keepdim=True)
-        # max_out = torch.fft.fft2(x_max, norm='ortho')
-        # max_out = torch.fft.fftshift(max_out)
         
         out = torch.concat([avg_out, max_out], dim=1)
         out = self.conv(out)
@@ -145,7 +141,28 @@ class ComplexAttnMLP(nn.Module):
         y = self.self_attn(y)
         y = self.layer2(y)
         return y
+    
+class MixVitAttention(nn.Module):
+    def __init__(self, patch_size: int, image_size: int) -> None:
+        super().__init__()
+        self.patch_embedder = OverlapPatchEmbed(image_size, patch_size, stride=2, embed_dim=16)
+        self.block = Block(16, 1)
 
+        self.pred_filter = nn.Sequential(
+            nn.LayerNorm(16),
+            nn.Conv2d(16, 8, 3, 1, 1),
+            nn.LayerNorm(8),
+            nn.LeakyReLU(),
+            nn.Conv2d(8, 1, 3, 1, 1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, z):
+        p, H, W = self.patch_embedder(z)
+        out = self.block(p, H, W)
+        attn = nn.functional.interpolate(torch.abs(out), (z.size(2), z.size(3)), mode='bilinear')
+        attn = self.pred_filter(attn)
+        return z * attn.to(torch.cfloat), attn
 
 
 class WindowBasedSelfAttention(nn.Module):
@@ -162,10 +179,10 @@ class WindowBasedSelfAttention(nn.Module):
         four_folds = torch.fft.fft2(features_folds, norm='ortho')
         four_folds = torch.fft.fftshift(four_folds)
 
-        # _, max_indices = torch.max(torch.abs(four_folds), dim=1, keepdim=True)
-        # folds = retrieve_elements_from_indices(four_folds, max_indices)
+        _, max_indices = torch.max(torch.abs(four_folds), dim=1, keepdim=True)
+        folds = retrieve_elements_from_indices(four_folds, max_indices)
         # folds = torch.mean(four_folds, dim=1, keepdim=True)
-        folds = four_folds
+        # folds = four_folds
 
         init_folds_shape = folds.shape
 
@@ -182,7 +199,7 @@ class WindowBasedSelfAttention(nn.Module):
         
         attn = self.mlp(folds)
         attn = attn.view(*init_folds_shape)
-        out = four_folds + attn
+        out = four_folds * attn
 
         with torch.no_grad():
             fft_filter = torch.clone(attn.mean(dim=1).unsqueeze(1))
