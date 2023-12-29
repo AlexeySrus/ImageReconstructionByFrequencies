@@ -149,9 +149,9 @@ class MixVitAttention(nn.Module):
         self.block = Block(16, 1)
 
         self.pred_filter = nn.Sequential(
-            nn.LayerNorm(16),
+            nn.InstanceNorm2d(16),
             nn.Conv2d(16, 8, 3, 1, 1),
-            nn.LayerNorm(8),
+            nn.InstanceNorm2d(8),
             nn.LeakyReLU(),
             nn.Conv2d(8, 1, 3, 1, 1),
             nn.Sigmoid()
