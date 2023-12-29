@@ -165,7 +165,7 @@ class FFTAttention(nn.Module):
         self.final_conv = nn.Conv2d(in_ch * 2, in_ch, 1)
 
     def forward(self, x):
-        out_1, fft_attn = self.fft_sa(x)
+        out_1 = self.fft_sa(x)
 
         out_2, float_sa = self.sa(x)
 
@@ -176,7 +176,7 @@ class FFTAttention(nn.Module):
             inv_attn = torch.abs(out_1 - x).mean(dim=1).unsqueeze(1)
             inv_attn /= inv_attn.max()
 
-        return out, [fft_attn, torch.clamp(inv_attn, 0, 1), float_sa]
+        return out, [torch.clamp(inv_attn, 0, 1), float_sa]
 
 
 class FeaturesProcessing(nn.Module):

@@ -131,10 +131,7 @@ class FFTChannelAttention(nn.Module):
         after_attn = pre_fft * attn
         out = after_attn + x
 
-        with torch.no_grad():
-            vis_attn = after_attn.mean(dim=1).unsqueeze(dim=1)
-
-        return out, vis_attn
+        return out
 
 
 class SpatialAttention(nn.Module):
