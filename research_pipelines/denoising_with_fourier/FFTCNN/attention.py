@@ -289,7 +289,7 @@ class LowHightFrequencyImageComponents(nn.Module):
 
 class FrequencySplitSpatialAttention(nn.Module):
     def __init__(self, channel: int, image_size: int, kernel_size=7):
-        super(SpatialAttention, self).__init__()
+        super(FrequencySplitSpatialAttention, self).__init__()
 
         self.freq_slitter = LowHightFrequencyImageComponents(image_size)
 
