@@ -11,7 +11,9 @@ to the entire input feature map, and it allows the network to focus on the most 
 of the image based on their channel relationships.
 """
 
+from typing import Tuple
 
+import numpy as np
 import torch
 from torch import nn
 
@@ -22,6 +24,16 @@ def retrieve_elements_from_indices(tensor, indices):
     flattened_tensor = tensor.flatten(start_dim=2)
     output = flattened_tensor.gather(dim=2, index=indices.flatten(start_dim=2)).view_as(indices)
     return output
+
+
+def generate_batt(size=(5, 5), d0=5, n=2):
+    kernel = np.fromfunction(
+        lambda x, y: \
+            1 / (1 + (((x - size[0] // 2) ** 2 + (
+                    y - size[1] // 2) ** 2) ** 1 / 2) / d0) ** n,
+        (size[0], size[1])
+    )
+    return kernel
 
 
 class FullComplexSpatialAttention(nn.Module):
@@ -75,6 +87,54 @@ class ChannelAttention(nn.Module):
         out = avg_out + max_out
         attn = self.sigmoid(out)
         return x * attn, attn
+
+
+class FFTChannelAttention(nn.Module):
+    def __init__(self, channel, reduction=16):
+        super(ChannelAttention, self).__init__()
+
+        self.preprocess = nn.Sequential(
+            nn.Conv2d(channel, channel * 2, 3, 1, 1, padding_mode='reflect'),
+            nn.BatchNorm2d(channel * 2),
+            nn.LeakyReLU(),
+            nn.Conv2d(channel * 2, channel, 3, 1, 1, padding_mode='reflect'),
+            nn.BatchNorm2d(channel * 2),
+            nn.LeakyReLU()
+        )
+        self.conv1 = nn.Conv2d(channel, channel, 1)
+
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.max_pool = nn.AdaptiveMaxPool2d(1)
+
+        self.fc = nn.Sequential(
+            nn.Conv2d(channel, channel // reduction, 1, bias=False, padding_mode='reflect'),
+            nn.LeakyReLU(),
+            nn.Conv2d(channel // reduction, channel, 1, bias=False, padding_mode='reflect')
+        )
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        pre_fft = self.preprocess(x)
+
+        z = torch.fft.fft2(pre_fft, norm='ortho')
+        z = torch.fft.fftshift(z)
+
+        z = torch.abs(z)
+        z = self.conv1(z)
+        z = nn.functional.leaky_relu(z)
+
+        avg_out = self.fc(self.avg_pool(z))
+        max_out = self.fc(self.max_pool(z))
+        out = avg_out + max_out
+        attn = self.sigmoid(out)
+        
+        after_attn = pre_fft * attn
+        out = after_attn + x
+
+        with torch.no_grad():
+            vis_attn = after_attn.mean(1).unsqueeze(0)
+
+        return out, vis_attn
 
 
 class SpatialAttention(nn.Module):
@@ -238,3 +298,38 @@ class WindowBasedSelfAttention(nn.Module):
             fft_filter = torch.cat([fft_filter[:, :, i] for i in range(fft_filter.size(2))], dim=2)
 
         return out, fft_filter
+    
+
+class LowHightFrequencyImageComponents(nn.Module):
+    def __init__(self, shape: Tuple[int, int]):
+        super().__init__()
+
+        hight_pass_kernel = 1.0 - generate_batt(shape, 500, 1).astype(np.float32)
+        low_pass_kernel = generate_batt(shape, 500, 1).astype(np.float32)
+
+        hight_pass_kernel = torch.from_numpy(hight_pass_kernel).unsqueeze(0).unsqueeze(0)
+        hight_pass_kernel = hight_pass_kernel.to(torch.cfloat)
+        
+        low_pass_kernel = torch.from_numpy(low_pass_kernel).unsqueeze(0).unsqueeze(0)
+        low_pass_kernel = low_pass_kernel.to(torch.cfloat)
+        
+        self.hight_pass_kernel = nn.Parameter(hight_pass_kernel, requires_grad=False)
+        self.low_pass_kernel = nn.Parameter(low_pass_kernel, requires_grad=False)
+
+    def apply_fft_kernel(self, x, kernel):
+        return x * kernel
+
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        z = torch.fft.fft2(x, norm='ortho')
+        z = torch.fft.fftshift(z)
+        
+        hight_freq_z = self.apply_fft_kernel(z, self.hight_pass_kernel)
+        low_freq_z = self.apply_fft_kernel(z, self.low_pass_kernel)
+        
+        hight_freq_z = torch.fft.ifftshift(hight_freq_z)
+        low_freq_z = torch.fft.ifftshift(low_freq_z)
+        
+        hight_freq_x = torch.fft.ifft2(hight_freq_z, norm='ortho').real
+        low_freq_x = torch.fft.ifft2(low_freq_z, norm='ortho').real
+        
+        return low_freq_x, hight_freq_x
