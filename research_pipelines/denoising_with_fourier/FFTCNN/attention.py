@@ -132,7 +132,7 @@ class FFTChannelAttention(nn.Module):
         out = after_attn + x
 
         with torch.no_grad():
-            vis_attn = after_attn.mean(1).unsqueeze(0)
+            vis_attn = after_attn.mean(dim=1).unsqueeze(dim=1)
 
         return out, vis_attn
 
