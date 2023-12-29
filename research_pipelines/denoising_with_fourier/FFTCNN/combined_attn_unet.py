@@ -180,9 +180,14 @@ class FFTAttention(nn.Module):
 
 
 class FeaturesProcessing(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int, window_size: int, image_size: int):
+    def __init__(self, in_ch: int, out_ch: int, window_size: int, image_size: int, use_attention: bool = True):
         super().__init__()
-        self.attn1 = FFTAttention(in_ch, window_size=window_size, image_size=image_size)
+        self.use_attention = use_attention
+        if use_attention:
+            self.attn1 = FFTAttention(in_ch, window_size=window_size, image_size=image_size)
+        else:
+            self.attn1 = None
+
         self.conv1 = conv3x3(in_ch, in_ch * 2)
         self.norm1 = nn.BatchNorm2d(in_ch * 2)
         self.act1 = nn.LeakyReLU()
@@ -195,7 +200,15 @@ class FeaturesProcessing(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         hx = x
-        y, sa_1 = self.attn1(x)
+        if self.use_attention:
+            y, sa_1 = self.attn1(x)
+        else:
+            sa_1 = [
+                torch.zeros(x.size(0), 1, x.size(2), x.size(3)).to(x.device),
+                torch.zeros(x.size(0), 1, x.size(2), x.size(3)).to(x.device),
+                torch.zeros(x.size(0), 1, x.size(2), x.size(3)).to(x.device)
+            ]
+
         y = self.conv1(y)
         y = self.norm1(y)
         y = self.act1(y)
@@ -264,7 +277,7 @@ class FeaturesUpsample(nn.Module):
 class FFTAttentionUNetModule(nn.Module):
     def __init__(self, in_ch: int, mid_ch: int, out_ch: int, need_up_features: bool = False, image_size: int = 256):
         super().__init__()
-        self.init_block = FeaturesProcessing(in_ch, mid_ch, window_size=64, image_size=image_size)
+        self.init_block = FeaturesProcessing(in_ch, mid_ch, window_size=64, image_size=image_size, use_attention=False)
 
         self.downsample_block1 = FeaturesDownsample(mid_ch, mid_ch, window_size=64, image_size=image_size)
         self.downsample_block2 = FeaturesDownsample(mid_ch, mid_ch * 2, window_size=32, image_size=image_size // 2)
