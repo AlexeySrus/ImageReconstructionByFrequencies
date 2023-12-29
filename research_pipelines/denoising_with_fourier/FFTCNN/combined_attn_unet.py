@@ -271,11 +271,11 @@ class FFTAttentionUNetModule(nn.Module):
         self.downsample_block3 = FeaturesDownsample(mid_ch * 2, mid_ch * 3, window_size=16, image_size=image_size // 4)
         self.downsample_block4 = FeaturesDownsample(mid_ch * 3, mid_ch * 4, window_size=8, image_size=image_size // 8)
 
-        self.deep_conv_block = FeaturesProcessing(mid_ch * 4, mid_ch * 4, window_size=8, image_size=image_size // 8)
+        self.deep_conv_block = FeaturesProcessing(mid_ch * 4, mid_ch * 4, window_size=8, image_size=image_size // 16)
 
-        self.upsample4 = FeaturesUpsample(mid_ch * 4, mid_ch * 3, window_size=16, image_size=image_size // 4)
-        self.upsample3 = FeaturesUpsample(mid_ch * 3, mid_ch * 2, window_size=32, image_size=image_size // 2)
-        self.upsample2 = FeaturesUpsample(mid_ch * 2, mid_ch, window_size=64 , image_size=image_size)
+        self.upsample4 = FeaturesUpsample(mid_ch * 4, mid_ch * 3, window_size=16, image_size=image_size // 8)
+        self.upsample3 = FeaturesUpsample(mid_ch * 3, mid_ch * 2, window_size=32, image_size=image_size // 4)
+        self.upsample2 = FeaturesUpsample(mid_ch * 2, mid_ch, window_size=64 , image_size=image_size // 2)
         self.upsample1 = FeaturesUpsample(mid_ch, mid_ch, window_size=64 , image_size=image_size)
         
         self.upsample_features_block4 = FeaturesProcessing(mid_ch * 3 + mid_ch * 3, mid_ch * 3, window_size=8, image_size=image_size // 8)
