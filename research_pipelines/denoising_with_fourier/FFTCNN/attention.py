@@ -98,7 +98,7 @@ class FFTChannelAttention(nn.Module):
             nn.BatchNorm2d(channel * 2),
             nn.LeakyReLU(),
             nn.Conv2d(channel * 2, channel, 3, 1, 1, padding_mode='reflect'),
-            nn.BatchNorm2d(channel * 2),
+            nn.BatchNorm2d(channel),
             nn.LeakyReLU()
         )
         self.conv1 = nn.Conv2d(channel, channel, 1)
