@@ -159,7 +159,7 @@ class SpectralPooling(nn.Module):
 class FFTAttention(nn.Module):
     def __init__(self, in_ch: int, reduction: int = 16, kernel_size: int = 7, window_size: int = 64, image_size: int = 256):
         super().__init__()
-        self.fft_sa = ComplexSpatialAttention(in_ch=in_ch, patch_size=window_size, image_size=image_size)
+        self.fft_sa = ComplexSpatialAttention(in_ch=in_ch, patch_size=window_size - 1, image_size=image_size)
         self.sa = SpatialAttention(kernel_size)
         self.final_ca = ChannelAttention(in_ch * 2, reduction)
         self.final_conv = nn.Conv2d(in_ch * 2, in_ch, 1)
