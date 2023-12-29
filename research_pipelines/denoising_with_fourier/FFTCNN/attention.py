@@ -297,7 +297,7 @@ class FrequencySplitSpatialAttention(nn.Module):
         self.llf = nn.Conv2d(channel, channel, 3, 1, 1, padding_mode='reflect')
 
         self.preprocess = nn.Sequential(
-            nn.Conv2d(channel * 2, channel, 3, stride=2, padding=2, dilation=2, padding_mode='reflect'),
+            nn.Conv2d(channel * 2, channel, 3, stride=1, padding=2, dilation=2, padding_mode='reflec'),
             nn.BatchNorm2d(channel),
             nn.LeakyReLU(),
             nn.Conv2d(channel, channel, 3, 1, 1, padding_mode='reflect'),
@@ -330,7 +330,7 @@ class FFTChannelAttention(nn.Module):
         super(FFTChannelAttention, self).__init__()
 
         self.preprocess = nn.Sequential(
-            nn.Conv2d(channel, channel, 3, stride=2, padding=2, dilation=2, padding_mode='reflect'),
+            nn.Conv2d(channel, channel, 3, stride=1, padding=2, dilation=2, padding_mode='reflect'),
             nn.BatchNorm2d(channel),
             nn.LeakyReLU(),
             nn.Conv2d(channel, channel, 3, 1, 1, padding_mode='reflect'),
