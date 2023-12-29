@@ -143,9 +143,9 @@ class ComplexAttnMLP(nn.Module):
         return y
     
 class MixVitAttention(nn.Module):
-    def __init__(self, patch_size: int, image_size: int) -> None:
+    def __init__(self, in_ch: int, patch_size: int, image_size: int) -> None:
         super().__init__()
-        self.patch_embedder = OverlapPatchEmbed(image_size, patch_size, stride=2, embed_dim=16)
+        self.patch_embedder = OverlapPatchEmbed(image_size, patch_size, in_chans=in_ch, stride=2, embed_dim=16)
         self.block = Block(16, 1)
 
         self.pred_filter = nn.Sequential(
