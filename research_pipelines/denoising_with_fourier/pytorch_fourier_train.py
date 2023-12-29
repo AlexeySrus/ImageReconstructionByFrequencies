@@ -229,11 +229,11 @@ class CustomTrainingPipeline(object):
                 print(
                     '#' * 5 + ' Optimizer has been loaded by path: {} '.format(load_path) + '#' * 5
                 )
-                # self.optimizer.param_groups[0]['lr'] = 0.00001
+                self.optimizer.param_groups[0]['lr'] = 0.0001
                 print('Optimizer LR: {:.5f}'.format(self.get_lr()))
 
-        self.images_criterion = torch.nn.MSELoss() # CharbonnierLoss().to(self.device)
-        # self.images_criterion = MIXLoss()
+        # self.images_criterion = CharbonnierLoss().to(self.device)
+        self.images_criterion = MIXLoss()
         # self.perceptual_loss = DISTS()
         self.perceptual_loss = None
         # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
