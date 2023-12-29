@@ -203,10 +203,11 @@ class FeaturesProcessing(nn.Module):
         if self.use_attention:
             y, sa_1 = self.attn1(x)
         else:
+            y = x
             sa_1 = [
-                torch.zeros(x.size(0), 1, x.size(2), x.size(3)).to(x.device),
-                torch.zeros(x.size(0), 1, x.size(2), x.size(3)).to(x.device),
-                torch.zeros(x.size(0), 1, x.size(2), x.size(3)).to(x.device)
+                torch.zeros(x.size(0), 1, x.size(2), x.size(3), requires_grad=False).to(x.device),
+                torch.zeros(x.size(0), 1, x.size(2), x.size(3), requires_grad=False).to(x.device),
+                torch.zeros(x.size(0), 1, x.size(2), x.size(3), requires_grad=False).to(x.device)
             ]
 
         y = self.conv1(y)
