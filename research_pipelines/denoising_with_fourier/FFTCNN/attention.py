@@ -160,6 +160,7 @@ class MixVitAttention(nn.Module):
     def forward(self, z):
         p, H, W = self.patch_embedder(z)
         out = self.block(p, H, W)
+        out = out.reshape(z.size(0), H, W, -1).permute(0, 3, 1, 2).contiguous()
         attn = nn.functional.interpolate(torch.abs(out), (z.size(2), z.size(3)), mode='bilinear')
         attn = self.pred_filter(attn)
         return z * attn.to(torch.cfloat), attn
