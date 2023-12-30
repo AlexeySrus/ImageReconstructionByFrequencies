@@ -346,8 +346,7 @@ class FFTAttentionUNet(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         hx = self.norm_input(x)
 
-        y = self.in_conv(hx)
-        y, sa_list = self.unet(y)
+        y, sa_list = self.unet(hx)
         y = self.out_conv(y)
 
         if self.export:
