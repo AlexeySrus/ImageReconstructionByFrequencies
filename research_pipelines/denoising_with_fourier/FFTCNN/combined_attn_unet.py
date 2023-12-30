@@ -204,11 +204,7 @@ class FeaturesProcessing(nn.Module):
             y, sa_1 = self.attn1(x)
         else:
             y = x
-            sa_1 = [
-                torch.zeros(x.size(0), 1, x.size(2), x.size(3), requires_grad=False).to(x.device),
-                torch.zeros(x.size(0), 1, x.size(2), x.size(3), requires_grad=False).to(x.device),
-                torch.zeros(x.size(0), 1, x.size(2), x.size(3), requires_grad=False).to(x.device)
-            ]
+            sa_1 = []
 
         y = self.conv1(y)
         y = self.norm1(y)
@@ -278,7 +274,10 @@ class FeaturesUpsample(nn.Module):
 class FFTAttentionUNetModule(nn.Module):
     def __init__(self, in_ch: int, mid_ch: int, out_ch: int, need_up_features: bool = False, image_size: int = 256):
         super().__init__()
+
         self.init_block = FeaturesProcessing(in_ch, mid_ch, window_size=64, image_size=image_size, use_attention=False)
+
+        self.init_block_with_attn = FeaturesProcessing(mid_ch, mid_ch, window_size=64, image_size=image_size)
 
         self.downsample_block1 = FeaturesDownsample(mid_ch, mid_ch, window_size=64, image_size=image_size)
         self.downsample_block2 = FeaturesDownsample(mid_ch, mid_ch * 2, window_size=32, image_size=image_size // 2)
@@ -298,7 +297,8 @@ class FFTAttentionUNetModule(nn.Module):
         self.upsample_features_block1 = FeaturesProcessing(mid_ch + mid_ch, out_ch, window_size=64 , image_size=image_size)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        hx, sa_init = self.init_block(x)
+        hx, _ = self.init_block(x)
+        hx, sa_init = self.init_block_with_attn(hx)
 
         down_f1, sa_f1 = self.downsample_block1(hx)         # W // 2
         down_f2, sa_f2 = self.downsample_block2(down_f1)    # W // 4
@@ -330,11 +330,8 @@ class FFTAttentionUNet(nn.Module):
     def __init__(self, in_ch: int = 3,  out_ch: int = 3, image_size: int = 256):
         super().__init__()
 
-        middle_channels = 16
-
-        self.in_conv = nn.Conv2d(in_ch, middle_channels, 1)
-        self.unet = FFTAttentionUNetModule(middle_channels, middle_channels * 2, middle_channels, image_size=image_size)
-        self.out_conv = nn.Conv2d(middle_channels, out_ch, 1)
+        self.unet = FFTAttentionUNetModule(in_ch, 16, out_ch, image_size=image_size)
+        self.out_conv = nn.Conv2d(out_ch, out_ch, 1)
         self.export = False
 
     def to_export(self):
