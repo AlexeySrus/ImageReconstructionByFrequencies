@@ -46,6 +46,22 @@ class RealImaginaryLeakyReLU(nn.Module):
 
     def forward(self, z):
         return real_imaginary_leakyrelu(z) 
+    
+
+class FFTMaxPool2D(nn.Module):
+    def __init__(self, kernel_size: int = 2, stride: int = 2) -> None:
+        super().__init__()
+        self.kernel_size = kernel_size
+        self.stride = stride
+        
+    def forward(self, z, return_indices: bool = False):
+        _, max_indices = torch.nn.functional.max_pool2d_with_indices(torch.abs(z), self.kernel_size, self.stride)
+        max_out = retrieve_elements_from_indices(z, max_indices)
+
+        if return_indices:
+            return max_out, max_indices
+
+        return max_out
 
 
 class FullComplexSpatialAttention(nn.Module):
@@ -395,6 +411,48 @@ class FFTChannelAttention(nn.Module):
         out = after_attn + x
 
         return out
+    
+
+class FFTChannelAttentionV2(nn.Module):
+    def __init__(self, channel: int, image_size: int, fsize: int = 8, reduction: int = 16):
+        super(FFTChannelAttention, self).__init__()
+
+        pooling_depth = image_size // fsize
+
+        self.pool_fft_features = nn.Sequential(
+            *[
+                nn.Sequential(
+                    nn.Conv2d(channel, channel // 2),
+                    RealImaginaryLeakyReLU(),
+                    FFTMaxPool2D(2, 2),
+                    nn.Conv2d(channel // 2, channel if i == pooling_depth - 1 else channel // 2),
+                    RealImaginaryLeakyReLU()
+                )
+                for i in range(pooling_depth)
+            ]
+        )
+        self.fc = nn.Sequential(
+            nn.Linear(channel * fsize * fsize // 2, channel * fsize * fsize // 2 // reduction),
+            RealImaginaryLeakyReLU(),
+            nn.Linear(channel * fsize * fsize // 2 // reduction, channel),
+        )
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        z = torch.fft.fft2(x, norm='forward')
+        z = torch.fft.fftshift(z)
+
+        z_deep_feats = self.pool_fft_features(z)
+        channel_attn = self.fc(z_deep_feats)
+        channel_attn = self.sigmoid(channel_attn)
+
+        out = x * channel_attn
+
+        with torch.no_grad():
+            inv_attn = torch.abs(out - x).mean(dim=1).unsqueeze(1)
+            inv_attn /= (inv_attn.max() + 1E-5)
+
+        return x * channel_attn, inv_attn
 
 
 class FFTCBAM(nn.Module):

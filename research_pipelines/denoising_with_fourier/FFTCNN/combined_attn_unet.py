@@ -3,7 +3,7 @@ from collections import OrderedDict
 import torch
 import torch.nn as nn
 
-from FFTCNN.attention import FFTCBAM, SpatialAttention, ChannelAttention
+from FFTCNN.attention import FFTCBAM, SpatialAttention, ChannelAttention, FFTChannelAttentionV2
 
 
 padding_mode: str = 'reflect'
@@ -185,7 +185,8 @@ class FeaturesProcessing(nn.Module):
         self.use_attention = use_attention
         if use_attention:
             # self.attn1 = FFTAttention(in_ch, window_size=window_size, image_size=image_size)
-            self.attn1 = FFTCBAM(channel=in_ch, reduction=8, image_size=image_size, kernel_size=7)
+            # self.attn1 = FFTCBAM(channel=in_ch, reduction=8, image_size=image_size, kernel_size=7)
+            self.attn1 = FFTChannelAttentionV2(channel=in_ch, image_size=image_size, reduction=32)
         else:
             self.attn1 = None
 
