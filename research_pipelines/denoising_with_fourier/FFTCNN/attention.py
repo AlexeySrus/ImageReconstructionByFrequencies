@@ -36,6 +36,18 @@ def generate_batt(size=(5, 5), d0=5, n=2):
     return kernel
 
 
+def real_imaginary_leakyrelu(z):
+    return nn.functional.leaky_relu(z.real) + 1.j * nn.functional.leaky_relu(z.imag)
+
+
+class RealImaginaryLeakyReLU(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, z):
+        return real_imaginary_leakyrelu(z) 
+
+
 class FullComplexSpatialAttention(nn.Module):
     def __init__(self, kernel_size=7):
         super(FullComplexSpatialAttention, self).__init__()
@@ -293,8 +305,10 @@ class FrequencySplitSpatialAttention(nn.Module):
 
         self.freq_slitter = LowHightFrequencyImageComponents((image_size, image_size))
 
-        self.hlf = nn.Conv2d(channel, channel // 2, 3, 1, 1, padding_mode='reflect')
-        self.llf = nn.Conv2d(channel, channel // 2, 3, 1, 1, padding_mode='reflect')
+        # self.hlf = nn.Conv2d(channel, channel // 2, 3, 1, 1, padding_mode='reflect')
+        # self.llf = nn.Conv2d(channel, channel // 2, 3, 1, 1, padding_mode='reflect')
+
+        self.feats_bn = nn.BatchNorm2d(channel)
 
         self.preprocess = nn.Sequential(
             nn.Conv2d(channel, channel // 2, 3, stride=1, padding=2, dilation=2, padding_mode='reflect'),
@@ -311,11 +325,13 @@ class FrequencySplitSpatialAttention(nn.Module):
     def forward(self, x):
         low_freq_features, hight_freq_features = self.freq_slitter(x)
 
-        low_freq_features = self.llf(low_freq_features)
-        hight_freq_features = self.hlf(hight_freq_features)
+        # low_freq_features = self.llf(low_freq_features)
+        # hight_freq_features = self.hlf(hight_freq_features)
 
-        united_features = torch.cat((low_freq_features, hight_freq_features), dim=1)
-        united_features = self.preprocess(united_features)
+        # united_features = torch.cat((low_freq_features, hight_freq_features), dim=1)
+        # united_features = self.feats_bn(united_features)
+        # united_features = nn.functional.leaky_relu(united_features)
+        united_features = self.preprocess(hight_freq_features)
 
         avg_out = torch.mean(united_features, dim=1, keepdim=True)
         max_out, _ = torch.max(united_features, dim=1, keepdim=True)
@@ -337,15 +353,20 @@ class FFTChannelAttention(nn.Module):
             nn.BatchNorm2d(channel),
             nn.LeakyReLU()
         )
-        self.conv1 = nn.Conv2d(channel, channel, 1)
+        self.conv1 = nn.Conv2d(channel, channel, 1, bias=False, dtype=torch.cfloat)
 
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.max_pool = nn.AdaptiveMaxPool2d(1)
+        # self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        # self.max_pool = nn.AdaptiveMaxPool2d(1)
 
+        # self.fc = nn.Sequential(
+        #     nn.Conv2d(channel, channel // reduction, 1, bias=False),
+        #     nn.LeakyReLU(),
+        #     nn.Conv2d(channel // reduction, channel, 1, bias=False)
+        # )
         self.fc = nn.Sequential(
-            nn.Conv2d(channel, channel // reduction, 1, bias=False, padding_mode='reflect'),
-            nn.LeakyReLU(),
-            nn.Conv2d(channel // reduction, channel, 1, bias=False, padding_mode='reflect')
+            nn.Linear(channel, channel // reduction, bias=False, dtype=torch.cfloat),
+            RealImaginaryLeakyReLU(),
+            nn.Linear(channel // reduction, channel, bias=False, dtype=torch.cfloat)
         )
         self.sigmoid = nn.Sigmoid()
 
@@ -355,14 +376,20 @@ class FFTChannelAttention(nn.Module):
         z = torch.fft.fft2(pre_fft, norm='ortho')
         z = torch.fft.fftshift(z)
 
-        z = torch.abs(z)
         z = self.conv1(z)
-        z = nn.functional.leaky_relu(z)
+        z = real_imaginary_leakyrelu(z)
 
-        avg_out = self.fc(self.avg_pool(z))
-        max_out = self.fc(self.max_pool(z))
-        out = avg_out + max_out
-        attn = self.sigmoid(out)
+        # avg_out = self.fc(self.avg_pool(z).view(x.size(0), x.size(1)))
+        # max_out = self.fc(self.max_pool(z).view(x.size(0), x.size(1)))
+
+        _, max_indices = torch.nn.functional.adaptive_max_pool2d_with_indices(torch.abs(z), (1, 1))
+        max_out = retrieve_elements_from_indices(z, max_indices)
+
+
+        out = max_out
+        out = self.fc(out.view(x.size(0),x.size(1)))
+        attn = self.sigmoid(out.unsqueeze(2).unsqueeze(3))
+        attn = torch.abs(attn)
         
         after_attn = pre_fft * attn
         out = after_attn + x
@@ -379,4 +406,4 @@ class FFTCBAM(nn.Module):
     def forward(self, x):
         x = self.fft_ca(x)
         x, sa_tensor = self.fft_sa(x)
-        return x, sa_tensor
+        return x, [sa_tensor]

@@ -128,9 +128,9 @@ class Unet1lvl(nn.Module):
 
 def complex_conv_block(in_ch, out_ch):
     return nn.Sequential(
-        nn.Conv2d(in_ch, out_ch, 3, padding=1, dtype=torch.cfloat, padding_mode=padding_mode),
+        nn.Conv2d(in_ch, out_ch, 3, padding=1, dtype=torch.cfloat),
         RealImaginaryReLU(),
-        nn.Conv2d(in_ch, out_ch, 3, padding=1, dtype=torch.cfloat, padding_mode=padding_mode)
+        nn.Conv2d(in_ch, out_ch, 3, padding=1, dtype=torch.cfloat)
     )
 
 
@@ -184,7 +184,8 @@ class FeaturesProcessing(nn.Module):
         super().__init__()
         self.use_attention = use_attention
         if use_attention:
-            self.attn1 = FFTAttention(in_ch, window_size=window_size, image_size=image_size)
+            # self.attn1 = FFTAttention(in_ch, window_size=window_size, image_size=image_size)
+            self.attn1 = FFTCBAM(channel=in_ch, reduction=8, image_size=image_size, kernel_size=7)
         else:
             self.attn1 = None
 

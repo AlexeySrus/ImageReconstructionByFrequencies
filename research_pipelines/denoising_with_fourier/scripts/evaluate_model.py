@@ -28,6 +28,10 @@ def parse_args() -> Namespace:
         '-o', '--output', type=str, required=False,
         help='Path to folder with output visualizations (optional)'
     )
+    parser.add_argument(
+        '--y-channel-only', action='store_true',
+        help='Evaluate only on Y component from YCrCb color space'
+    )
     return parser.parse_args()
     
 
@@ -42,6 +46,7 @@ if __name__ == '__main__':
 
     imgsz = 256
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    y_only = args.y_channel_only
 
     model = FFTCNN().to(device)
 
@@ -78,7 +83,7 @@ if __name__ == '__main__':
         with torch.no_grad():
             restored_image = eval_denoise_inference(
                 tensor_img=input_tensor, model=model, window_size=imgsz, 
-                batch_size=2, crop_size=imgsz // 32, use_tta=True, device=device
+                batch_size=4, crop_size=imgsz // 32, use_tta=True, device=device
             )
 
         input_tensor = input_tensor.to('cpu')
@@ -87,19 +92,33 @@ if __name__ == '__main__':
         pred_image = torch.clamp(pred_image, 0, 1)
         pred_image = tensor_to_image(pred_image)
 
-        psnr_values.append(
-            cv2.PSNR(
-                cv2.cvtColor(pred_image, cv2.COLOR_YCrCb2BGR), 
-                gt_img
+        if y_only:
+            psnr_values.append(
+                cv2.PSNR(
+                    pred_image[..., 0], 
+                    cv2.cvtColor(gt_img, cv2.COLOR_BGR2YCrCb)[..., 0]
+                )
+            )
+        else:
+            psnr_values.append(
+                cv2.PSNR(
+                    cv2.cvtColor(pred_image, cv2.COLOR_YCrCb2BGR), 
+                    gt_img
+                )
+            )
+            
+        ssim_values.append(
+            ssim(
+                pred_image[..., 0], 
+                cv2.cvtColor(gt_img, cv2.COLOR_BGR2YCrCb)[..., 0]
             )
         )
-        ssim_values.append(ssim(pred_image[..., 0], cv2.cvtColor(gt_img, cv2.COLOR_BGR2YCrCb)[..., 0]))
 
         print('Image: {}, PSNR: {:.2f}'.format(image_name, psnr_values[-1]))
 
         cv2.imwrite(
             os.path.join(output_folder, image_name),
-            cv2.cvtColor(pred_image, cv2.COLOR_YCrCb2BGR)
+            cv2.cvtColor(pred_image, cv2.COLOR_RGB2BGR)
         )
 
     avg_psnr = np.array(psnr_values).mean()

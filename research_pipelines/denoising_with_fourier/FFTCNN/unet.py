@@ -111,9 +111,13 @@ class GeneralizedMeanPooling2d(nn.Module):
 
 
 class FeaturesProcessing(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int):
+    def __init__(self, in_ch: int, out_ch: int, use_attention: bool = True):
         super().__init__()
-        self.attn1 = CBAM(in_ch)
+        self.use_attention = use_attention
+
+        if use_attention:
+            self.attn1 = CBAM(in_ch, reduction=8)
+        
         self.conv1 = conv3x3(in_ch, in_ch * 2)
         self.norm1 = nn.BatchNorm2d(in_ch * 2)
         self.act1 = nn.LeakyReLU()
@@ -126,7 +130,12 @@ class FeaturesProcessing(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         hx = x
-        y, _, sa_1 = self.attn1(x)
+        if self.use_attention:
+            y, _, sa_1 = self.attn1(x)
+        else:
+            y = x
+            sa_1 = []
+
         y = self.conv1(y)
         y = self.norm1(y)
         y = self.act1(y)
@@ -140,9 +149,9 @@ class FeaturesProcessing(nn.Module):
     
 
 class FeaturesProcessingWithLastConv(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int):
+    def __init__(self, in_ch: int, out_ch: int, use_attention: bool = True):
         super().__init__()
-        self.features = FeaturesProcessing(in_ch, out_ch)
+        self.features = FeaturesProcessing(in_ch, out_ch, use_attention=use_attention)
         self.final_conv = conv1x1(out_ch, out_ch)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -152,9 +161,9 @@ class FeaturesProcessingWithLastConv(nn.Module):
 
 
 class FeaturesDownsample(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int):
+    def __init__(self, in_ch: int, out_ch: int, use_attention: bool = True):
         super().__init__()
-        self.features = FeaturesProcessing(in_ch, out_ch)
+        self.features = FeaturesProcessing(in_ch, out_ch, use_attention=use_attention)
         self.pool = GeneralizedMeanPooling2d(2, 2)
         # self.pool = nn.MaxPool2d(2, 2)
 
@@ -165,12 +174,12 @@ class FeaturesDownsample(nn.Module):
     
 
 class FeaturesConvTransposeUpsample(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int):
+    def __init__(self, in_ch: int, out_ch: int, use_attention: bool = True):
         super().__init__()
         self.up = nn.ConvTranspose2d(in_ch, in_ch // 2, kernel_size=2, stride=2)
         self.norm = nn.BatchNorm2d(in_ch // 2)
         self.act = nn.LeakyReLU()
-        self.features = FeaturesProcessing(in_ch // 2, out_ch)
+        self.features = FeaturesProcessing(in_ch // 2, out_ch, use_attention=use_attention)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y = self.up(x)
@@ -181,10 +190,10 @@ class FeaturesConvTransposeUpsample(nn.Module):
 
 
 class FeaturesUpsample(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int):
+    def __init__(self, in_ch: int, out_ch: int, use_attention: bool = True):
         super().__init__()
         self.up = torch.nn.UpsamplingBilinear2d(scale_factor=2)
-        self.features = FeaturesProcessing(in_ch, out_ch)
+        self.features = FeaturesProcessing(in_ch, out_ch, use_attention=use_attention)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y = self.up(x)
@@ -193,29 +202,32 @@ class FeaturesUpsample(nn.Module):
 
 
 class AttentionUNetModule(nn.Module):
-    def __init__(self, in_ch: int, mid_ch: int, out_ch: int, need_up_features: bool = False):
+    def __init__(self, in_ch: int, mid_ch: int, out_ch: int, need_up_features: bool = False, use_attention: bool = True):
         super().__init__()
-        self.init_block = FeaturesProcessing(in_ch, mid_ch)
 
-        self.downsample_block1 = FeaturesDownsample(mid_ch, mid_ch)
-        self.downsample_block2 = FeaturesDownsample(mid_ch, mid_ch * 2)
-        self.downsample_block3 = FeaturesDownsample(mid_ch * 2, mid_ch * 3)
-        self.downsample_block4 = FeaturesDownsample(mid_ch * 3, mid_ch * 4)
+        self.init_block = FeaturesProcessing(in_ch, mid_ch, use_attention=False)
+        self.init_block_with_attn = FeaturesProcessing(mid_ch, mid_ch, use_attention=use_attention)
 
-        self.deep_conv_block = FeaturesProcessing(mid_ch * 4, mid_ch * 4)
+        self.downsample_block1 = FeaturesDownsample(mid_ch, mid_ch, use_attention=use_attention)
+        self.downsample_block2 = FeaturesDownsample(mid_ch, mid_ch * 2, use_attention=use_attention)
+        self.downsample_block3 = FeaturesDownsample(mid_ch * 2, mid_ch * 3, use_attention=use_attention)
+        self.downsample_block4 = FeaturesDownsample(mid_ch * 3, mid_ch * 4, use_attention=use_attention)
 
-        self.upsample4 = FeaturesConvTransposeUpsample(mid_ch * 4, mid_ch * 3)
-        self.upsample3 = FeaturesConvTransposeUpsample(mid_ch * 3, mid_ch * 2)
-        self.upsample2 = FeaturesConvTransposeUpsample(mid_ch * 2, mid_ch)
-        self.upsample1 = FeaturesConvTransposeUpsample(mid_ch, mid_ch)
+        self.deep_conv_block = FeaturesProcessing(mid_ch * 4, mid_ch * 4, use_attention=use_attention)
+
+        self.upsample4 = FeaturesUpsample(mid_ch * 4, mid_ch * 3, use_attention=use_attention)
+        self.upsample3 = FeaturesUpsample(mid_ch * 3, mid_ch * 2, use_attention=use_attention)
+        self.upsample2 = FeaturesUpsample(mid_ch * 2, mid_ch, use_attention=use_attention)
+        self.upsample1 = FeaturesUpsample(mid_ch, mid_ch, use_attention=use_attention)
         
-        self.upsample_features_block4 = FeaturesProcessing(mid_ch * 3 + mid_ch * 3, mid_ch * 3)
-        self.upsample_features_block3 = FeaturesProcessing(mid_ch * 2 + mid_ch * 2, mid_ch * 2)
-        self.upsample_features_block2 = FeaturesProcessing(mid_ch + mid_ch, mid_ch)
-        self.upsample_features_block1 = FeaturesProcessing(mid_ch + mid_ch, out_ch)
+        self.upsample_features_block4 = FeaturesProcessing(mid_ch * 3 + mid_ch * 3, mid_ch * 3, use_attention=use_attention)
+        self.upsample_features_block3 = FeaturesProcessing(mid_ch * 2 + mid_ch * 2, mid_ch * 2, use_attention=use_attention)
+        self.upsample_features_block2 = FeaturesProcessing(mid_ch + mid_ch, mid_ch, use_attention=use_attention)
+        self.upsample_features_block1 = FeaturesProcessing(mid_ch + mid_ch, out_ch, use_attention=use_attention)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        hx, sa_init = self.init_block(x)
+        hx, _ = self.init_block(x)
+        hx, sa_init = self.init_block_with_attn(hx)
 
         down_f1, sa_f1 = self.downsample_block1(hx)         # W // 2
         down_f2, sa_f2 = self.downsample_block2(down_f1)    # W // 4
@@ -244,15 +256,13 @@ class AttentionUNetModule(nn.Module):
 
 
 class AttentionUNet(nn.Module):
-    def __init__(self, in_ch: int = 3,  out_ch: int = 3):
+    def __init__(self, in_ch: int = 3,  out_ch: int = 3, use_attention: bool = True):
         super().__init__()
 
-        middle_channels = 16
-
-        self.in_conv = nn.Conv2d(in_ch, middle_channels, 1)
-        self.unet = AttentionUNetModule(middle_channels, middle_channels * 2, middle_channels)
-        self.out_conv = nn.Conv2d(middle_channels, out_ch, 1)
+        self.unet = AttentionUNetModule(in_ch, 16, out_ch, use_attention=use_attention)
+        self.out_conv = nn.Conv2d(out_ch, out_ch, 1)
         self.export = False
+        self.use_attention = use_attention
 
     def to_export(self):
         self.export = True
@@ -266,14 +276,13 @@ class AttentionUNet(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         hx = self.norm_input(x)
 
-        y = self.in_conv(hx)
-        y, sa_list = self.unet(y)
+        y, sa_list = self.unet(hx)
         y = self.out_conv(y)
 
         if self.export:
             return self.denorm_input(hx + y)
 
-        if self.training:
+        if self.training and self.use_attention:
             sa_list = [
                 nn.functional.interpolate(torch.abs(sa), (x.size(2), x.size(3)))
                 for sa in sa_list

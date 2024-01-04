@@ -20,8 +20,9 @@ from haar_pytorch import HaarForward, HaarInverse
 
 from dataloader import PairedDenoiseDataset, SyntheticNoiseDataset
 from callbacks import VisImage, VisAttentionMaps, VisPlot
-from FFTCNN.fftcnn import FFTCNN, init_weights
+from FFTCNN.fftcnn import init_weights
 from FFTCNN.combined_attn_unet import FFTAttentionUNet as FFTAttentionUNet
+# from FFTCNN.unet import AttentionUNet
 from utils.window_inference import denoise_inference
 from utils.hist_loss import HistLoss
 from utils.adasmooth import AdaSmooth
@@ -239,11 +240,11 @@ class CustomTrainingPipeline(object):
         # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
         self.final_hist_loss = None
         # self.adv_loss = Adversarial(image_size=self.image_shape[0], gan_type='WGAN_GP').to(device)
-        # self.fft_loss = HightFrequencyFFTLoss(self.image_shape).to(device)
-        self.hf_loss = HFENLoss(
-            loss_f=torch.nn.functional.l1_loss,
-            norm=True
-        )
+        self.hf_loss = HightFrequencyFFTLoss(self.image_shape).to(device)
+        # self.hf_loss = HFENLoss(
+        #     loss_f=torch.nn.functional.l1_loss,
+        #     norm=True
+        # )
 
         # self.ssim_loss = None
         self.accuracy_measure = TorchPSNR().to(device)
@@ -283,7 +284,7 @@ class CustomTrainingPipeline(object):
                 noisy_image = _noisy_image.to(self.device)
                 clear_image = _clear_image.to(self.device)
 
-                if epoch > 15:
+                if epoch > 150:
                     clear_image, noisy_image = self.mixup.aug(clear_image, noisy_image)
 
                 output = self.model(noisy_image)

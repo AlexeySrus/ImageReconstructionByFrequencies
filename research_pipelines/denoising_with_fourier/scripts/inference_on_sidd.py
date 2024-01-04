@@ -116,12 +116,11 @@ if __name__ == '__main__':
 
                 restored_patch = eval_denoise_inference(
                     tensor_img=noisy_patch, model=model, window_size=imgsz, 
-                    batch_size=1, crop_size=imgsz // 32, use_tta=True, device=device
+                    batch_size=4, crop_size=0, use_tta=True, device=device
                 ).to('cpu')
 
                 restored_patch = torch.clamp(restored_patch, 0, 1)
-                restored_patch = YCrCb2NPRGB(restored_patch)
-                # restored_patch = (restored_patch.permute(1, 2, 0).numpy() * 255.0).astype(np.uint8)
+                restored_patch = (restored_patch.permute(1, 2, 0).numpy() * 255.0).astype(np.uint8)
 
                 output_path = os.path.join(
                     frames_folder,
@@ -129,10 +128,10 @@ if __name__ == '__main__':
                 )
                 cv2.imwrite(
                     output_path,
-                     cv2.cvtColor(restored_patch, cv2.COLOR_RGB2BGR)
+                    cv2.cvtColor(restored_patch, cv2.COLOR_YCrCb2BGR)
                 )
 
-                restored[i, k, :,:,:] = restored_patch
+                restored[i, k, :,:,:] = cv2.cvtColor(restored_patch, cv2.COLOR_YCrCb2RGB)
 
             torch_image = torch_image.to('cpu')
             del torch_image

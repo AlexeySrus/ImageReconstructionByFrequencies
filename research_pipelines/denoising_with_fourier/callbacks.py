@@ -253,9 +253,6 @@ class VisImageForFourier(AbstractCallback):
         return out
 
     def _ycrcb_to_rgb(self, im: torch.Tensor) -> torch.Tensor:
-        # Don't convert to YCrCb
-        return im
-
         np_image = self._tensor_to_image(im)
         rgb_image = cv2.cvtColor(np_image, cv2.COLOR_YCrCb2RGB)
         return preprocess_image(rgb_image, self.img_mean, self.img_std)

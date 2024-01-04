@@ -62,7 +62,9 @@ def denoise_inference(
 
         outs = torch.cat(
             [
-                model(bc)[0][:, :, crop_d:-crop_d, crop_d:-crop_d]
+                model(bc)[0][:, :, crop_d:-crop_d, crop_d:-crop_d] \
+                    if crop_d > 0 else \
+                        model(bc)[0]
                 for bc in crops_buffer
             ],
             dim=0
@@ -158,7 +160,9 @@ def eval_denoise_inference(
 
         outs = torch.cat(
             [
-                model(bc.to(device))[0].to('cpu')[:, :, crop_d:-crop_d, crop_d:-crop_d]
+                model(bc.to(device))[0].to('cpu')[:, :, crop_d:-crop_d, crop_d:-crop_d] \
+                    if crop_d > 0 else \
+                        model(bc.to(device))[0].to('cpu')
                 for bc in crops_buffer
             ],
             dim=0

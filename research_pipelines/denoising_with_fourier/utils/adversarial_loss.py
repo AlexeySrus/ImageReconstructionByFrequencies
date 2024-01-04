@@ -368,7 +368,7 @@ class Adversarial(nn.Module):
             elif self.gan_type.find('WGAN') >= 0:
                 loss_d = (d_fake - d_real).mean()
                 if self.gan_type.find('GP') >= 0:
-                    epsilon = torch.rand_like(fake).view(-1, 1, 1, 1)
+                    epsilon = torch.rand_like(fake)# .view(-1, 1, 1, 1)
                     hat = fake_detach.mul(1 - epsilon) + real.mul(epsilon)
                     hat.requires_grad = True
                     d_hat = self.discriminator(hat)
