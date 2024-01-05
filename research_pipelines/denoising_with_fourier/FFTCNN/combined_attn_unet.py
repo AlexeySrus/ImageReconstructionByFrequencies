@@ -79,51 +79,6 @@ class GeneralizedMeanPooling2d(nn.Module):
             + str(self.eps)
             + ")"
         )
-    
-
-class Unet1lvl(nn.Module):
-
-    def __init__(self, in_ch=3, mid_ch=12, out_ch=3):
-        super(Unet1lvl, self).__init__()
-
-        self.process1 = nn.Sequential(
-            nn.Conv2d(in_ch, mid_ch, kernel_size=3, stride=1, padding=1, padding_mode=padding_mode),
-            nn.BatchNorm2d(mid_ch),
-            nn.LeakyReLU()
-        )
-
-        self.pool = nn.MaxPool2d(2, 2)
-
-        self.process2 = nn.Sequential(
-            nn.Conv2d(mid_ch, mid_ch, kernel_size=3, stride=1, padding=1, padding_mode=padding_mode),
-            nn.BatchNorm2d(mid_ch),
-            nn.LeakyReLU()
-        )
-
-        self.up = nn.Sequential(
-            nn.UpsamplingBilinear2d(scale_factor=2),
-            nn.Conv2d(mid_ch, mid_ch // 2, kernel_size=3, stride=1, padding=1, padding_mode=padding_mode),
-            nn.BatchNorm2d(mid_ch // 2),
-            nn.LeakyReLU()
-        )
-
-        self.process3 = nn.Sequential(
-            nn.Conv2d(mid_ch // 2 + mid_ch, out_ch, kernel_size=3, stride=1, padding=1, padding_mode=padding_mode),
-            nn.BatchNorm2d(out_ch),
-            nn.LeakyReLU()
-        )
-
-        self.last_conv = nn.Conv2d(out_ch, out_ch, kernel_size=3, stride=1, padding=1, padding_mode=padding_mode)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        y = self.process1(x)
-        yp1 = self.pool(y)
-        ydf1 = self.process2(yp1)
-        yup1 = self.up(ydf1)
-        yup1 = torch.cat((yup1, y), dim=1)
-        out = self.process3(yup1)
-        out = self.last_conv(out)
-        return out
 
 
 def complex_conv_block(in_ch, out_ch):
@@ -185,8 +140,8 @@ class FeaturesProcessing(nn.Module):
         self.use_attention = use_attention
         if use_attention:
             # self.attn1 = FFTAttention(in_ch, window_size=window_size, image_size=image_size)
-            # self.attn1 = FFTCBAM(channel=in_ch, reduction=8, image_size=image_size, kernel_size=7)
-            self.attn1 = FFTChannelAttentionV2(channel=in_ch, image_size=image_size, reduction=32)
+            self.attn1 = FFTCBAM(channel=in_ch, reduction=32, image_size=image_size, kernel_size=7)
+            # self.attn1 = FFTChannelAttentionV2(channel=in_ch, image_size=image_size, reduction=32)
         else:
             self.attn1 = None
 

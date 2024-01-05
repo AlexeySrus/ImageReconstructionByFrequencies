@@ -63,6 +63,51 @@ class FFTMaxPool2D(nn.Module):
             return max_out, max_indices
 
         return max_out
+    
+
+class Unet1lvl(nn.Module):
+    padding_mode = 'reflect'
+    def __init__(self, in_ch=3, mid_ch=12, out_ch=3):
+        super(Unet1lvl, self).__init__()
+
+        self.process1 = nn.Sequential(
+            nn.Conv2d(in_ch, mid_ch, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
+            nn.BatchNorm2d(mid_ch),
+            nn.LeakyReLU()
+        )
+
+        self.pool = nn.MaxPool2d(2, 2)
+
+        self.process2 = nn.Sequential(
+            nn.Conv2d(mid_ch, mid_ch, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
+            nn.BatchNorm2d(mid_ch),
+            nn.LeakyReLU()
+        )
+
+        self.up = nn.Sequential(
+            nn.UpsamplingBilinear2d(scale_factor=2),
+            nn.Conv2d(mid_ch, mid_ch // 2, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
+            nn.BatchNorm2d(mid_ch // 2),
+            nn.LeakyReLU()
+        )
+
+        self.process3 = nn.Sequential(
+            nn.Conv2d(mid_ch // 2 + mid_ch, out_ch, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
+            nn.BatchNorm2d(out_ch),
+            nn.LeakyReLU()
+        )
+
+        self.last_conv = nn.Conv2d(out_ch, out_ch, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        y = self.process1(x)
+        yp1 = self.pool(y)
+        ydf1 = self.process2(yp1)
+        yup1 = self.up(ydf1)
+        yup1 = torch.cat((yup1, y), dim=1)
+        out = self.process3(yup1)
+        out = self.last_conv(out)
+        return out
 
 
 class FullComplexSpatialAttention(nn.Module):
@@ -322,8 +367,8 @@ class FrequencySplitSpatialAttention(nn.Module):
 
         self.freq_slitter = LowHightFrequencyImageComponents((image_size, image_size))
 
-        # self.hlf = nn.Conv2d(channel, channel // 2, 3, 1, 1, padding_mode='reflect')
-        # self.llf = nn.Conv2d(channel, channel // 2, 3, 1, 1, padding_mode='reflect')
+        self.hlf = Unet1lvl(channel, channel * 2, channel)
+        self.llf = Unet1lvl(channel, channel * 2, channel)
 
         self.feats_bn = nn.BatchNorm2d(channel)
 
@@ -342,13 +387,11 @@ class FrequencySplitSpatialAttention(nn.Module):
     def forward(self, x):
         low_freq_features, hight_freq_features = self.freq_slitter(x)
 
-        # low_freq_features = self.llf(low_freq_features)
-        # hight_freq_features = self.hlf(hight_freq_features)
+        low_freq_features = self.llf(low_freq_features)
+        hight_freq_features = self.hlf(hight_freq_features)
 
-        # united_features = torch.cat((low_freq_features, hight_freq_features), dim=1)
-        # united_features = self.feats_bn(united_features)
-        # united_features = nn.functional.leaky_relu(united_features)
-        united_features = self.preprocess(hight_freq_features)
+        united_features = low_freq_features + hight_freq_features
+        united_features = nn.functional.leaky_relu(united_features)
 
         avg_out = torch.mean(united_features, dim=1, keepdim=True)
         max_out, _ = torch.max(united_features, dim=1, keepdim=True)
@@ -455,16 +498,16 @@ class FFTChannelAttentionV2(nn.Module):
             inv_attn = torch.abs(out - x).mean(dim=1).unsqueeze(1)
             inv_attn /= (inv_attn.max() + 1E-5)
 
-        return x * channel_attn, [inv_attn]
+        return x * channel_attn, inv_attn
 
 
 class FFTCBAM(nn.Module):
-    def __init__(self, image_size: int, channel: int, kernel_size, reduction: int = 16) -> None:
+    def __init__(self, image_size: int, channel: int, kernel_size: int = 7, reduction: int = 16) -> None:
         super().__init__()
-        self.fft_sa = FrequencySplitSpatialAttention(channel, image_size, kernel_size)
-        self.fft_ca = FFTChannelAttention(channel, reduction)
+        self.fft_ca = FFTChannelAttentionV2(channel=channel, reduction=reduction, image_size=image_size)
+        self.fft_sa = FrequencySplitSpatialAttention(channel=channel, image_size=image_size, kernel_size=kernel_size)
 
     def forward(self, x):
-        x = self.fft_ca(x)
+        x, ca_tensor = self.fft_ca(x)
         x, sa_tensor = self.fft_sa(x)
-        return x, [sa_tensor]
+        return x, [ca_tensor, sa_tensor]
