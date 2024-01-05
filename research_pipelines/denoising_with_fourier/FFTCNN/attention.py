@@ -14,6 +14,7 @@ of the image based on their channel relationships.
 from typing import Tuple
 
 import numpy as np
+import math
 import torch
 from torch import nn
 
@@ -415,26 +416,26 @@ class FFTChannelAttention(nn.Module):
 
 class FFTChannelAttentionV2(nn.Module):
     def __init__(self, channel: int, image_size: int, fsize: int = 8, reduction: int = 16):
-        super(FFTChannelAttention, self).__init__()
+        super(FFTChannelAttentionV2, self).__init__()
 
-        pooling_depth = image_size // fsize
-
+        pooling_depth = int(np.log2(image_size // fsize))
+        
         self.pool_fft_features = nn.Sequential(
             *[
                 nn.Sequential(
-                    nn.Conv2d(channel, channel // 2),
+                    nn.Conv2d(channel, channel // 2, 3, padding=1, dtype=torch.cfloat),
                     RealImaginaryLeakyReLU(),
                     FFTMaxPool2D(2, 2),
-                    nn.Conv2d(channel // 2, channel if i == pooling_depth - 1 else channel // 2),
+                    nn.Conv2d(channel // 2, channel // 2 if i == pooling_depth - 1 else channel, 3, padding=1, dtype=torch.cfloat),
                     RealImaginaryLeakyReLU()
                 )
                 for i in range(pooling_depth)
             ]
         )
         self.fc = nn.Sequential(
-            nn.Linear(channel * fsize * fsize // 2, channel * fsize * fsize // 2 // reduction),
+            nn.Linear(channel * fsize * fsize // 2, channel * fsize * fsize // 2 // reduction, dtype=torch.cfloat),
             RealImaginaryLeakyReLU(),
-            nn.Linear(channel * fsize * fsize // 2 // reduction, channel),
+            nn.Linear(channel * fsize * fsize // 2 // reduction, channel, dtype=torch.cfloat),
         )
         self.sigmoid = nn.Sigmoid()
 
@@ -443,8 +444,10 @@ class FFTChannelAttentionV2(nn.Module):
         z = torch.fft.fftshift(z)
 
         z_deep_feats = self.pool_fft_features(z)
+        z_deep_feats = z_deep_feats.view(x.size(0), -1)
         channel_attn = self.fc(z_deep_feats)
         channel_attn = self.sigmoid(channel_attn)
+        channel_attn = torch.abs(channel_attn.unsqueeze(2).unsqueeze(3))
 
         out = x * channel_attn
 
@@ -452,7 +455,7 @@ class FFTChannelAttentionV2(nn.Module):
             inv_attn = torch.abs(out - x).mean(dim=1).unsqueeze(1)
             inv_attn /= (inv_attn.max() + 1E-5)
 
-        return x * channel_attn, inv_attn
+        return x * channel_attn, [inv_attn]
 
 
 class FFTCBAM(nn.Module):

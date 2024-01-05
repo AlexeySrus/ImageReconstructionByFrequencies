@@ -143,7 +143,7 @@ class CustomTrainingPipeline(object):
                 clear_images_path=synth_data_paths,
                 window_size=self.image_shape[0],
                 preload=preload_data,
-                optional_dataset_size=500
+                optional_dataset_size=2500
             )
 
             self.train_base_dataset = torch.utils.data.ConcatDataset(
@@ -240,11 +240,11 @@ class CustomTrainingPipeline(object):
         # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
         self.final_hist_loss = None
         # self.adv_loss = Adversarial(image_size=self.image_shape[0], gan_type='WGAN_GP').to(device)
-        self.hf_loss = HightFrequencyFFTLoss(self.image_shape).to(device)
-        # self.hf_loss = HFENLoss(
-        #     loss_f=torch.nn.functional.l1_loss,
-        #     norm=True
-        # )
+        # self.hf_loss = HightFrequencyFFTLoss(self.image_shape).to(device)
+        self.hf_loss = HFENLoss(
+            loss_f=torch.nn.functional.l1_loss,
+            norm=True
+        )
 
         # self.ssim_loss = None
         self.accuracy_measure = TorchPSNR().to(device)

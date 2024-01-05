@@ -104,7 +104,7 @@ class SyntheticNoiseDataset(Dataset):
     def __getitem__(self, _idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         idx = _idx % len(self.clear_images)
 
-        if np.random.randint(1, 101) > -1:
+        if np.random.randint(1, 101) > 80:
             rand_color = np.random.randint(0, 256, size=3, dtype=np.uint8)
             clear_image = np.zeros((self.window_size, self.window_size, 3), dtype=np.uint8)
             clear_image[:, :] = rand_color
