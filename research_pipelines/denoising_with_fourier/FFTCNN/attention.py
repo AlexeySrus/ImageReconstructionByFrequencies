@@ -367,19 +367,20 @@ class FrequencySplitSpatialAttention(nn.Module):
 
         self.freq_slitter = LowHightFrequencyImageComponents((image_size, image_size))
 
-        self.hlf = Unet1lvl(channel, channel * 2, channel)
-        self.llf = Unet1lvl(channel, channel * 2, channel)
-
-       #  self.feats_bn = nn.BatchNorm2d(channel)
-
-        # self.preprocess = nn.Sequential(
-        #     nn.Conv2d(channel, channel // 2, 3, stride=1, padding=2, dilation=2, padding_mode='reflect'),
-        #     nn.BatchNorm2d(channel // 2),
-        #     nn.LeakyReLU(),
-        #     nn.Conv2d(channel // 2, channel // 2, 3, 1, 1, padding_mode='reflect'),
-        #     nn.BatchNorm2d(channel // 2),
-        #     nn.LeakyReLU()
-        # )
+        self.hlf = nn.Sequential(
+            nn.Conv2d(channel, channel, 3, stride=1, padding=2, dilation=2, padding_mode='reflect'),
+            nn.BatchNorm2d(channel),
+            nn.LeakyReLU(),
+            nn.Conv2d(channel, channel, 3, 1, 1, padding_mode='reflect'),
+            nn.BatchNorm2d(channel)
+        )
+        self.llf = nn.Sequential(
+            nn.Conv2d(channel, channel, 3, stride=1, padding=2, dilation=2, padding_mode='reflect'),
+            nn.BatchNorm2d(channel),
+            nn.LeakyReLU(),
+            nn.Conv2d(channel, channel, 3, 1, 1, padding_mode='reflect'),
+            nn.BatchNorm2d(channel)
+        )
 
         self.conv = nn.Conv2d(2, 1, kernel_size, padding=kernel_size//2, bias=False, padding_mode='reflect')
         self.sigmoid = nn.Sigmoid()
