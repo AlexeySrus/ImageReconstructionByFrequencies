@@ -409,14 +409,14 @@ class FrequencySplitFeatures(nn.Module):
         self.freq_slitter = LowHightFrequencyImageComponents((image_size, image_size))
 
         self.hlf = nn.Sequential(
-            nn.Conv2d(channel, channel // 2, 3, stride=1, padding=2, dilation=2, padding_mode='reflect'),
+            nn.Conv2d(channel, channel // 2, 3, stride=1, padding=1, dilation=1, padding_mode='reflect'),
             nn.BatchNorm2d(channel // 2),
             nn.LeakyReLU(),
             nn.Conv2d(channel // 2, channel // 2, 3, 1, 1, padding_mode='reflect'),
             nn.BatchNorm2d(channel // 2)
         )
         self.llf = nn.Sequential(
-            nn.Conv2d(channel, channel // 2, 3, stride=1, padding=2, dilation=2, padding_mode='reflect'),
+            nn.Conv2d(channel, channel // 2, 3, stride=1, padding=1, dilation=1, padding_mode='reflect'),
             nn.BatchNorm2d(channel // 2),
             nn.LeakyReLU(),
             nn.Conv2d(channel // 2, channel // 2, 3, 1, 1, padding_mode='reflect'),
