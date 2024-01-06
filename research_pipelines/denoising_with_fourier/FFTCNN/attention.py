@@ -433,38 +433,39 @@ class FrequencySplitFeatures(nn.Module):
     def __init__(self, channel: int, image_size: int):
         super(FrequencySplitFeatures, self).__init__()
 
-        self.freq_slitter = LowHightFrequencyImageComponents((image_size, image_size))
+        self.freq_slitter = HightFrequencyImageComponents((image_size, image_size))
 
         self.hlf = nn.Sequential(
             nn.Conv2d(channel, channel // 2, 3, stride=1, padding=2, dilation=2, padding_mode='reflect'),
             nn.BatchNorm2d(channel // 2),
             nn.LeakyReLU(),
-            nn.Conv2d(channel // 2, channel // 2, 3, 1, 1, padding_mode='reflect'),
-            nn.BatchNorm2d(channel // 2)
-        )
-        self.llf = nn.Sequential(
-            nn.Conv2d(channel, channel // 2, 3, stride=1, padding=2, dilation=2, padding_mode='reflect'),
-            nn.BatchNorm2d(channel // 2),
-            nn.LeakyReLU(),
-            nn.Conv2d(channel // 2, channel // 2, 3, 1, 1, padding_mode='reflect'),
-            nn.BatchNorm2d(channel // 2)
-        )
-
-        self.up_feats = nn.Sequential(
-            nn.LeakyReLU(),
             nn.Conv2d(channel // 2, channel, 3, 1, 1, padding_mode='reflect'),
             nn.BatchNorm2d(channel)
         )
+        # self.llf = nn.Sequential(
+        #     nn.Conv2d(channel, channel // 2, 3, stride=1, padding=1, dilation=1, padding_mode='reflect'),
+        #     nn.BatchNorm2d(channel // 2),
+        #     nn.LeakyReLU(),
+        #     nn.Conv2d(channel // 2, channel // 2, 3, 1, 1, padding_mode='reflect'),
+        #     nn.BatchNorm2d(channel // 2)
+        # )
+
+        # self.up_feats = nn.Sequential(
+        #     nn.LeakyReLU(),
+        #     nn.Conv2d(channel // 2, channel, 3, 1, 1, padding_mode='reflect'),
+        #     nn.BatchNorm2d(channel),
+        #     nn.LeakyReLU()
+        # )
 
     def forward(self, x):
-        low_freq_features, hight_freq_features = self.freq_slitter(x)
+        hight_freq_features = self.freq_slitter(x)
 
-        low_freq_features = self.llf(low_freq_features)
+        # low_freq_features = self.llf(low_freq_features)
         hight_freq_features = self.hlf(hight_freq_features)
 
-        united_features = low_freq_features + hight_freq_features
-        united_features = self.up_feats(united_features)
-        x = x + united_features
+        # united_features = low_freq_features + hight_freq_features
+        # united_features = self.up_feats(united_features)
+        x = x + hight_freq_features
         x = nn.functional.leaky_relu(x)
 
         return x
