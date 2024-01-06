@@ -579,5 +579,5 @@ class FFTCAFSModule(nn.Module):
 
     def forward(self, x):
         x, ca_tensor = self.fft_ca(x)
-        x = self.fft_split_features(x)
+        # x = self.fft_split_features(x)
         return x, [ca_tensor]
