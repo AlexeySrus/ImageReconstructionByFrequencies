@@ -243,7 +243,7 @@ class CustomTrainingPipeline(object):
         # self.hf_loss = HightFrequencyFFTLoss(self.image_shape).to(device)
         self.hf_loss = HFENLoss(
             loss_f=torch.nn.functional.l1_loss,
-            norm=True
+            norm=False
         )
 
         # self.ssim_loss = None
@@ -317,7 +317,7 @@ class CustomTrainingPipeline(object):
                     # clear_image
                     self._convert_ycrcb_to_rgb(pred_image), 
                     self._convert_ycrcb_to_rgb(clear_image)
-                )
+                ) * 0.05
 
                 total_loss = loss + f_loss
 
