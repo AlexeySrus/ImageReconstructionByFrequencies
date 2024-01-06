@@ -400,6 +400,39 @@ class FrequencySplitSpatialAttention(nn.Module):
         out = self.conv(out)
         attn = self.sigmoid(out)
         return x * attn, attn
+    
+
+class FrequencySplitFeatures(nn.Module):
+    def __init__(self, channel: int, image_size: int):
+        super(FrequencySplitFeatures, self).__init__()
+
+        self.freq_slitter = LowHightFrequencyImageComponents((image_size, image_size))
+
+        self.hlf = nn.Sequential(
+            nn.Conv2d(channel, channel // 2, 3, stride=1, padding=2, dilation=2, padding_mode='reflect'),
+            nn.BatchNorm2d(channel // 2),
+            nn.LeakyReLU(),
+            nn.Conv2d(channel // 2, channel, 3, 1, 1, padding_mode='reflect'),
+            nn.BatchNorm2d(channel)
+        )
+        self.llf = nn.Sequential(
+            nn.Conv2d(channel, channel // 2, 3, stride=1, padding=2, dilation=2, padding_mode='reflect'),
+            nn.BatchNorm2d(channel // 2),
+            nn.LeakyReLU(),
+            nn.Conv2d(channel // 2, channel, 3, 1, 1, padding_mode='reflect'),
+            nn.BatchNorm2d(channel)
+        )
+
+    def forward(self, x):
+        low_freq_features, hight_freq_features = self.freq_slitter(x)
+
+        low_freq_features = self.llf(low_freq_features)
+        hight_freq_features = self.hlf(hight_freq_features)
+
+        united_features = low_freq_features + hight_freq_features
+        united_features = nn.functional.leaky_relu(united_features)
+
+        return x + united_features
 
 
 class FFTChannelAttention(nn.Module):
@@ -502,13 +535,13 @@ class FFTChannelAttentionV2(nn.Module):
         return x * channel_attn, inv_attn
 
 
-class FFTCBAM(nn.Module):
-    def __init__(self, image_size: int, channel: int, kernel_size: int = 7, reduction: int = 16) -> None:
+class FFTCAFSModule(nn.Module):
+    def __init__(self, image_size: int, channel: int, reduction: int = 16) -> None:
         super().__init__()
+        self.fft_split_features = FrequencySplitFeatures(channel=channel, image_size=image_size)
         self.fft_ca = FFTChannelAttentionV2(channel=channel, reduction=reduction, image_size=image_size)
-        self.fft_sa = FrequencySplitSpatialAttention(channel=channel, image_size=image_size, kernel_size=kernel_size)
 
     def forward(self, x):
+        x = self.fft_split_features(x)
         x, ca_tensor = self.fft_ca(x)
-        x, sa_tensor = self.fft_sa(x)
-        return x, [ca_tensor, sa_tensor]
+        return x, [ca_tensor]

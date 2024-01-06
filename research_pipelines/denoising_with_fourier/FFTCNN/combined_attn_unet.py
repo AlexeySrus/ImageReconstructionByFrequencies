@@ -3,7 +3,7 @@ from collections import OrderedDict
 import torch
 import torch.nn as nn
 
-from FFTCNN.attention import FFTCBAM, SpatialAttention, ChannelAttention, FFTChannelAttentionV2
+from FFTCNN.attention import FFTCAFSModule, SpatialAttention, ChannelAttention
 
 
 padding_mode: str = 'reflect'
@@ -114,7 +114,7 @@ class SpectralPooling(nn.Module):
 class FFTAttention(nn.Module):
     def __init__(self, in_ch: int, reduction: int = 16, kernel_size: int = 7, window_size: int = 64, image_size: int = 256):
         super().__init__()
-        self.fft_sa = FFTCBAM(channel=in_ch, reduction=reduction, image_size=image_size, kernel_size=kernel_size)
+        self.fft_sa = FFTCAFSModule(channel=in_ch, reduction=reduction, image_size=image_size)
         self.sa = SpatialAttention(kernel_size)
         self.final_ca = ChannelAttention(in_ch * 2, reduction)
         self.final_conv = nn.Conv2d(in_ch * 2, in_ch, 1)
@@ -140,7 +140,7 @@ class FeaturesProcessing(nn.Module):
         self.use_attention = use_attention
         if use_attention:
             # self.attn1 = FFTAttention(in_ch, window_size=window_size, image_size=image_size)
-            self.attn1 = FFTCBAM(channel=in_ch, reduction=32, image_size=image_size, kernel_size=7)
+            self.attn1 = FFTCAFSModule(channel=in_ch, reduction=32, image_size=image_size)
             # self.attn1 = FFTChannelAttentionV2(channel=in_ch, image_size=image_size, reduction=32)
         else:
             self.attn1 = None
