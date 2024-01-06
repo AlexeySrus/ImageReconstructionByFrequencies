@@ -412,15 +412,22 @@ class FrequencySplitFeatures(nn.Module):
             nn.Conv2d(channel, channel // 2, 3, stride=1, padding=2, dilation=2, padding_mode='reflect'),
             nn.BatchNorm2d(channel // 2),
             nn.LeakyReLU(),
-            nn.Conv2d(channel // 2, channel, 3, 1, 1, padding_mode='reflect'),
-            nn.BatchNorm2d(channel)
+            nn.Conv2d(channel // 2, channel // 2, 3, 1, 1, padding_mode='reflect'),
+            nn.BatchNorm2d(channel // 2)
         )
         self.llf = nn.Sequential(
             nn.Conv2d(channel, channel // 2, 3, stride=1, padding=2, dilation=2, padding_mode='reflect'),
             nn.BatchNorm2d(channel // 2),
             nn.LeakyReLU(),
+            nn.Conv2d(channel // 2, channel // 2, 3, 1, 1, padding_mode='reflect'),
+            nn.BatchNorm2d(channel // 2)
+        )
+
+        self.up_feats = nn.Sequential(
+            nn.LeakyReLU(),
             nn.Conv2d(channel // 2, channel, 3, 1, 1, padding_mode='reflect'),
-            nn.BatchNorm2d(channel)
+            nn.BatchNorm2d(channel),
+            nn.LeakyReLU()
         )
 
     def forward(self, x):
@@ -430,7 +437,7 @@ class FrequencySplitFeatures(nn.Module):
         hight_freq_features = self.hlf(hight_freq_features)
 
         united_features = low_freq_features + hight_freq_features
-        united_features = nn.functional.leaky_relu(united_features)
+        united_features = self.up_feats(united_features)
 
         return x + united_features
 
