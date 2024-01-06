@@ -464,7 +464,7 @@ class FrequencySplitFeatures(nn.Module):
 
         united_features = low_freq_features + hight_freq_features
         united_features = self.up_feats(united_features)
-        x = x + hight_freq_features
+        x = x + united_features
         x = nn.functional.leaky_relu(x)
 
         return x
