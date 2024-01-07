@@ -472,6 +472,7 @@ class FrequencySplitFeatures(nn.Module):
         d12 = self.act1(d12)
 
         add_feats = self.hlf_f2(d12)
+        add_feats = self.bn2(add_feats)
         x = self.act2(x + add_feats)
 
         with torch.no_grad():
