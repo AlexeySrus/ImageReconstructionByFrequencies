@@ -230,7 +230,7 @@ class CustomTrainingPipeline(object):
                 print(
                     '#' * 5 + ' Optimizer has been loaded by path: {} '.format(load_path) + '#' * 5
                 )
-                self.optimizer.param_groups[0]['lr'] = 0.0001
+                # self.optimizer.param_groups[0]['lr'] = 0.0001
                 print('Optimizer LR: {:.5f}'.format(self.get_lr()))
 
         # self.images_criterion = CharbonnierLoss().to(self.device)
@@ -240,11 +240,11 @@ class CustomTrainingPipeline(object):
         # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
         self.final_hist_loss = None
         # self.adv_loss = Adversarial(image_size=self.image_shape[0], gan_type='WGAN_GP').to(device)
-        # self.hf_loss = HightFrequencyFFTLoss(self.image_shape).to(device)
-        self.hf_loss = HFENLoss(
-            loss_f=torch.nn.functional.l1_loss,
-            norm=False
-        )
+        self.hf_loss = HightFrequencyFFTLoss(self.image_shape).to(device)
+        # self.hf_loss = HFENLoss(
+        #     loss_f=torch.nn.functional.l1_loss,
+        #     norm=True
+        # )
 
         # self.ssim_loss = None
         self.accuracy_measure = TorchPSNR().to(device)
@@ -317,7 +317,7 @@ class CustomTrainingPipeline(object):
                     # clear_image
                     self._convert_ycrcb_to_rgb(pred_image), 
                     self._convert_ycrcb_to_rgb(clear_image)
-                ) * 0.05
+                ) * 0.1
 
                 total_loss = loss + f_loss
 

@@ -116,7 +116,10 @@ class FullComplexSpatialAttention(nn.Module):
         self.conv = nn.Conv2d(2, 1, kernel_size, padding=kernel_size//2, bias=False, dtype=torch.cfloat, padding_mode='zeros')
         self.sigmoid = nn.Sigmoid()
 
-    def forward(self, z):
+    def forward(self, x):
+        z = torch.fft.fft2(x, norm='ortho')
+        z = torch.fft.fftshift(z)
+
         avg_out = torch.mean(z, dim=1, keepdim=True)
         _, max_indices = torch.max(torch.abs(z), dim=1, keepdim=True)
         max_out = retrieve_elements_from_indices(z, max_indices)
@@ -124,7 +127,36 @@ class FullComplexSpatialAttention(nn.Module):
         out = torch.concat([avg_out, max_out], dim=1)
         out = self.conv(out)
         attn = self.sigmoid(out)
-        return z * attn, attn
+
+        z = z * attn
+
+        z = torch.fft.ifftshift(z)
+        x = torch.fft.ifft2(z).real
+
+        return x, attn
+
+
+class FFTFilter(nn.Module):
+    def __init__(self, image_size: int, channel: int):
+        super(FFTFilter, self).__init__()
+        self.filter = nn.Linear(2*image_size*image_size, image_size*image_size)
+
+    def forward(self, x):
+        z = torch.fft.fft2(x, norm='ortho')
+        z = torch.fft.fftshift(z)
+
+        avg_out = torch.mean(z, dim=1, keepdim=True)
+        _, max_indices = torch.max(torch.abs(z), dim=1, keepdim=True)
+        max_out = retrieve_elements_from_indices(z, max_indices)
+        
+        out = torch.abs(torch.concat([avg_out, max_out], dim=1).view(x.size(0), -1))
+        attn = torch.sigmoid(self.filter(out)).view(x.size(0), 1, x.size(2), x.size(3))
+        z = z * attn.to(torch.cfloat)
+
+        z = torch.fft.ifftshift(z)
+        x = torch.fft.ifft2(z).real
+
+        return x, attn
 
 
 class ComplexSpatialAttention(nn.Module):
@@ -395,7 +427,7 @@ class HightFrequencySpatialAttention(nn.Module):
         self.freq_slitter = HightFrequencyImageComponents((image_size, image_size))
 
         self.hlf = nn.Sequential(
-            nn.Conv2d(channel, channel // 2, 3, stride=1, padding=2, dilation=2, padding_mode='reflect'),
+            nn.Conv2d(channel, channel // 2, 3, stride=1, padding=1, dilation=1, padding_mode='reflect'),
             nn.BatchNorm2d(channel // 2),
             nn.LeakyReLU(),
         )
@@ -421,40 +453,31 @@ class FrequencySplitFeatures(nn.Module):
 
         self.freq_slitter = HightFrequencyImageComponents((image_size, image_size))
 
-        self.hlf = nn.Sequential(
-            nn.Conv2d(channel, channel // 2, 3, stride=1, padding=2, dilation=2, padding_mode='reflect'),
-            nn.BatchNorm2d(channel // 2),
-            nn.LeakyReLU(),
-            nn.Conv2d(channel // 2, channel, 3, 1, 1, padding_mode='reflect'),
-            nn.BatchNorm2d(channel)
-        )
-        # self.llf = nn.Sequential(
-        #     nn.Conv2d(channel, channel // 2, 3, stride=1, padding=1, dilation=1, padding_mode='reflect'),
-        #     nn.BatchNorm2d(channel // 2),
-        #     nn.LeakyReLU(),
-        #     nn.Conv2d(channel // 2, channel // 2, 3, 1, 1, padding_mode='reflect'),
-        #     nn.BatchNorm2d(channel // 2)
-        # )
+        self.hlf_d1 = nn.Conv2d(channel, channel // 2, 3, stride=1, padding=1, dilation=1, padding_mode='reflect')
+        self.hlf_d2 = nn.Conv2d(channel, channel // 2, 3, stride=1, padding=2, dilation=2, padding_mode='reflect')
+        self.bn1 = nn.BatchNorm2d(channel // 2)
+        self.act1 = nn.LeakyReLU()
 
-        # self.up_feats = nn.Sequential(
-        #     nn.LeakyReLU(),
-        #     nn.Conv2d(channel // 2, channel, 3, 1, 1, padding_mode='reflect'),
-        #     nn.BatchNorm2d(channel),
-        #     nn.LeakyReLU()
-        # )
+        self.hlf_f2 = nn.Conv2d(channel // 2, channel, 3, stride=1, padding=1, padding_mode='reflect')
+        self.bn2 = nn.BatchNorm2d(channel)
+        self.act2 = nn.LeakyReLU()
 
     def forward(self, x):
-        hight_freq_features = self.freq_slitter(x)
+        hight_freq = self.freq_slitter(x)
 
-        # low_freq_features = self.llf(low_freq_features)
-        hight_freq_features = self.hlf(hight_freq_features)
+        d1f = self.hlf_d1(hight_freq)
+        d2f = self.hlf_d2(hight_freq)
+        d12 = d1f + d2f
+        d12 = self.bn1(d12)
+        d12 = self.act1(d12)
 
-        # united_features = low_freq_features + hight_freq_features
-        # united_features = self.up_feats(united_features)
-        x = x + hight_freq_features
-        x = nn.functional.leaky_relu(x)
+        add_feats = self.hlf_f2(d12)
+        x = self.act2(x + add_feats)
 
-        return x
+        with torch.no_grad():
+            attn = torch.abs(add_feats.mean(dim=1).unsqueeze(1))
+
+        return x, attn
 
 
 class FFTChannelAttention(nn.Module):
@@ -560,7 +583,7 @@ class FFTChannelAttentionV2(nn.Module):
 class FFTCAFSModule(nn.Module):
     def __init__(self, image_size: int, channel: int, reduction: int = 16, kernel_size: int = 7) -> None:
         super().__init__()
-        self.fft_sa = HightFrequencySpatialAttention(channel=channel, image_size=image_size, kernel_size=kernel_size)
+        self.fft_sa = FrequencySplitFeatures(channel=channel, image_size=image_size)
         self.fft_ca = FFTChannelAttentionV2(channel=channel, reduction=reduction, image_size=image_size)
 
     def forward(self, x):
