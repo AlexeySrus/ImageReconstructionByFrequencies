@@ -28,6 +28,7 @@ from utils.hist_loss import HistLoss
 from utils.adasmooth import AdaSmooth
 from utils.adversarial_loss import Adversarial
 from utils.freq_loss import HightFrequencyFFTLoss, HFENLoss
+from utils.focal_frequency_loss import FocalFrequencyLoss
 from utils.tv_loss import CharbonnierLoss, TVLoss
 from utils.tensor_utils import MixUp_AUG
 
@@ -240,7 +241,7 @@ class CustomTrainingPipeline(object):
         self.final_hist_loss = HistLoss(image_size=128, device=self.device)
         # self.final_hist_loss = None
         # self.adv_loss = Adversarial(image_size=self.image_shape[0], gan_type='WGAN_GP').to(device)
-        self.hf_loss = HightFrequencyFFTLoss(self.image_shape).to(device)
+        self.hf_loss = FocalFrequencyLoss().to(device)
         # self.hf_loss = HFENLoss(
         #     loss_f=torch.nn.functional.l1_loss,
         #     norm=True
