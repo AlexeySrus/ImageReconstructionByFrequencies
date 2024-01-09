@@ -214,7 +214,7 @@ class CustomTrainingPipeline(object):
         self.model = self.model.to(device)
         # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=1E-2)
         self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=0.001, betas=(0.9, 0.999),eps=1e-8, weight_decay=1E-2)
-        # self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001, weight_decay=1E-4)
+        # self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001)
         # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001, weight_decay=1E-5)
 
         if load_path is not None:
@@ -230,15 +230,15 @@ class CustomTrainingPipeline(object):
                 print(
                     '#' * 5 + ' Optimizer has been loaded by path: {} '.format(load_path) + '#' * 5
                 )
-                # self.optimizer.param_groups[0]['lr'] = 0.0001
+                self.optimizer.param_groups[0]['lr'] = 0.0001
                 print('Optimizer LR: {:.5f}'.format(self.get_lr()))
 
         # self.images_criterion = CharbonnierLoss().to(self.device)
         self.images_criterion = MIXLoss()
         # self.perceptual_loss = DISTS()
         self.perceptual_loss = None
-        # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
-        self.final_hist_loss = None
+        self.final_hist_loss = HistLoss(image_size=128, device=self.device)
+        # self.final_hist_loss = None
         # self.adv_loss = Adversarial(image_size=self.image_shape[0], gan_type='WGAN_GP').to(device)
         self.hf_loss = HightFrequencyFFTLoss(self.image_shape).to(device)
         # self.hf_loss = HFENLoss(
@@ -284,7 +284,7 @@ class CustomTrainingPipeline(object):
                 noisy_image = _noisy_image.to(self.device)
                 clear_image = _clear_image.to(self.device)
 
-                if epoch > 150:
+                if epoch > 1 and np.random.randint(0, 101) > 90:
                     clear_image, noisy_image = self.mixup.aug(clear_image, noisy_image)
 
                 output = self.model(noisy_image)
@@ -305,21 +305,26 @@ class CustomTrainingPipeline(object):
                         self._convert_ycrcb_to_rgb(clear_image)
                     )
                     
-                # hist_loss = self.final_hist_loss(pred_image, clear_image)
-                hist_loss = 0
                 # a_loss = self.adv_loss(pred_image, clear_image)
                 # f_loss = self.fft_loss(
                 #     torch.fft.fft2(pred_image[:, :1], norm='ortho'),
                 #     torch.fft.fft2(clear_image[:, :1], norm='ortho')
                 # )
+
                 f_loss = self.hf_loss(
-                    # pred_image,
-                    # clear_image
-                    self._convert_ycrcb_to_rgb(pred_image), 
-                    self._convert_ycrcb_to_rgb(clear_image)
-                ) * 0.1
+                    pred_image, 
+                    clear_image
+                )
+
+                # h_loss = self.final_hist_loss(
+                #     self._convert_ycrcb_to_rgb(pred_image), 
+                #     self._convert_ycrcb_to_rgb(clear_image)
+                # )
 
                 total_loss = loss + f_loss
+
+                if self.gradient_accumulation_steps > 1:
+                    total_loss = total_loss / self.gradient_accumulation_steps
 
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)

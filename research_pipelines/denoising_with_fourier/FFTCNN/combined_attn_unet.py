@@ -360,12 +360,15 @@ if __name__ == '__main__':
     with torch.no_grad():
         out = model(t)
 
+    n_attempts: int = 10
+
     start_time = time()
     with torch.no_grad():
-        out = model(t)
+        for _ in range(n_attempts):
+            out = model(t)
     finish_time = time()
 
-    infer_time = finish_time - start_time
+    infer_time = (finish_time - start_time) / n_attempts
     print('Inference time: {:.5f} sec'.format(infer_time))
 
     model.to_export()

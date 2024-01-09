@@ -299,7 +299,7 @@ if __name__ == '__main__':
     import segmentation_models_pytorch as smp
 
 
-    model = AttentionUNet(3, 3)
+    model = AttentionUNet(3, 3, use_attention=False)
 
     m_params = sum(p.numel() for p in model.parameters())
 
@@ -319,12 +319,12 @@ if __name__ == '__main__':
     out = model(t)
     sa_list = out[1]
 
-    sa_tensors = []
-    for k in range(len(sa_list) // 4):
-        sa_tensors.append(torch.concat([sa_list[2*k + q] for q in range(4)], dim=3))
+    # sa_tensors = []
+    # for k in range(len(sa_list) // 4):
+    #     sa_tensors.append(torch.concat([sa_list[2*k + q] for q in range(4)], dim=3))
 
-    sa_tensor = torch.concat(sa_tensors, dim=2)
-    print(sa_tensor.shape)
+    # sa_tensor = torch.concat(sa_tensors, dim=2)
+    # print(sa_tensor.shape)
 
     print(out[0].shape)
 
@@ -333,12 +333,15 @@ if __name__ == '__main__':
     with torch.no_grad():
         out = model(t)
 
+    n_attempts: int = 10
+
     start_time = time()
     with torch.no_grad():
-        out = model(t)
+        for _ in range(n_attempts):
+            out = model(t)
     finish_time = time()
 
-    infer_time = finish_time - start_time
+    infer_time = (finish_time - start_time) / n_attempts
     print('Inference time: {:.5f} sec'.format(infer_time))
 
     model.to_export()
