@@ -238,8 +238,8 @@ class CustomTrainingPipeline(object):
         self.images_criterion = MIXLoss()
         # self.perceptual_loss = DISTS()
         self.perceptual_loss = None
-        self.final_hist_loss = HistLoss(image_size=128, device=self.device)
-        # self.final_hist_loss = None
+        # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
+        self.final_hist_loss = None
         # self.adv_loss = Adversarial(image_size=self.image_shape[0], gan_type='WGAN_GP').to(device)
         self.hf_loss = FocalFrequencyLoss().to(device)
         # self.hf_loss = HFENLoss(
