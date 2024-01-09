@@ -28,7 +28,7 @@ class HightFrequencyImageComponent(nn.Module):
         self.kernel = nn.Parameter(kernel, requires_grad=False)
 
     def apply_fft_kernel(self, x):
-        return x*self.kernel[:, -x.size(2):]
+        return x*self.kernel
 
     def forward(self, z):
         n_fourier_transform_x = self.apply_fft_kernel(
@@ -43,7 +43,10 @@ class HightFrequencyFFTLoss(nn.Module):
         self.hf_exrtractor = HightFrequencyImageComponent(shape)
         self.base_loss_fn = base_loss
 
-    def forward(self, z_pred, z_truth):
+    def forward(self, x_pred, x_truth):
+        z_pred = torch.fft.fft2(x_pred, norm='ortho')
+        z_truth = torch.fft.fft2(x_truth, norm='ortho')
+
         hf_z_pred = self.hf_exrtractor(z_pred)
         hf_z_truth = self.hf_exrtractor(z_truth)
         return self.base_loss_fn(hf_z_pred, hf_z_truth)

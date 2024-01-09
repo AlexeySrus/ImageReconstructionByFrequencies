@@ -109,7 +109,8 @@ def eval_denoise_inference(
         verbose: bool = False,
         crop_size: int = 0,
         use_tta: bool = False,
-        device: str = 'cpu') -> torch.Tensor:
+        device: str = 'cpu',
+        progress_bar: callable = None) -> torch.Tensor:
     # output_size = model(torch.zeros(1, 3, window_size, window_size).to(device))[0][0].size(2) * 2
     crop_d = crop_size
     output_size = window_size - crop_d * 2
@@ -141,7 +142,9 @@ def eval_denoise_inference(
             TensorRotate.ROTATE_90_COUNTERCLOCKWISE
         ]
 
-    for transform in transforms:
+    transforms_loop_generator = progress_bar(transforms) if progress_bar is not None else transforms
+
+    for transform in transforms_loop_generator:
         transform_padded_image = rotate_tensor(padded_tensor, transform)
 
         crops = []
