@@ -41,6 +41,12 @@ def real_imaginary_leakyrelu(z):
     return nn.functional.leaky_relu(z.real) + 1.j * nn.functional.leaky_relu(z.imag)
 
 
+def rfftshift(z):
+    z[:, :, :z.size(2) // 2] = torch.flip(z[:, :, :z.size(2) // 2], dims=(2,))
+    z[:, :, z.size(2) // 2:] = torch.flip(z[:, :, z.size(2) // 2:], dims=(2,))
+    return z
+
+
 class RealImaginaryLeakyReLU(nn.Module):
     def __init__(self):
         super().__init__()
@@ -420,6 +426,32 @@ class HightFrequencyImageComponents(nn.Module):
         return hight_freq_x
 
 
+class HightFrequencyRealImageComponents(nn.Module):
+    def __init__(self, shape: Tuple[int, int]):
+        super().__init__()
+
+        hight_pass_kernel = 1.0 - generate_batt(shape, 500, 1).astype(np.float32)
+
+        hight_pass_kernel = torch.from_numpy(hight_pass_kernel).unsqueeze(0).unsqueeze(0)
+        hight_pass_kernel = torch.fft.fftshift(hight_pass_kernel)
+        hight_pass_kernel = hight_pass_kernel[:, :, :, :shape[1] // 2 + 1].to(torch.cfloat)
+        
+        
+        self.hight_pass_kernel = nn.Parameter(hight_pass_kernel, requires_grad=False)
+
+    def apply_fft_kernel(self, x, kernel):
+        return x * kernel
+
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        z = torch.fft.rfft2(x, norm='ortho')
+        
+        hight_freq_z = self.apply_fft_kernel(z, self.hight_pass_kernel)
+        
+        hight_freq_x = torch.fft.irfft2(hight_freq_z, norm='ortho').real
+        
+        return hight_freq_x
+
+
 class HightFrequencySpatialAttention(nn.Module):
     def __init__(self, channel: int, image_size: int, kernel_size=7):
         super(HightFrequencySpatialAttention, self).__init__()
@@ -451,7 +483,7 @@ class FrequencySplitFeatures(nn.Module):
     def __init__(self, channel: int, image_size: int):
         super(FrequencySplitFeatures, self).__init__()
 
-        self.freq_slitter = HightFrequencyImageComponents((image_size, image_size))
+        self.freq_slitter = HightFrequencyRealImageComponents((image_size, image_size))
 
         self.hlf_d1 = nn.Conv2d(channel, channel // 2, 3, stride=1, padding=1, dilation=1, padding_mode='reflect')
         self.hlf_d2 = nn.Conv2d(channel, channel // 2, 3, stride=1, padding=2, dilation=2, padding_mode='reflect')
@@ -581,11 +613,68 @@ class FFTChannelAttentionV2(nn.Module):
         return x * channel_attn, inv_attn
 
 
+class ForFFTPad(nn.Module):
+    def __init__(self, padding: int):
+        super(ForFFTPad, self).__init__()
+        self.padding = padding
+
+    def forward(self, z):
+        z = torch.nn.functional.pad(z, (self.padding, 0, 0, 0), mode='reflect')
+        z = torch.nn.functional.pad(z, (0, self.padding, self.padding, self.padding), mode='constant', value=0)
+        return z
+
+
+class RealFFTChannelAttentionV2(nn.Module):
+    def __init__(self, channel: int, image_size: int, fsize: int = 8, reduction: int = 16):
+        super(RealFFTChannelAttentionV2, self).__init__()
+
+        pooling_depth = int(np.log2(image_size // fsize))
+        
+        self.pool_fft_features = nn.Sequential(
+            *[
+                nn.Sequential(
+                    ForFFTPad(1),
+                    nn.Conv2d(channel, channel // 2, 3, padding=0, dtype=torch.cfloat),
+                    RealImaginaryLeakyReLU(),
+                    FFTMaxPool2D(2, 2),
+                    ForFFTPad(1),
+                    nn.Conv2d(channel // 2, channel // 2 if i == pooling_depth - 1 else channel, 3, padding=0, dtype=torch.cfloat),
+                    RealImaginaryLeakyReLU()
+                )
+                for i in range(pooling_depth)
+            ]
+        )
+        self.fc = nn.Sequential(
+            nn.Linear(channel * fsize * fsize // 2 // 2, channel * fsize * fsize // 2 // 2 // reduction, dtype=torch.cfloat),
+            RealImaginaryLeakyReLU(),
+            nn.Linear(channel * fsize * fsize // 2 // 2 // reduction, channel, dtype=torch.cfloat),
+        )
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        z = torch.fft.rfft2(x, norm='forward')
+        z = rfftshift(z)
+
+        z_deep_feats = self.pool_fft_features(z)
+        z_deep_feats = z_deep_feats.view(x.size(0), -1)
+        channel_attn = self.fc(z_deep_feats)
+        channel_attn = self.sigmoid(channel_attn)
+        channel_attn = torch.abs(channel_attn.unsqueeze(2).unsqueeze(3))
+
+        out = x * channel_attn
+
+        with torch.no_grad():
+            inv_attn = torch.abs(out - x).mean(dim=1).unsqueeze(1)
+            inv_attn /= (inv_attn.max() + 1E-5)
+
+        return x * channel_attn, inv_attn
+
+
 class FFTCAFSModule(nn.Module):
     def __init__(self, image_size: int, channel: int, reduction: int = 16, kernel_size: int = 7) -> None:
         super().__init__()
         self.fft_sa = FrequencySplitFeatures(channel=channel, image_size=image_size)
-        self.fft_ca = FFTChannelAttentionV2(channel=channel, reduction=reduction, image_size=image_size)
+        self.fft_ca = RealFFTChannelAttentionV2(channel=channel, reduction=reduction, image_size=image_size)
 
     def forward(self, x):
         x, ca_tensor = self.fft_ca(x)

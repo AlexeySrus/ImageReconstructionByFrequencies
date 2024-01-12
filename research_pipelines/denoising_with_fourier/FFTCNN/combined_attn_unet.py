@@ -203,16 +203,18 @@ class FeaturesDownsample(nn.Module):
 class FeaturesConvTransposeUpsample(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, window_size: int, image_size: int):
         super().__init__()
-        self.up = torch.nn.ConvTranspose2d(in_ch, in_ch // 2, kernel_size=3, stride=2, padding=1, output_padding=1)
+        self.up = torch.nn.ConvTranspose2d(in_ch, in_ch // 2, kernel_size=2, stride=2)
         self.norm = nn.BatchNorm2d(in_ch // 2)
         self.act = nn.LeakyReLU()
-        self.features = FeaturesProcessing(in_ch // 2, out_ch, window_size=window_size, image_size=image_size)
+        self.features = FeaturesProcessing(in_ch // 2, out_ch, window_size=window_size, image_size=image_size, use_attention=False)
+        self.features_with_attn = FeaturesProcessing(out_ch, out_ch, window_size=window_size, image_size=image_size, use_attention=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y = self.up(x)
         y = self.norm(y)
         y = self.act(y)
-        y, sa = self.features(y)
+        y, _ = self.features(y)
+        y, sa = self.features_with_attn(y)
         return y, sa
 
 
@@ -220,11 +222,14 @@ class FeaturesUpsample(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, window_size: int, image_size: int):
         super().__init__()
         self.up = torch.nn.UpsamplingBilinear2d(scale_factor=2)
-        self.features = FeaturesProcessing(in_ch, out_ch, window_size=window_size, image_size=image_size)
+        self.features = FeaturesProcessing(in_ch, out_ch, window_size=window_size, image_size=image_size, use_attention=False)
+        self.features_with_attn = FeaturesProcessing(out_ch, out_ch, window_size=window_size, image_size=image_size, use_attention=True)
+
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y = self.up(x)
-        y, sa = self.features(y)
+        y, _ = self.features(y)
+        y, sa = self.features_with_attn(y)
         return y, sa
 
 
@@ -243,10 +248,12 @@ class FFTAttentionUNetModule(nn.Module):
 
         self.deep_conv_block = FeaturesProcessing(mid_ch * 4, mid_ch * 4, window_size=8, image_size=image_size // 16)
 
-        self.upsample4 = FeaturesUpsample(mid_ch * 4, mid_ch * 3, window_size=16, image_size=image_size // 8)
-        self.upsample3 = FeaturesUpsample(mid_ch * 3, mid_ch * 2, window_size=32, image_size=image_size // 4)
-        self.upsample2 = FeaturesUpsample(mid_ch * 2, mid_ch, window_size=64 , image_size=image_size // 2)
-        self.upsample1 = FeaturesUpsample(mid_ch, mid_ch, window_size=64 , image_size=image_size)
+        upsample_module = FeaturesUpsample
+
+        self.upsample4 = upsample_module(mid_ch * 4, mid_ch * 3, window_size=16, image_size=image_size // 8)
+        self.upsample3 = upsample_module(mid_ch * 3, mid_ch * 2, window_size=32, image_size=image_size // 4)
+        self.upsample2 = upsample_module(mid_ch * 2, mid_ch, window_size=64 , image_size=image_size // 2)
+        self.upsample1 = upsample_module(mid_ch, mid_ch, window_size=64 , image_size=image_size)
         
         self.upsample_features_block4 = FeaturesProcessing(mid_ch * 3 + mid_ch * 3, mid_ch * 3, window_size=8, image_size=image_size // 8)
         self.upsample_features_block3 = FeaturesProcessing(mid_ch * 2 + mid_ch * 2, mid_ch * 2, window_size=16, image_size=image_size // 4)

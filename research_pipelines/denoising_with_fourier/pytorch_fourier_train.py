@@ -28,7 +28,6 @@ from utils.hist_loss import HistLoss
 from utils.adasmooth import AdaSmooth
 from utils.adversarial_loss import Adversarial
 from utils.freq_loss import HightFrequencyFFTLoss, HFENLoss
-from utils.focal_frequency_loss import FocalFrequencyLoss
 from utils.tv_loss import CharbonnierLoss, TVLoss
 from utils.tensor_utils import MixUp_AUG
 
@@ -214,8 +213,8 @@ class CustomTrainingPipeline(object):
         self.model.apply(init_weights)
         self.model = self.model.to(device)
         # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=1E-2)
-        self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=0.001, betas=(0.9, 0.999),eps=1e-8, weight_decay=1E-2)
-        # self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001)
+        self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=0.001, betas=(0.9, 0.999), eps=1e-8, weight_decay=1E-2)
+        # self.optimizer = torch.optim.Adam(params=self.model.parameters(), lr=0.00001, betas=(0.9, 0.999), eps=1e-8)
         # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001, weight_decay=1E-5)
 
         if load_path is not None:
@@ -231,7 +230,7 @@ class CustomTrainingPipeline(object):
                 print(
                     '#' * 5 + ' Optimizer has been loaded by path: {} '.format(load_path) + '#' * 5
                 )
-                self.optimizer.param_groups[0]['lr'] = 0.0001
+                # self.optimizer.param_groups[0]['lr'] = 0.0001
                 print('Optimizer LR: {:.5f}'.format(self.get_lr()))
 
         # self.images_criterion = CharbonnierLoss().to(self.device)
@@ -240,12 +239,12 @@ class CustomTrainingPipeline(object):
         self.perceptual_loss = None
         # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
         self.final_hist_loss = None
-        # self.adv_loss = Adversarial(image_size=self.image_shape[0], gan_type='WGAN_GP').to(device)
-        self.hf_loss = FocalFrequencyLoss().to(device)
-        # self.hf_loss = HFENLoss(
-        #     loss_f=torch.nn.functional.l1_loss,
-        #     norm=True
-        # )
+        # self.adv_loss = Adversarial(image_size=self.image_shape[0], gan_type='GAN', spectral_norm=True).to(device)
+        # self.hf_loss = HightFrequencyFFTLoss(self.image_shape).to(device)
+        self.hf_loss = HFENLoss(
+            loss_f=torch.nn.functional.l1_loss,
+            norm=True
+        )
 
         # self.ssim_loss = None
         self.accuracy_measure = TorchPSNR().to(device)
@@ -313,8 +312,8 @@ class CustomTrainingPipeline(object):
                 # )
 
                 f_loss = self.hf_loss(
-                    pred_image, 
-                    clear_image
+                    self._convert_ycrcb_to_rgb(pred_image), 
+                    self._convert_ycrcb_to_rgb(clear_image)
                 )
 
                 # h_loss = self.final_hist_loss(
@@ -330,7 +329,7 @@ class CustomTrainingPipeline(object):
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
 
-                if (self.gradient_accumulation_steps == 1) or (
+                if (self.gradient_accumulation_steps <= 1) or (
                         (idx + 1) % self.gradient_accumulation_steps == 0) or (
                         idx + 1 == batches_count):
                     self.optimizer.step()
