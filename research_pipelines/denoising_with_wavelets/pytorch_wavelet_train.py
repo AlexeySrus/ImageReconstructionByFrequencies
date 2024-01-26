@@ -37,7 +37,7 @@ class SSIMLoss(SSIM):
 
 
 class MIXLoss(MS_SSIM):
-    base_loss = torch.nn.functional.l1_loss
+    base_loss = torch.nn.L1Loss()
     def forward(self, x, y):
         return (1. - super().forward(x, y)) * (1-0.84) + self.base_loss(x, y) * 0.84
     
