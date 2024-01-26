@@ -116,7 +116,7 @@ class CustomTrainingPipeline(object):
         self.visdom_port = visdom_port  # Set None to disable
         self.batch_size = batch_size
         self.epochs = epochs
-        self.resume_epoch = 0
+        self.resume_epoch = 1
         self.stop_criteria = stop_criteria
         self.best_test_score = 0
         self.gradient_accumulation_steps = gradient_accumulation_steps
@@ -569,8 +569,8 @@ class CustomTrainingPipeline(object):
         for epoch_num in range(self.resume_epoch, self.epochs + 1):
             epoch_train_loss = self._train_step(epoch_num)
             val_loss, val_accs = self._validation_step()
-            self._plot_values(epoch_num + self.resume_epoch, epoch_train_loss, val_loss, val_accs)
-            self._save_best_checkpoint(epoch_num + self.resume_epoch, val_accs[0])
+            self._plot_values(epoch_num, epoch_train_loss, val_loss, val_accs)
+            self._save_best_checkpoint(epoch_num, val_accs[0])
 
             if self.scheduler is not None and self._check_stop_criteria():
                 break
