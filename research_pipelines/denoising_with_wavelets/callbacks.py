@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List, Dict, Union
 import os
 import cv2
 import torch
@@ -8,6 +8,7 @@ from functools import reduce
 from visdom import Visdom
 from torchvision.transforms import ToPILImage, ToTensor
 import torch.nn.functional as F
+import pandas as pd
 
 from utils.image_utils import merge_by_wavelets
 from utils.tensor_utils import preprocess_image
@@ -478,3 +479,81 @@ class VisAttentionMaps(AbstractCallback):
 
     def add_window(self, label):
         self.windows[label] = None
+
+
+class SaveTableTrainInfo(AbstractCallback):
+    supported_tables = ['.CSV']
+    table_header = 'epoch,train_loss,val_loss,val_psnr,val_ssim'
+
+    def __init__(self, table_path: str, load_existing_table: bool = True) -> None:
+        """Class constructor
+
+        Args:
+            table_path (str): path to file with result table (supports only csv format)
+        """
+        tab_ext = os.path.splitext(table_path)[1]
+
+        assert tab_ext.upper() in self.supported_tables, 'Extension \'{}\' is not supported, please use: {}'.format(
+            tab_ext, self.supported_tables
+        )
+
+        self.table_path = table_path
+        table_exists = load_existing_table and os.path.exists(table_path)
+
+        if not table_exists:
+            self._create_table_file()
+
+    def _get_empty_state_dict(self) -> Dict[str, List[Union[int, float]]]:
+        return {
+            column_name: []
+            for column_name in self.table_header.split(',')
+        }
+    
+    def _convert_to_epoch_state(self, 
+                            epoch_num: int, 
+                            train_loss: float,
+                            val_loss: float,
+                            val_psnr: float,
+                            val_ssim: float) -> Dict[str, List[Union[int, float]]]:
+        epoch_state = self._get_empty_state_dict()
+        for column_name, value in zip(
+                self.table_header.split(','), 
+                (epoch_num, train_loss, val_loss, val_psnr, val_ssim)):
+            epoch_state[column_name].append(value)
+
+        return epoch_state
+
+    def _create_table_file(self):
+        with open(self.table_path, 'w') as f:
+            f.write(self.table_header + '\n')
+        self.table_exists = True
+
+    def _update_table_file(self, epoch_state: Dict[str, List[Union[int, float]]]):
+        assert os.path.exists(self.table_path), 'Table file {} is not exists'.format(self.table_path)
+
+        csv_dataframe = pd.DataFrame(data=epoch_state)
+        csv_dataframe.to_csv(self.table_path, mode='a', header=False, index=False)
+
+    def per_batch(self, args):
+        raise RuntimeError("Don\'t implement batch callback method")
+
+    def per_epoch(self, args):
+        """Add information to table
+
+        Args:
+            args (_type_): dictionary with information about training epoch step, contains:
+                (epoch, train_loss, val_loss, val_psnr, val_ssim)
+        """
+        self._update_table_file(
+            self._convert_to_epoch_state(
+                epoch_num=args['epoch'],
+                train_loss=args['train_loss'],
+                val_loss=args['val_loss'],
+                val_psnr=args['val_psnr'],
+                val_ssim=args['val_ssim']
+            )
+        )
+
+    def early_stopping(self, args):
+        raise RuntimeError("Don\'t implement early stopping callback method")
+    

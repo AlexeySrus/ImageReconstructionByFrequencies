@@ -19,7 +19,7 @@ from pytorch_optimizer import AdaSmooth, Ranger21
 from utils.haar_utils import HaarForward, HaarInverse
 
 from dataloader import PairedDenoiseDataset, SyntheticNoiseDataset
-from callbacks import VisImage, VisAttentionMaps, VisPlot
+from callbacks import VisImage, VisAttentionMaps, VisPlot, SaveTableTrainInfo
 from WTSNet.wts_timm import UnetTimm, WTSNetTimm
 from utils.window_inference import denoise_inference
 from utils.hist_loss import HistLoss
@@ -77,7 +77,6 @@ class CustomTrainingPipeline(object):
                  visdom_port: int = 9000,
                  batch_size: int = 32,
                  epochs: int = 200,
-                 resume_epoch: int = 1,
                  stop_criteria: float = 1E-7,
                  device: str = 'cuda',
                  image_size: int = 512,
@@ -98,7 +97,6 @@ class CustomTrainingPipeline(object):
             visdom_port (int, optional): Port of visualization. Defaults to 9000.
             batch_size (int, optional): Training batch size. Defaults to 32.
             epochs (int, optional): Count of epoch. Defaults to 200.
-            resume_epoch (int, optional): Epoch number to resume training. Defaults to 1.
             stop_criteria (float, optional): Criteria to stop of training process. Defaults to 1E-7.
             device (str, optional): Target device to train. Defaults to 'cuda'.
             image_size (int, optional): Input image size. Defaults to 512.
@@ -112,12 +110,13 @@ class CustomTrainingPipeline(object):
         self.experiment_folder = experiment_folder
         self.checkpoints_dir = os.path.join(experiment_folder, 'checkpoints/')
         self.output_val_images_dir = os.path.join(experiment_folder, 'val_outputs/')
+        self.metrics_logging_file = os.path.join(experiment_folder, 'train_logs.csv')
 
         self.load_path = load_path
         self.visdom_port = visdom_port  # Set None to disable
         self.batch_size = batch_size
         self.epochs = epochs
-        self.resume_epoch = resume_epoch
+        self.resume_epoch = 0
         self.stop_criteria = stop_criteria
         self.best_test_score = 0
         self.gradient_accumulation_steps = gradient_accumulation_steps
@@ -164,6 +163,11 @@ class CustomTrainingPipeline(object):
             shuffle=True,
             drop_last=True,
             num_workers=train_workers
+        )
+
+        self.train_metrics_logger = SaveTableTrainInfo(
+            table_path=self.metrics_logging_file,
+            load_existing_table=load_path is not None
         )
 
         self.images_visualizer = None if visdom_port is None else VisImage(
@@ -220,13 +224,9 @@ class CustomTrainingPipeline(object):
         if load_path is not None:
             load_data = torch.load(load_path, map_location=self.device)
 
+            self.resume_epoch = load_data['epoch']
             self.model.load_state_dict(load_data['model'])
-            # self.model.to('cpu')
-            # setattr(self.model, 'last_conv', torch.nn.Conv2d(3, 3, kernel_size=5, stride=1, padding=2, padding_mode='reflect', bias=False))
-            # w = torch.zeros(3, 3, 5, 5)
-            # w[:, :, 2, 2] = 1
-            # self.model.last_conv.weight = torch.nn.Parameter(w)
-            # self.model.to(device)
+
             print(
                 '#' * 5 + ' Model has been loaded by path: {} '.format(load_path) +  '#' * 5
             )
@@ -241,7 +241,6 @@ class CustomTrainingPipeline(object):
 
         # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
         
-
         # self.images_criterion = CharbonnierLoss()
         self.images_criterion = MIXLoss(data_range=1.0)
         # self.images_criterion = torch.nn.SmoothL1Loss()
@@ -465,8 +464,6 @@ class CustomTrainingPipeline(object):
                         batch_size=self.batch_size, crop_size=self.image_shape[0] // 32
                     ).unsqueeze(0)
 
-                    # loss = self.images_criterion_ch1(restored_image[:, :1], clear_image[:1]) * 0.6 + \
-                    #     self.images_criterion_ch2(restored_image[:, 1:], clear_image[1:]) * 0.4
                     loss = self.images_criterion(restored_image, clear_image)
                     avg_loss_rate += loss.item()
 
@@ -519,6 +516,17 @@ class CustomTrainingPipeline(object):
                 }
             )
 
+        if self.train_metrics_logger is not None:
+            self.train_metrics_logger.per_epoch(
+                {
+                    'epoch': epoch,
+                    'train_loss': avg_train_loss,
+                    'val_loss': avg_val_loss,
+                    'val_psnr': avg_val_psnr,
+                    'val_ssim': avg_val_ssim
+                }
+            )
+
     def _save_best_traced_model(self, save_path: str):
         traced_model = torch.jit.trace(self.model, torch.rand(1, 3, *self.image_shape))
         torch.jit.save(traced_model, save_path)
@@ -561,8 +569,8 @@ class CustomTrainingPipeline(object):
         for epoch_num in range(self.resume_epoch, self.epochs + 1):
             epoch_train_loss = self._train_step(epoch_num)
             val_loss, val_accs = self._validation_step()
-            self._plot_values(epoch_num, epoch_train_loss, val_loss, val_accs)
-            self._save_best_checkpoint(epoch_num, val_accs[0])
+            self._plot_values(epoch_num + self.resume_epoch, epoch_train_loss, val_loss, val_accs)
+            self._save_best_checkpoint(epoch_num + self.resume_epoch, val_accs[0])
 
             if self.scheduler is not None and self._check_stop_criteria():
                 break
@@ -592,9 +600,6 @@ def parse_args() -> Namespace:
     parser.add_argument(
         '--image_size', type=int, required=False, default=512
     ),
-    parser.add_argument(
-        '--resume_epoch', type=int, required=False, default=1
-    )
     parser.add_argument(
         '--load_path', type=str, required=False,
         help='Path to model weights to load.'
@@ -655,7 +660,6 @@ if __name__ == '__main__':
         load_path=args.load_path,
         visdom_port=args.visdom_port,
         epochs=args.epochs,
-        resume_epoch=args.resume_epoch,
         batch_size=args.batch_size,
         image_size=args.image_size,
         train_workers=args.njobs,
