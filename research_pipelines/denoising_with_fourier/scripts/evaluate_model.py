@@ -11,6 +11,7 @@ import os
 CURRENT_PATH = os.path.dirname(__file__)
 
 from FFTCNN.combined_attn_unet import FFTAttentionUNet as FFTCNN
+# from FFTCNN.unet import AttentionUNet as FFTCNN
 from utils.window_inference import eval_denoise_inference
 
 

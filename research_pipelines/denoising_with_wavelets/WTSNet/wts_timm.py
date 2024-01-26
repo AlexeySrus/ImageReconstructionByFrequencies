@@ -7,6 +7,7 @@ from timm import create_model
 from WTSNet.attention import CBAM, CoordinateAttention
 from WTSNet.wtsnet import UpscaleByWaveletes, DownscaleByWaveletes, conv1x1, conv3x3, FeaturesProcessingWithLastConv
 from utils.haar_utils import HaarForward, HaarInverse
+from utils.unet_parts import Up as UNetUp
 
 
 padding_mode: str = 'reflect'
@@ -734,23 +735,25 @@ class WTSNetSMP(nn.Module):
 
 
 class TimmEncoderWithAttn(nn.Module):
-    def __init__(self, model_name: str = 'resnet10t'):
+    def __init__(self, model_name: str = 'resnet10t', return_wavelets: bool = True):
         super().__init__()
 
         self.encoder_model = create_model(model_name, features_only=True)
-        enc_channels = self.encoder_model.feature_info.channels()
+        self.enc_channels = self.encoder_model.feature_info.channels()
+        self.return_wavelts = return_wavelets
 
-        self.hf_conv1 = conv3x3(enc_channels[0], 3*3)
-        self.hf_conv2 = conv3x3(enc_channels[1], 3*3)
-        self.hf_conv3 = conv1x1(enc_channels[2], 3*3)
-        self.hf_conv4 = conv1x1(enc_channels[3], 3*3)
-        self.hf_conv5 = conv1x1(enc_channels[4], 3*3)
+        if return_wavelets:
+            self.hf_conv1 = conv3x3(self.enc_channels[0], 3*3)
+            self.hf_conv2 = conv3x3(self.enc_channels[1], 3*3)
+            self.hf_conv3 = conv1x1(self.enc_channels[2], 3*3)
+            self.hf_conv4 = conv1x1(self.enc_channels[3], 3*3)
+            self.hf_conv5 = conv1x1(self.enc_channels[4], 3*3)
 
-        self.attn1 = CBAM(enc_channels[0], kernel_size=5)
-        self.attn2 = CBAM(enc_channels[1], kernel_size=5)
-        self.attn3 = CBAM(enc_channels[2], kernel_size=5)
-        self.attn4 = CBAM(enc_channels[3], kernel_size=5)
-        self.attn5 = CBAM(enc_channels[4], kernel_size=5)
+        self.attn1 = CBAM(self.enc_channels[0], kernel_size=5)
+        self.attn2 = CBAM(self.enc_channels[1], kernel_size=5)
+        self.attn3 = CBAM(self.enc_channels[2], kernel_size=5)
+        self.attn4 = CBAM(self.enc_channels[3], kernel_size=5)
+        self.attn5 = CBAM(self.enc_channels[4], kernel_size=5)
 
     def forward(self, x: torch.Tensor) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         x = (x - 0.5) * 2
@@ -762,11 +765,14 @@ class TimmEncoderWithAttn(nn.Module):
         of4, _, sa4 = self.attn4(of4)
         of5, _, sa5 = self.attn5(of5)
 
-        hf1 = self.hf_conv1(of1)
-        hf2 = self.hf_conv2(of2)
-        hf3 = self.hf_conv3(of3)
-        hf4 = self.hf_conv4(of4)
-        hf5 = self.hf_conv5(of5)
+        if self.return_wavelts:
+            hf1 = self.hf_conv1(of1)
+            hf2 = self.hf_conv2(of2)
+            hf3 = self.hf_conv3(of3)
+            hf4 = self.hf_conv4(of4)
+            hf5 = self.hf_conv5(of5)
+        else:
+            hf1, hf2, hf3, hf4, hf5 = of1, of2, of3, of4, of5
 
         return hf1, hf2, hf3, hf4, hf5, [[sa1], [sa2], [sa3], [sa4], [sa5]]
 
@@ -776,13 +782,13 @@ class TimmEncoder(nn.Module):
         super().__init__()
 
         self.encoder_model = create_model(model_name, features_only=True)
-        enc_channels = self.encoder_model.feature_info.channels()
+        self.enc_channels = self.encoder_model.feature_info.channels()
 
-        self.hf_conv1 = conv3x3(enc_channels[0], 3*3)
-        self.hf_conv2 = conv3x3(enc_channels[1], 3*3)
-        self.hf_conv3 = conv1x1(enc_channels[2], 3*3)
-        self.hf_conv4 = conv1x1(enc_channels[3], 3*3)
-        self.hf_conv5 = conv1x1(enc_channels[4], 3*3)
+        self.hf_conv1 = conv3x3(self.enc_channels[0], 3*3)
+        self.hf_conv2 = conv3x3(self.enc_channels[1], 3*3)
+        self.hf_conv3 = conv1x1(self.enc_channels[2], 3*3)
+        self.hf_conv4 = conv1x1(self.enc_channels[3], 3*3)
+        self.hf_conv5 = conv1x1(self.enc_channels[4], 3*3)
 
     def o2a(self, inp: torch.Tensor) -> torch.Tensor:
         return torch.clamp(inp.mean(dim=1).unsqueeze(1) + 0.5, 0, 1)
@@ -860,6 +866,50 @@ class WTSNetTimm(nn.Module):
         return pred_image, [wavelets1, wavelets2, wavelets3, wavelets4, wavelets5], [sa1, sa2, sa3, sa4, sa5]
 
 
+class UnetTimm(nn.Module):
+    def __init__(self, model_name: str = 'resnet10t', image_channels: int = 3, use_clipping: bool = False):
+        super().__init__()
+
+        if model_name == 'mit':
+            raise RuntimeWarning('For UNet version of model MIT model is not supported')
+        else:
+            print('Use timm model')
+            self.encoder_model = TimmEncoderWithAttn(model_name=model_name, return_wavelets=False)
+
+        self.up1 = UNetUp(self.encoder_model.enc_channels[4], self.encoder_model.enc_channels[3], 128)
+        self.up2 = UNetUp(128, self.encoder_model.enc_channels[2], 64)
+        self.up3 = UNetUp(64, self.encoder_model.enc_channels[1], 32)
+        self.up4 = UNetUp(32, self.encoder_model.enc_channels[0], 16)
+        self.up5 = UNetUp(16, image_channels, image_channels)
+
+        # To visualize
+        self.dwt = HaarForward()
+
+
+    def forward(self, x: torch.Tensor) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
+        pred_ll5 = nn.functional.interpolate(x, size=(x.size(2) // 32, x.size(3) // 32), mode='area')
+        hf1, hf2, hf3, hf4, hf5, sa_list = self.encoder_model(x)
+
+        feats = self.up1(hf5, hf4)
+        feats = self.up2(feats, hf3)
+        feats = self.up3(feats, hf2)
+        feats = self.up4(feats, hf1)
+        pred_image = self.up5(feats, x)
+
+        sa1, sa2, sa3, sa4, sa5 = sa_list
+        sa1 = nn.functional.interpolate(sa1[0], (x.size(2), x.size(3)), mode='area')
+        sa2 = nn.functional.interpolate(sa2[0], (x.size(2), x.size(3)), mode='area')
+        sa3 = nn.functional.interpolate(sa3[0], (x.size(2), x.size(3)), mode='area')
+        sa4 = nn.functional.interpolate(sa4[0], (x.size(2), x.size(3)), mode='area')
+        sa5 = nn.functional.interpolate(sa5[0], (x.size(2), x.size(3)), mode='area')
+
+        with torch.no_grad():
+            lvl1_wavelets = self.dwt(pred_image)
+
+        return pred_image, [lvl1_wavelets], [sa1, sa2, sa3, sa4, sa5]
+
+
+
 if __name__ == '__main__':
     import cv2
     import numpy as np
@@ -868,7 +918,7 @@ if __name__ == '__main__':
 
     device = 'cpu'
 
-    model = WTSNetTimm(model_name='efficientnet_b0').to(device)
+    model = UnetTimm(model_name='efficientnet_b0').to(device)
     model.eval()
 
     wsize = 256

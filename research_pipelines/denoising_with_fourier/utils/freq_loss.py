@@ -38,18 +38,32 @@ class HightFrequencyImageComponent(nn.Module):
 
 
 class HightFrequencyFFTLoss(nn.Module):
-    def __init__(self, shape: tuple, base_loss: nn.Module = torch.nn.functional.l1_loss):
+    def __init__(self, shape: tuple, reduction: str = 'mean'):
         super().__init__()
-        self.hf_exrtractor = HightFrequencyImageComponent(shape)
-        self.base_loss_fn = base_loss
+        assert reduction in ['mean', 'sum'], 'Not supported reduction method: {}'.format(reduction)
+        self.reduction = reduction
+
+        hight_pass_kernel = 1.0 - generate_batt(shape, 500, 1).astype(np.float32)
+
+        hight_pass_kernel = torch.from_numpy(hight_pass_kernel).unsqueeze(0).unsqueeze(0)
+        hight_pass_kernel = torch.fft.fftshift(hight_pass_kernel)
+        hight_pass_kernel = hight_pass_kernel[:, :, :, :shape[1] // 2 + 1]
+        
+        self.kernel = nn.Parameter(hight_pass_kernel, requires_grad=False)
 
     def forward(self, x_pred, x_truth):
-        z_pred = torch.fft.fft2(x_pred, norm='ortho')
-        z_truth = torch.fft.fft2(x_truth, norm='ortho')
+        z_pred = torch.fft.rfft2(x_pred, norm='ortho')
+        z_truth = torch.fft.rfft2(x_truth, norm='ortho')
 
-        hf_z_pred = self.hf_exrtractor(z_pred)
-        hf_z_truth = self.hf_exrtractor(z_truth)
-        return self.base_loss_fn(hf_z_pred, hf_z_truth)
+        err = (torch.abs(z_pred - z_truth) * self.kernel).sum((1, 2, 3))
+        err = err / (self.kernel.sum((1, 2, 3)) + 1E-6)
+
+        if self.reduction == 'mean':
+            err = err.mean()
+        else:
+            err = err.sum()
+
+        return err
 
 
 class HFENLoss(nn.Module): # Edge loss with pre_smooth

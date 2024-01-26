@@ -325,8 +325,8 @@ class VisImage(VisImageForWavelets):
     def __init__(self, title, server='http://localhost', port=8080,
                  vis_step=1, scale=10):
         super().__init__(title, server, port, vis_step, scale)
-        # self.change_color_function = self._ycrcb_to_rgb
-        self.change_color_function = lambda x: x
+        self.change_color_function = self._ycrcb_to_rgb
+        # self.change_color_function = lambda x: x
 
     def per_batch(self, args, label=1, i: Optional[int] = None) -> Optional[int]:
         if self.n % self.step == 0:

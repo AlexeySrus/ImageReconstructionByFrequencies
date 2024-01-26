@@ -8,6 +8,9 @@ from torch.autograd import Variable
 import torch.optim.lr_scheduler as lrs
 
 
+n_power_iterations: int = 1
+
+
 def make_optimizer(optimizer, my_model):
     trainable = filter(lambda x: x.requires_grad, my_model.parameters())
 
@@ -148,7 +151,8 @@ class BasicBlock(nn.Sequential):
                  stride=1,
                  bias=False,
                  bn=False,
-                 act=nn.ReLU(True)):
+                 act=nn.ReLU(True),
+                 spectral_norm: bool = False):
 
         m = [
             nn.Conv2d(in_channels,
@@ -158,6 +162,9 @@ class BasicBlock(nn.Sequential):
                       stride=stride,
                       bias=bias)
         ]
+
+        if spectral_norm:
+            m[0] = nn.utils.spectral_norm(m[0], n_power_iterations=n_power_iterations)
 
         if bn:
             m.append(nn.BatchNorm2d(out_channels))
@@ -178,13 +185,17 @@ class BBlock(nn.Module):
                  bias=True,
                  bn=False,
                  act=nn.ReLU(True),
-                 res_scale=1):
+                 res_scale=1,
+                 spectral_norm: bool = False):
 
         super(BBlock, self).__init__()
 
         m = []
 
         m.append(conv(in_channels, out_channels, kernel_size, bias=bias))
+
+        if spectral_norm:
+            m[0] = nn.utils.spectral_norm(m[0], n_power_iterations=n_power_iterations)
 
         if bn:
             m.append(nn.BatchNorm2d(out_channels))
@@ -296,7 +307,7 @@ class Upsampler(nn.Sequential):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, n_colors: int = 3, gan_type='GAN', patch_size=384):
+    def __init__(self, n_colors: int = 3, gan_type='GAN', patch_size=384, spectral_norm: bool = False):
         super(Discriminator, self).__init__()
 
         in_channels = 3
@@ -307,7 +318,7 @@ class Discriminator(nn.Module):
         act = nn.LeakyReLU(negative_slope=0.2, inplace=True)
 
         m_features = [
-            BasicBlock(n_colors, out_channels, 3, bn=bn, act=act)
+            BasicBlock(n_colors, out_channels, 3, bn=bn, act=act, spectral_norm=spectral_norm)
         ]
         for i in range(depth):
             in_channels = out_channels
@@ -317,17 +328,23 @@ class Discriminator(nn.Module):
             else:
                 stride = 2
             m_features.append(BasicBlock(
-                in_channels, out_channels, 3, stride=stride, bn=bn, act=act
+                in_channels, out_channels, 3, stride=stride, bn=bn, act=act, spectral_norm=spectral_norm
             ))
 
         self.features = nn.Sequential(*m_features)
 
         patch_size = patch_size // (2**((depth + 1) // 2))
+
         m_classifier = [
             nn.Linear(out_channels * patch_size**2, 1024),
             act,
             nn.Linear(1024, 1)
         ]
+
+        if spectral_norm:
+            m_classifier[0] = nn.utils.spectral_norm(m_classifier[0], n_power_iterations=n_power_iterations)
+            m_classifier[2] = nn.utils.spectral_norm(m_classifier[2], n_power_iterations=n_power_iterations)
+
         self.classifier = nn.Sequential(*m_classifier)
 
     def forward(self, x):
@@ -338,11 +355,11 @@ class Discriminator(nn.Module):
 
 
 class Adversarial(nn.Module):
-    def __init__(self, gan_k: int = 1, gan_type: str = 'GAN', image_size: int = 512):
+    def __init__(self, gan_k: int = 1, gan_type: str = 'GAN', image_size: int = 512, spectral_norm: bool = False):
         super(Adversarial, self).__init__()
         self.gan_type = gan_type
         self.gan_k = gan_k
-        self.discriminator = Discriminator(gan_type=gan_type, patch_size=image_size)
+        self.discriminator = Discriminator(gan_type=gan_type, patch_size=image_size, spectral_norm=spectral_norm)
         if gan_type != 'WGAN_GP':
             self.optimizer = make_optimizer('ADAM', self.discriminator)
         else:

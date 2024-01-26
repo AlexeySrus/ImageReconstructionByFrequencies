@@ -81,12 +81,12 @@ class FeaturesProcessing(nn.Module):
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
         self.conv1 = conv3x3(in_ch, in_ch * 2)
-        self.act1 = nn.ReLU()
+        self.act1 = nn.LeakyReLU()
         self.conv2 = conv3x3(in_ch * 2, out_ch)
 
         self.down_bneck = conv1x1(in_ch, out_ch)
 
-        self.act_final = nn.ReLU()
+        self.act_final = nn.LeakyReLU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         hx = x
@@ -136,6 +136,9 @@ class FeaturesUpsample(nn.Module):
         y = self.act(y)
         y = self.features(y)
         return y
+
+
+
 
 
 class MiniUNet(nn.Module):
@@ -340,9 +343,9 @@ class WTSNet(nn.Module):
 
     def forward(self, x: torch.Tensor) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         ll1, hf1 = self.dwt1(x)
-        ll2, hf2 = self.dwt2(ll1 / 2)
-        ll3, hf3 = self.dwt3(ll2 / 2)
-        ll4, hf4 = self.dwt4(ll3 / 2)
+        ll2, hf2 = self.dwt2(ll1)
+        ll3, hf3 = self.dwt3(ll2)
+        ll4, hf4 = self.dwt4(ll3)
 
         hf1, hf2, hf3, hf4, pred_ll4, sa_list = self.wtsmodel(
             [ll1, ll2, ll3, ll4],

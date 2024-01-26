@@ -96,6 +96,8 @@ if __name__ == '__main__':
         pred_image = torch.clamp(pred_image, 0, 1)
         pred_image = tensor_to_image(pred_image)
 
+        # pred_image = cv2.cvtColor(pred_image, cv2.COLOR_RGB2YCrCb)
+
         ssim_values.append(ssim(pred_image[..., 0], gt_img[..., 0]))
         psnr_values.append(cv2.PSNR(pred_image[..., 0], gt_img[..., 0]))
 
