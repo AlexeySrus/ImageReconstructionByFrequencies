@@ -4,6 +4,7 @@ from argparse import ArgumentParser, Namespace
 
 import cv2
 import numpy as np
+import kornia
 import tqdm
 import torch
 from torch.utils import data
@@ -289,7 +290,7 @@ class CustomTrainingPipeline(object):
             #     max_lr=0.01
             # )
 
-    def get_lr(self):
+    def get_lr(self) -> float:
         for param_group in self.optimizer.param_groups:
             return param_group['lr']
     
@@ -470,13 +471,13 @@ class CustomTrainingPipeline(object):
                     restored_image = torch.clamp(restored_image, 0, 1)
 
                     val_psnr = self.accuracy_measure(
-                        restored_image,
-                        clear_image
+                        self._convert_ycrcb_to_rgb(restored_image),
+                        self._convert_ycrcb_to_rgb(clear_image)
                     )
 
                     val_ssim = self.ssim_measure(
-                        restored_image,
-                        clear_image
+                        self._convert_ycrcb_to_rgb(restored_image),
+                        self._convert_ycrcb_to_rgb(clear_image)
                     )
 
                     acc_rate = val_psnr.item()
@@ -501,6 +502,9 @@ class CustomTrainingPipeline(object):
             self.scheduler.step()
 
         return avg_loss_rate, (avg_acc_rate, avg_ssim_rate)
+    
+    def _convert_ycrcb_to_rgb(self, _tensor: torch.Tensor) -> torch.Tensor:
+        return kornia.color.ycbcr.ycbcr_to_rgb(_tensor)
 
     def _plot_values(self, epoch, avg_train_loss, avg_val_loss, avg_val_acc):
         avg_val_psnr, avg_val_ssim = avg_val_acc
@@ -523,7 +527,8 @@ class CustomTrainingPipeline(object):
                     'train_loss': avg_train_loss,
                     'val_loss': avg_val_loss,
                     'val_psnr': avg_val_psnr,
-                    'val_ssim': avg_val_ssim
+                    'val_ssim': avg_val_ssim,
+                    'lr': self.get_lr()
                 }
             )
 
