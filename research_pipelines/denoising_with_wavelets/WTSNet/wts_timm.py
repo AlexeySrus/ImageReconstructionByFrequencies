@@ -867,7 +867,7 @@ class WTSNetTimm(nn.Module):
 
 
 class UnetTimm(nn.Module):
-    def __init__(self, model_name: str = 'resnet10t', image_channels: int = 3, use_clipping: bool = False):
+    def __init__(self, model_name: str = 'resnet10t', image_channels: int = 3, use_clipping: bool = False, use_biliniar: bool = False):
         super().__init__()
 
         if model_name == 'mit':
@@ -876,11 +876,11 @@ class UnetTimm(nn.Module):
             print('Use timm model')
             self.encoder_model = TimmEncoderWithAttn(model_name=model_name, return_wavelets=False)
 
-        self.up1 = UNetUp(self.encoder_model.enc_channels[4], self.encoder_model.enc_channels[3], 128)
-        self.up2 = UNetUp(128, self.encoder_model.enc_channels[2], 64)
-        self.up3 = UNetUp(64, self.encoder_model.enc_channels[1], 32)
-        self.up4 = UNetUp(32, self.encoder_model.enc_channels[0], 16)
-        self.up5 = UNetUp(16, image_channels, image_channels)
+        self.up1 = UNetUp(self.encoder_model.enc_channels[4], self.encoder_model.enc_channels[3], 128, bilinear=use_biliniar)
+        self.up2 = UNetUp(128, self.encoder_model.enc_channels[2], 64, bilinear=use_biliniar)
+        self.up3 = UNetUp(64, self.encoder_model.enc_channels[1], 32, bilinear=use_biliniar)
+        self.up4 = UNetUp(32, self.encoder_model.enc_channels[0], 16, bilinear=use_biliniar)
+        self.up5 = UNetUp(16, image_channels, image_channels, bilinear=use_biliniar)
 
         # To visualize
         self.dwt = HaarForward()

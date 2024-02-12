@@ -37,7 +37,7 @@ class SSIMLoss(SSIM):
 
 
 class MIXLoss(MS_SSIM):
-    base_loss = torch.nn.L1Loss()
+    base_loss = CharbonnierLoss()
     def forward(self, x, y):
         return (1. - super().forward(x, y)) * (1-0.84) + self.base_loss(x, y) * 0.84
     
@@ -84,7 +84,8 @@ class CustomTrainingPipeline(object):
                  preload_data: bool = False,
                  lr_steps: int = 4,
                  no_load_optim: bool = False,
-                 gradient_accumulation_steps: int = 1):
+                 gradient_accumulation_steps: int = 1,
+                 annottaion_str: str = ''):
         """
         Train U-Net denoising model
 
@@ -105,12 +106,14 @@ class CustomTrainingPipeline(object):
             lr_steps (int, optional): Count of uniformed LR steps. Defaults to 4.
             no_load_optim (bool, optional): Disable load optimizer from checkpoint. Defaults to False.
             gradient_accumulation_steps (int, optional): Count of saved gradients. Defaults to 1.
+            annottaion_str (str, optional): Annotation string of experiment. Defaults to ''.
         """
         self.device = device
         self.experiment_folder = experiment_folder
         self.checkpoints_dir = os.path.join(experiment_folder, 'checkpoints/')
         self.output_val_images_dir = os.path.join(experiment_folder, 'val_outputs/')
         self.metrics_logging_file = os.path.join(experiment_folder, 'train_logs.csv')
+        self.annotation_file = os.path.join(experiment_folder, 'annotation.txt')
 
         self.load_path = load_path
         self.visdom_port = visdom_port  # Set None to disable
@@ -127,6 +130,9 @@ class CustomTrainingPipeline(object):
         os.makedirs(self.checkpoints_dir, exist_ok=True)
         os.makedirs(self.output_val_images_dir, exist_ok=True)
 
+        if len(annottaion_str) > 0:
+            with open(self.annotation_file, 'w') as f:
+                f.write(annottaion_str + '\n')
 
         self.train_base_dataset = PairedDenoiseDataset(
                 noisy_images_path=train_data_paths[0],
@@ -148,7 +154,6 @@ class CustomTrainingPipeline(object):
             self.train_base_dataset = torch.utils.data.ConcatDataset(
                 [self.train_base_dataset, self.train_synth_dataset]
             )
-            
 
         self.val_dataset = PairedDenoiseDataset(
             noisy_images_path=val_data_paths[0],
@@ -236,7 +241,7 @@ class CustomTrainingPipeline(object):
                 print(
                     '#' * 5 + ' Optimizer has been loaded by path: {} '.format(load_path) + '#' * 5
                 )
-                self.optimizer.param_groups[0]['lr'] = 0.001
+                self.optimizer.param_groups[0]['lr'] = 0.0001
                 print('Optimizer LR: {:.5f}'.format(self.get_lr()))
 
         # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
@@ -260,6 +265,7 @@ class CustomTrainingPipeline(object):
 
         # self.adv_loss = Adversarial(image_size=image_size, in_ch=3).to(device)
         self.wavelets_criterion = torch.nn.functional.l1_loss
+        # self.wavelets_criterion = SparceLoss()
         # self.wavelets_criterion = CharbonnierLoss()
         self.accuracy_measure = TorchPSNR().to(device)
         self.ssim_measure = SSIM(data_range=1.0, channel=3)
@@ -310,7 +316,7 @@ class CustomTrainingPipeline(object):
             if use_approximation:
                 _loss = self._add_loss(_loss, self.wavelets_criterion(pred_wavelets_pyramid[i], gt_wavelets)) * _loss_scale
             else:
-                _loss = self._add_loss(_loss, self.wavelets_criterion(pred_wavelets_pyramid[i][:, 3:], gt_wavelets)) * _loss_scale
+                _loss = self._add_loss(_loss, self.wavelets_criterion(pred_wavelets_pyramid[i][:, 3:], gt_wavelets[:, 3:])) * _loss_scale
 
             _loss_scale *= factor
 
@@ -382,14 +388,14 @@ class CustomTrainingPipeline(object):
                 if self.perceptual_loss is not None:
                     loss = loss / 2 + self.perceptual_loss(pred_image, clear_image) / 2
                     
-                # wloss = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image)
+                wloss = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image, use_approximation=False)
                 # wloss = self._compute_deep_iwt_loss(pred_wavelets_pyramid, pred_image, noisy_image)
                 
                 # hist_loss = self.final_hist_loss(pred_image, clear_image)
                 hist_loss = 0
                 # hf_loss = self.hight_freq_loss(pred_image, clear_image)
 
-                total_loss = loss
+                total_loss = wloss
 
                 if self.gradient_accumulation_steps > 1:
                     total_loss = total_loss / self.gradient_accumulation_steps
@@ -405,10 +411,11 @@ class CustomTrainingPipeline(object):
                     self.optimizer.zero_grad()
 
                 pbar.postfix = \
-                    'Epoch: {}/{}, px_loss: {:.7f}'.format(
+                    'Epoch: {}/{}, px_loss: {:.7f}, w_loss: {:.7f}'.format(
                         epoch,
                         self.epochs,
-                        loss.item()
+                        loss.item(),
+                        wloss.item()
                     )
                 avg_epoch_loss += loss.item() / len(self.train_dataloader)
 
@@ -636,6 +643,10 @@ def parse_args() -> Namespace:
         '--synthetic_data_paths', type=str, required=False,
         help='Path to folder with clear images to generate synthetic noisy dataset.'
     )
+    parser.add_argument(
+        '--annotation', type=str, required=False, default='',
+        help='Annotation of experiment.'
+    )
     return parser.parse_args()
 
 
@@ -666,7 +677,8 @@ if __name__ == '__main__':
         preload_data=args.preload_datasets,
         lr_steps=args.lr_milestones,
         no_load_optim=args.no_load_optim,
-        gradient_accumulation_steps=args.grad_accum_steps
+        gradient_accumulation_steps=args.grad_accum_steps,
+        annottaion_str=args.annotation
     ).fit()
 
     exit(0)

@@ -9,7 +9,7 @@ import os
 
 CURRENT_PATH = os.path.dirname(__file__)
 
-from WTSNet.wts_timm import WTSNetTimm
+from WTSNet.wts_timm import UnetTimm, WTSNetTimm
 from utils.window_inference import eval_denoise_inference, denoise_inference
 from utils.cas import contrast_adaptive_sharpening
 
@@ -36,6 +36,10 @@ def parse_args() -> Namespace:
         '-v', '--verbose', action='store_true',
         help='Enable printing metrics per each sample)'
     )
+    parser.add_argument(
+        '--use_unet', action='store_true',
+        help='Use classic U-Net network decoder architecture'
+    )
     return parser.parse_args()
     
 
@@ -51,7 +55,10 @@ if __name__ == '__main__':
     imgsz = 256
     device = 'cuda'
 
-    model = WTSNetTimm(model_name=args.name, use_clipping=True).to(device)
+    if args.use_unet:
+        model = UnetTimm(model_name=args.name).to(device)
+    else:
+        model = WTSNetTimm(model_name=args.name, use_clipping=True).to(device)
 
     load_path = args.model
     load_data = torch.load(load_path, map_location=device)
