@@ -230,15 +230,8 @@ class CustomTrainingPipeline(object):
         self.model = WTSNetTimm(model_name=model_name)
         # self.model = get_uformer_model(image_size)
         # self.model.apply(init_weights)
-
-        if train_sharpness_head:
-            self.model = SharpnessHead(base_model=self.model, out_ch=3)
-
         self.dwt = DWTHaar()
         self.iwt = IWTHaar()
-        self.model = self.model.to(device)
-        self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=0.001, weight_decay=0.01)
-        # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
 
         if load_path is not None:
             load_data = torch.load(load_path, map_location=self.device)
@@ -257,6 +250,13 @@ class CustomTrainingPipeline(object):
                 )
                 self.optimizer.param_groups[0]['lr'] = 0.0001
                 print('Optimizer LR: {:.5f}'.format(self.get_lr()))
+
+        if train_sharpness_head:
+            self.model = SharpnessHead(base_model=self.model, in_ch=3, out_ch=3)
+
+        self.model = self.model.to(device)
+        self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=0.001, weight_decay=0.01)
+        # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
 
         # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
         

@@ -910,11 +910,11 @@ class UnetTimm(nn.Module):
 
 
 class SharpnessHead(nn.Module):
-    def __init__(self, base_model: nn.Module, out_ch: int = int) -> None:
+    def __init__(self, base_model: nn.Module, in_ch: int, out_ch: int = int) -> None:
         super().__init__()
 
         self.base_model = base_model
-        self.sharp_head = OneLevelUNet(out_ch, out_ch)
+        self.sharp_head = OneLevelUNet(in_ch + out_ch, out_ch)
 
         for param in self.base_model.parameters():
             param.requires_grad = False
@@ -925,7 +925,8 @@ class SharpnessHead(nn.Module):
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor], List[torch.Tensor]]:
         first_output  = self.base_model(x)
         out_img = first_output[0]
-        out_img = self.sharp_head(out_img)
+        second_x = torch.concatenate((x, out_img), dim=1)
+        out_img = self.sharp_head(second_x)
         return out_img, first_output[1], first_output[2]
 
 
