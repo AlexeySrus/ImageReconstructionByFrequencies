@@ -21,7 +21,7 @@ from utils.haar_utils import HaarForward, HaarInverse
 
 from dataloader import PairedDenoiseDataset, SyntheticNoiseDataset
 from callbacks import VisImage, VisAttentionMaps, VisPlot, SaveTableTrainInfo
-from WTSNet.wts_timm import UnetTimm, WTSNetTimm
+from WTSNet.wts_timm import UnetTimm, WTSNetTimm, SharpnessHead
 from utils.window_inference import denoise_inference
 from utils.hist_loss import HistLoss
 from utils.freq_loss import HFENLoss
@@ -86,7 +86,8 @@ class CustomTrainingPipeline(object):
                  lr_steps: int = 4,
                  no_load_optim: bool = False,
                  gradient_accumulation_steps: int = 1,
-                 annottaion_str: str = ''):
+                 annottaion_str: str = '',
+                 train_sharpness_head: bool = False):
         """
         Train U-Net denoising model
 
@@ -108,7 +109,11 @@ class CustomTrainingPipeline(object):
             no_load_optim (bool, optional): Disable load optimizer from checkpoint. Defaults to False.
             gradient_accumulation_steps (int, optional): Count of saved gradients. Defaults to 1.
             annottaion_str (str, optional): Annotation string of experiment. Defaults to ''.
+            train_sharpness_head (str, optional): Use pretrained WTS model and train additional sharpness module only. Defaults to False .
         """
+        if train_sharpness_head and load_path is None:
+            raise RuntimeWarning('Used mode to train sharpness modulde without pretrained denoised model.')
+
         self.device = device
         self.experiment_folder = experiment_folder
         self.checkpoints_dir = os.path.join(experiment_folder, 'checkpoints/')
@@ -221,6 +226,10 @@ class CustomTrainingPipeline(object):
         self.model = WTSNetTimm(model_name=model_name)
         # self.model = get_uformer_model(image_size)
         # self.model.apply(init_weights)
+
+        if train_sharpness_head:
+            self.model = SharpnessHead(base_model=self.model, out_ch=3)
+
         self.dwt = DWTHaar()
         self.iwt = IWTHaar()
         self.model = self.model.to(device)
@@ -652,6 +661,10 @@ def parse_args() -> Namespace:
         '--annotation', type=str, required=False, default='',
         help='Annotation of experiment.'
     )
+    parser.add_argument(
+        '--train_sharpness_head', action='store_true',
+        help='Use pretrained WTS model and train additional sharpness module only.'
+    )
     return parser.parse_args()
 
 
@@ -684,6 +697,7 @@ if __name__ == '__main__':
         no_load_optim=args.no_load_optim,
         gradient_accumulation_steps=args.grad_accum_steps,
         annottaion_str=args.annotation
+        train_sharpness_head=args.train_sharpness_head
     ).fit()
 
     exit(0)

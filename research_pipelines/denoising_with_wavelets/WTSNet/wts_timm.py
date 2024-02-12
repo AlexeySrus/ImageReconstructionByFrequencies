@@ -1,4 +1,4 @@
-from typing import Tuple, List, Optional
+from typing import Iterator, Tuple, List, Optional
 from collections import OrderedDict
 import torch
 import torch.nn as nn
@@ -7,7 +7,7 @@ from timm import create_model
 from WTSNet.attention import CBAM, CoordinateAttention
 from WTSNet.wtsnet import UpscaleByWaveletes, DownscaleByWaveletes, conv1x1, conv3x3, FeaturesProcessingWithLastConv
 from utils.haar_utils import HaarForward, HaarInverse
-from utils.unet_parts import Up as UNetUp
+from utils.unet_parts import Up as UNetUp, OneLevelUNet
 
 
 padding_mode: str = 'reflect'
@@ -833,7 +833,7 @@ class WTSNetTimm(nn.Module):
         self.use_clipping = use_clipping
 
 
-    def forward(self, x: torch.Tensor) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor], List[torch.Tensor]]:
         pred_ll5 = nn.functional.interpolate(x, size=(x.size(2) // 32, x.size(3) // 32), mode='area')
         hf1, hf2, hf3, hf4, hf5, sa_list = self.encoder_model(x)
 
@@ -886,7 +886,7 @@ class UnetTimm(nn.Module):
         self.dwt = HaarForward()
 
 
-    def forward(self, x: torch.Tensor) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor], List[torch.Tensor]]:
         pred_ll5 = nn.functional.interpolate(x, size=(x.size(2) // 32, x.size(3) // 32), mode='area')
         hf1, hf2, hf3, hf4, hf5, sa_list = self.encoder_model(x)
 
@@ -908,6 +908,25 @@ class UnetTimm(nn.Module):
 
         return pred_image, [lvl1_wavelets], [sa1, sa2, sa3, sa4, sa5]
 
+
+class SharpnessHead(nn.Module):
+    def __init__(self, base_model: nn.Module, out_ch: int = int) -> None:
+        super().__init__()
+
+        self.base_model = base_model
+        self.sharp_head = OneLevelUNet(out_ch, out_ch)
+
+        for param in self.base_model.parameters():
+            param.requires_grad = False
+
+    def parameters(self, recurse: bool = True) -> Iterator[nn.Parameter]:
+        return self.sharp_head.parameters(recurse)
+
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor], List[torch.Tensor]]:
+        first_output  = self.base_model(x)
+        out_img = first_output[0]
+        out_img = self.sharp_head(out_img)
+        return out_img, first_output[1], first_output[2]
 
 
 if __name__ == '__main__':

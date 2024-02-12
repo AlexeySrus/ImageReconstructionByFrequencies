@@ -13,6 +13,7 @@ class DoubleConv(nn.Module):
         super().__init__()
         if not mid_channels:
             mid_channels = out_channels
+
         self.double_conv = nn.Sequential(
             nn.Conv2d(in_channels, mid_channels, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(mid_channels),
@@ -76,3 +77,38 @@ class OutConv(nn.Module):
 
     def forward(self, x):
         return self.conv(x)
+
+
+
+class OneLevelUNet(nn.Module):
+    def __init__(self, in_ch: int, out_ch: int) -> None:
+        super().__init__()
+
+        self.init_feats = DoubleConv(in_ch, out_ch * 2)
+
+        self.bottleneck_feats_layer = nn.Sequential(
+            nn.UpsamplingBilinear2d(scale_factor=0.25),
+            DoubleConv(out_ch * 2, out_ch * 2),
+            nn.UpsamplingBilinear2d(scale_factor=4)
+        )
+
+        self.up_layer = DoubleConv(out_ch * 4, out_ch)
+
+        self.out_conv = nn.Conv2d(out_ch, out_ch, kernel_size=1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        in_feats = self.init_feats(x)
+        bnk_features = self.bottleneck_feats_layer(in_feats)
+        x_up = torch.concatenate((in_feats, bnk_features), dim=1)
+        res_feats = self.up_layer(x_up)
+        out = self.out_conv(res_feats)
+        return out
+
+
+if __name__ == '__main__':
+    net = OneLevelUNet(3, 3)
+
+    x = torch.rand(1, 3, 224, 224)
+
+    out = net(x)
+    print(out.shape)
