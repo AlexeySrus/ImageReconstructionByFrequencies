@@ -129,6 +129,7 @@ class CustomTrainingPipeline(object):
         self.stop_criteria = stop_criteria
         self.best_test_score = 0
         self.gradient_accumulation_steps = gradient_accumulation_steps
+        self.train_sharpness_head = train_sharpness_head
 
         self.image_shape = (image_size, image_size)
 
@@ -263,7 +264,12 @@ class CustomTrainingPipeline(object):
         self.perceptual_loss = None
         # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
         self.final_hist_loss = None
-        # self.hight_freq_loss = HFENLoss(loss_f=torch.nn.functional.l1_loss, norm=True)
+
+        if self.train_sharpness_head:
+            self.hight_freq_loss = HFENLoss(loss_f=torch.nn.functional.l1_loss, norm=True)
+        else:
+            self.hight_freq_loss = None
+
         self.mixp_aug = MixUp_AUG()
 
         # self.adverserial_losses = [
@@ -404,8 +410,12 @@ class CustomTrainingPipeline(object):
                 # hist_loss = self.final_hist_loss(pred_image, clear_image)
                 hist_loss = 0
                 # hf_loss = self.hight_freq_loss(pred_image, clear_image)
+                if self.hight_freq_loss is not None:
+                    hf_loss = self.hight_freq_loss(pred_image, clear_image)
+                else:
+                    hf_loss = None
 
-                total_loss = wloss
+                total_loss = loss + hf_loss
 
                 if self.gradient_accumulation_steps > 1:
                     total_loss = total_loss / self.gradient_accumulation_steps
@@ -420,13 +430,22 @@ class CustomTrainingPipeline(object):
                     self.optimizer.step()
                     self.optimizer.zero_grad()
 
-                pbar.postfix = \
-                    'Epoch: {}/{}, px_loss: {:.7f}, w_loss: {:.7f}'.format(
-                        epoch,
-                        self.epochs,
-                        loss.item(),
-                        wloss.item()
-                    )
+                if self.train_sharpness_head:
+                    pbar.postfix = \
+                        'Epoch: {}/{}, px_loss: {:.7f}, hf_loss: {:.7f}'.format(
+                            epoch,
+                            self.epochs,
+                            loss.item(),
+                            hf_loss.item()
+                        )
+                else:
+                    pbar.postfix = \
+                        'Epoch: {}/{}, px_loss: {:.7f}, w_loss: {:.7f}'.format(
+                            epoch,
+                            self.epochs,
+                            loss.item(),
+                            wloss.item()
+                        )
                 avg_epoch_loss += loss.item() / len(self.train_dataloader)
 
                 if self.images_visualizer is not None:
