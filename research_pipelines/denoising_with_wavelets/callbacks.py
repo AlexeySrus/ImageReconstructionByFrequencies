@@ -483,7 +483,7 @@ class VisAttentionMaps(AbstractCallback):
 
 class SaveTableTrainInfo(AbstractCallback):
     supported_tables = ['.CSV']
-    table_header = 'epoch,train_loss,val_loss,val_psnr,val_ssim'
+    table_header = 'epoch,train_loss,val_loss,val_psnr,val_ssim,lr'
 
     def __init__(self, table_path: str, load_existing_table: bool = True) -> None:
         """Class constructor
@@ -514,11 +514,12 @@ class SaveTableTrainInfo(AbstractCallback):
                             train_loss: float,
                             val_loss: float,
                             val_psnr: float,
-                            val_ssim: float) -> Dict[str, List[Union[int, float]]]:
+                            val_ssim: float,
+                            lr: float) -> Dict[str, List[Union[int, float]]]:
         epoch_state = self._get_empty_state_dict()
         for column_name, value in zip(
                 self.table_header.split(','), 
-                (epoch_num, train_loss, val_loss, val_psnr, val_ssim)):
+                (epoch_num, train_loss, val_loss, val_psnr, val_ssim, lr)):
             epoch_state[column_name].append(value)
 
         return epoch_state
@@ -542,7 +543,7 @@ class SaveTableTrainInfo(AbstractCallback):
 
         Args:
             args (_type_): dictionary with information about training epoch step, contains:
-                (epoch, train_loss, val_loss, val_psnr, val_ssim)
+                (epoch, train_loss, val_loss, val_psnr, val_ssim, lr)
         """
         self._update_table_file(
             self._convert_to_epoch_state(
@@ -550,7 +551,8 @@ class SaveTableTrainInfo(AbstractCallback):
                 train_loss=args['train_loss'],
                 val_loss=args['val_loss'],
                 val_psnr=args['val_psnr'],
-                val_ssim=args['val_ssim']
+                val_ssim=args['val_ssim'],
+                lr=args['lr']
             )
         )
 
