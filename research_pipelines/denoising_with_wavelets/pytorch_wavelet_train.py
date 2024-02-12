@@ -131,6 +131,9 @@ class CustomTrainingPipeline(object):
         self.gradient_accumulation_steps = gradient_accumulation_steps
         self.train_sharpness_head = train_sharpness_head
 
+        if train_sharpness_head:
+            print('Used sharpness head')
+
         self.image_shape = (image_size, image_size)
 
         os.makedirs(experiment_folder, exist_ok=True)
