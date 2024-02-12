@@ -230,33 +230,37 @@ class CustomTrainingPipeline(object):
         self.model = WTSNetTimm(model_name=model_name)
         # self.model = get_uformer_model(image_size)
         # self.model.apply(init_weights)
+
+        if train_sharpness_head:
+            self.model = SharpnessHead(base_model=self.model, in_ch=3, out_ch=3)
+
         self.dwt = DWTHaar()
         self.iwt = IWTHaar()
+        self.model = self.model.to(device)
+        self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=0.001, weight_decay=0.01)
+        # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
 
         if load_path is not None:
             load_data = torch.load(load_path, map_location=self.device)
 
             self.resume_epoch = load_data['epoch']
-            self.model.load_state_dict(load_data['model'])
+
+            if train_sharpness_head:
+                self.model.base_model.load_state_dict(load_data['model'])
+            else:
+                self.model.load_state_dict(load_data['model'])
 
             print(
                 '#' * 5 + ' Model has been loaded by path: {} '.format(load_path) +  '#' * 5
             )
 
-            if not no_load_optim:
+            if not no_load_optim and not train_sharpness_head:
                 self.optimizer.load_state_dict(load_data['optimizer'])
                 print(
                     '#' * 5 + ' Optimizer has been loaded by path: {} '.format(load_path) + '#' * 5
                 )
                 self.optimizer.param_groups[0]['lr'] = 0.0001
                 print('Optimizer LR: {:.5f}'.format(self.get_lr()))
-
-        if train_sharpness_head:
-            self.model = SharpnessHead(base_model=self.model, in_ch=3, out_ch=3)
-
-        self.model = self.model.to(device)
-        self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=0.001, weight_decay=0.01)
-        # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
 
         # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
         
