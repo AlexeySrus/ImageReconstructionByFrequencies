@@ -247,6 +247,7 @@ class CustomTrainingPipeline(object):
 
             if train_sharpness_head:
                 self.model.base_model.load_state_dict(load_data['model'])
+                self.resume_epoch = 1
             else:
                 self.model.load_state_dict(load_data['model'])
 
@@ -273,7 +274,7 @@ class CustomTrainingPipeline(object):
         self.final_hist_loss = None
 
         if self.train_sharpness_head:
-            self.hight_freq_loss = HFENLoss(loss_f=torch.nn.functional.l1_loss, norm=True)
+            self.hight_freq_loss = HFENLoss(loss_f=torch.nn.functional.l1_loss, norm=False)
         else:
             self.hight_freq_loss = None
 
