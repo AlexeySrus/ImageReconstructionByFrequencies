@@ -718,7 +718,7 @@ if __name__ == '__main__':
         lr_steps=args.lr_milestones,
         no_load_optim=args.no_load_optim,
         gradient_accumulation_steps=args.grad_accum_steps,
-        annottaion_str=args.annotation
+        annottaion_str=args.annotation,
         train_sharpness_head=args.train_sharpness_head
     ).fit()
 
