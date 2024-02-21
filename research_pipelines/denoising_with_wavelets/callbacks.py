@@ -324,10 +324,10 @@ class VisImageForWavelets(AbstractCallback):
 
 class VisImage(VisImageForWavelets):
     def __init__(self, title, server='http://localhost', port=8080,
-                 vis_step=1, scale=10):
+                 vis_step=1, scale=10, use_ycrcb: bool = False):
         super().__init__(title, server, port, vis_step, scale)
-        self.change_color_function = self._ycrcb_to_rgb
-        # self.change_color_function = lambda x: x
+
+        self.change_color_function = self._ycrcb_to_rgb if use_ycrcb else lambda x: x
 
     def per_batch(self, args, label=1, i: Optional[int] = None) -> Optional[int]:
         if self.n % self.step == 0:
@@ -345,6 +345,7 @@ class VisImage(VisImageForWavelets):
 
                     inp_image = self.change_color_function(torch.clip(inp_image, 0, 1).to('cpu'))
                     gt_image = self.change_color_function(torch.clip(gt_image, 0, 1).to('cpu'))
+
                     pred_image = self.change_color_function(torch.clip(pred_image, 0, 1).to('cpu'))
 
                     pred_wavelets[0] = self.change_color_function(torch.clip(pred_wavelets[0], 0, 1).to('cpu'))

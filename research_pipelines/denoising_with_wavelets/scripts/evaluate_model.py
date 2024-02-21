@@ -9,7 +9,7 @@ import os
 
 CURRENT_PATH = os.path.dirname(__file__)
 
-from WTSNet.wts_timm import UnetTimm, WTSNetTimm
+from WTSNet.wts_timm import UnetTimm, WTSNetTimm, SharpnessHead
 from utils.window_inference import eval_denoise_inference, denoise_inference
 from utils.cas import contrast_adaptive_sharpening
 
@@ -40,6 +40,14 @@ def parse_args() -> Namespace:
         '--use_unet', action='store_true',
         help='Use classic U-Net network decoder architecture'
     )
+    parser.add_argument(
+        '--use_tta', action='store_true',
+        help='Use test time augmentations until inference'
+    )
+    parser.add_argument(
+        '--use_sharpness_head', action='store_true',
+        help='Use sharpness head'
+    )
     return parser.parse_args()
     
 
@@ -62,7 +70,16 @@ if __name__ == '__main__':
 
     load_path = args.model
     load_data = torch.load(load_path, map_location=device)
-    model.load_state_dict(load_data['model'])
+
+    if args.use_sharpness_head:
+        model = SharpnessHead(
+            base_model=model,
+            in_ch=3, out_ch=3
+        ).to(device)
+        model.load_model(load_data)
+    else:
+        model.load_state_dict(load_data['model'])
+
     model.eval()
 
     print('Best torchmetric PSNR: {:.2f}'.format(load_data['acc']))
@@ -94,7 +111,7 @@ if __name__ == '__main__':
         with torch.no_grad():
             restored_image = eval_denoise_inference(
                 tensor_img=input_tensor, model=model, window_size=imgsz, 
-                batch_size=32, crop_size=imgsz // 32, use_tta=True, device=device
+                batch_size=32, crop_size=imgsz // 32, use_tta=args.use_tta, device=device
             )
 
         input_tensor = input_tensor.to('cpu')

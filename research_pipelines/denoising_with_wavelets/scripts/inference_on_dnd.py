@@ -13,7 +13,7 @@ from timeit import default_timer as time
 CURRENT_PATH = os.path.dirname(__file__)
 
 from WTSNet.wtsnet import WTSNet, convert_weights_from_old_version
-from WTSNet.wts_timm import WTSNetTimm
+from WTSNet.wts_timm import WTSNetTimm, UnetTimm, SharpnessHead
 from utils.window_inference import eval_denoise_inference
 
 
@@ -24,12 +24,28 @@ def parse_args() -> Namespace:
         help='Path to model checkpoint file'
     )
     parser.add_argument(
+        '-n', '--name', type=str, required=False, default='resnet10t',
+        help='Timm model name'
+    )
+    parser.add_argument(
         '-f', '--folder', type=str, required=True,
         help='Path to folder with the Darmstadt Noise Dataset'
     )
     parser.add_argument(
         '-o', '--output', type=str, required=False,
         help='Path to folder with output visualizations (optional)'
+    )
+    parser.add_argument(
+        '--use_unet', action='store_true',
+        help='Use classic U-Net network decoder architecture'
+    )
+    parser.add_argument(
+        '--use_tta', action='store_true',
+        help='Use test time augmentations until inference'
+    )
+    parser.add_argument(
+        '--use_sharpness_head', action='store_true',
+        help='Use sharpness head'
     )
     return parser.parse_args()
 
@@ -99,11 +115,23 @@ if __name__ == '__main__':
     # device = 'cpu'
     print('Device: {}'.format(device))
 
-    model = WTSNetTimm().to(device)
+    if args.use_unet:
+        model = UnetTimm(model_name=args.name).to(device)
+    else:
+        model = WTSNetTimm(model_name=args.name, use_clipping=True).to(device)
 
     load_path = args.model
     load_data = torch.load(load_path, map_location=device)
-    model.load_state_dict(load_data['model'])
+
+    if args.use_sharpness_head:
+        model = SharpnessHead(
+            base_model=model,
+            in_ch=3, out_ch=3
+        ).to(device)
+        model.load_model(load_data)
+    else:
+        model.load_state_dict(load_data['model'])
+
     model.eval()
 
     # Fake run to optimize
@@ -155,7 +183,7 @@ if __name__ == '__main__':
             with torch.no_grad():
                 restored_image = eval_denoise_inference(
                     tensor_img=input_tensor, model=model, window_size=imgsz, 
-                    batch_size=4, crop_size=imgsz // 32, use_tta=True, device=device
+                    batch_size=4, crop_size=imgsz // 32, use_tta=args.use_tta, device=device
                 )
             finish_inference_time = time()
             crop_infernece_time = finish_inference_time - start_inference_time

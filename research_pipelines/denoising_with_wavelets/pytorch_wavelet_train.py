@@ -18,6 +18,7 @@ from pytorch_msssim import SSIM, MS_SSIM
 from piq import DISTS
 from pytorch_optimizer import AdaSmooth, Ranger21
 from utils.haar_utils import HaarForward, HaarInverse
+import yaml
 
 from dataloader import PairedDenoiseDataset, SyntheticNoiseDataset
 from callbacks import VisImage, VisAttentionMaps, VisPlot, SaveTableTrainInfo
@@ -87,7 +88,10 @@ class CustomTrainingPipeline(object):
                  no_load_optim: bool = False,
                  gradient_accumulation_steps: int = 1,
                  annottaion_str: str = '',
-                 train_sharpness_head: bool = False):
+                 train_sharpness_head: bool = False,
+                 loss_coefficients: Tuple[float, float] = (1.0, 0.5),
+                 use_ycrcb: bool = False,
+                 full_args: Optional[Namespace] = None):
         """
         Train U-Net denoising model
 
@@ -109,7 +113,9 @@ class CustomTrainingPipeline(object):
             no_load_optim (bool, optional): Disable load optimizer from checkpoint. Defaults to False.
             gradient_accumulation_steps (int, optional): Count of saved gradients. Defaults to 1.
             annottaion_str (str, optional): Annotation string of experiment. Defaults to ''.
-            train_sharpness_head (str, optional): Use pretrained WTS model and train additional sharpness module only. Defaults to False .
+            train_sharpness_head (bool, optional): Use pretrained WTS model and train additional sharpness module only. Defaults to False.
+            use_ycrcb (bool, optional): Use YCrCb color space for image training. Defaults to False.
+            full_args (Namespace, optional): To save command line arguments only. Defaults to None.
         """
         if train_sharpness_head and load_path is None:
             raise RuntimeWarning('Used mode to train sharpness modulde without pretrained denoised model.')
@@ -130,6 +136,8 @@ class CustomTrainingPipeline(object):
         self.best_test_score = 0
         self.gradient_accumulation_steps = gradient_accumulation_steps
         self.train_sharpness_head = train_sharpness_head
+        self.px_coeff, self.wavelet_coeff = loss_coefficients
+        self.use_ycrcb = use_ycrcb
 
         if train_sharpness_head:
             print('Used sharpness head')
@@ -144,13 +152,19 @@ class CustomTrainingPipeline(object):
             with open(self.annotation_file, 'w') as f:
                 f.write(annottaion_str + '\n')
 
+        if full_args is not None:
+            save_args_file = os.path.join(experiment_folder, 'args.yaml')
+            with open(save_args_file, 'w') as f:
+                yaml.safe_dump(vars(full_args), f)
+
         self.train_base_dataset = PairedDenoiseDataset(
                 noisy_images_path=train_data_paths[0],
                 clear_images_path=train_data_paths[1],
                 need_crop=True,
                 window_size=self.image_shape[0],
                 optional_dataset_size=200000,
-                preload=preload_data
+                preload=preload_data,
+                use_ycrcb=use_ycrcb
             )
 
         if synth_data_paths is not None:
@@ -158,7 +172,8 @@ class CustomTrainingPipeline(object):
                 clear_images_path=synth_data_paths,
                 window_size=self.image_shape[0],
                 preload=preload_data,
-                optional_dataset_size=10000
+                optional_dataset_size=10000,
+                use_ycrcb=use_ycrcb
             )
 
             self.train_base_dataset = torch.utils.data.ConcatDataset(
@@ -169,7 +184,8 @@ class CustomTrainingPipeline(object):
             noisy_images_path=val_data_paths[0],
             clear_images_path=val_data_paths[1],
             preload=preload_data,
-            return_names=True
+            return_names=True,
+            use_ycrcb=use_ycrcb
         )
 
         self.train_dataloader = torch.utils.data.DataLoader(
@@ -189,7 +205,8 @@ class CustomTrainingPipeline(object):
             title='Denoising',
             port=visdom_port,
             vis_step=150,
-            scale=2.0
+            scale=2.0,
+            use_ycrcb=use_ycrcb
         )
 
         self.attention_visualizer = None if visdom_port is None else VisAttentionMaps(
@@ -232,12 +249,21 @@ class CustomTrainingPipeline(object):
         # self.model.apply(init_weights)
 
         if train_sharpness_head:
-            self.model = SharpnessHead(base_model=self.model, in_ch=3, out_ch=3)
+            self.model = SharpnessHead(
+                base_model=self.model, 
+                in_ch=3, out_ch=3
+            )
 
         self.dwt = DWTHaar()
         self.iwt = IWTHaar()
         self.model = self.model.to(device)
-        self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=0.001, weight_decay=0.01)
+
+        if train_sharpness_head:
+            self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001)
+        else:
+            self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=0.001, weight_decay=0.01)
+            # self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.01)
+
         # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
 
         if load_path is not None:
@@ -247,7 +273,11 @@ class CustomTrainingPipeline(object):
 
             if train_sharpness_head:
                 self.model.base_model.load_state_dict(load_data['model'])
-                self.resume_epoch = 1
+
+                if 'sharpness_head' in load_data.keys():
+                    self.model.sharp_head.load_state_dict(load_data['sharpness_head'])
+                else:
+                    self.resume_epoch = 1
             else:
                 self.model.load_state_dict(load_data['model'])
 
@@ -274,7 +304,8 @@ class CustomTrainingPipeline(object):
         self.final_hist_loss = None
 
         if self.train_sharpness_head:
-            self.hight_freq_loss = HFENLoss(loss_f=torch.nn.functional.l1_loss, norm=False)
+            # self.hight_freq_loss = HFENLoss(loss_f=torch.nn.functional.l1_loss, norm=True)
+            self.perceptual_loss = DISTS()
         else:
             self.hight_freq_loss = None
 
@@ -405,25 +436,23 @@ class CustomTrainingPipeline(object):
                 pred_wavelets_pyramid = output[1]
                 spatial_attention_maps = output[2]
 
-                loss = self.images_criterion(pred_image, clear_image)
+                if self.train_sharpness_head:
+                    loss = self.images_criterion(
+                        pred_image, 
+                        clear_image
+                    )
+ 
+                    p_loss = self.perceptual_loss(
+                        self._convert_ycrcb_to_rgb_if_need(pred_image),
+                        self._convert_ycrcb_to_rgb_if_need(clear_image),
+                    )
 
-                # a_loss = self.adv_loss(pred_image, noisy_image)
-
-                if self.perceptual_loss is not None:
-                    loss = loss / 2 + self.perceptual_loss(pred_image, clear_image) / 2
-                    
-                wloss = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image, use_approximation=False)
-                # wloss = self._compute_deep_iwt_loss(pred_wavelets_pyramid, pred_image, noisy_image)
-                
-                # hist_loss = self.final_hist_loss(pred_image, clear_image)
-                hist_loss = 0
-                # hf_loss = self.hight_freq_loss(pred_image, clear_image)
-                if self.hight_freq_loss is not None:
-                    hf_loss = self.hight_freq_loss(pred_image, clear_image)
+                    total_loss = loss + p_loss * 0.1
                 else:
-                    hf_loss = None
-
-                total_loss = loss + hf_loss
+                    p_loss = None
+                    loss = self.images_criterion(pred_image, clear_image)
+                    wloss = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image, use_approximation=False)
+                    total_loss = loss * self.px_coeff + wloss * self.wavelet_coeff
 
                 if self.gradient_accumulation_steps > 1:
                     total_loss = total_loss / self.gradient_accumulation_steps
@@ -440,11 +469,11 @@ class CustomTrainingPipeline(object):
 
                 if self.train_sharpness_head:
                     pbar.postfix = \
-                        'Epoch: {}/{}, px_loss: {:.7f}, hf_loss: {:.7f}'.format(
+                        'Epoch: {}/{}, px_loss: {:.7f}, p_loss: {:.7f}'.format(
                             epoch,
                             self.epochs,
                             loss.item(),
-                            hf_loss.item()
+                            p_loss.item()
                         )
                 else:
                     pbar.postfix = \
@@ -514,13 +543,13 @@ class CustomTrainingPipeline(object):
                     restored_image = torch.clamp(restored_image, 0, 1)
 
                     val_psnr = self.accuracy_measure(
-                        self._convert_ycrcb_to_rgb(restored_image),
-                        self._convert_ycrcb_to_rgb(clear_image)
+                        self._convert_ycrcb_to_rgb_if_need(restored_image),
+                        self._convert_ycrcb_to_rgb_if_need(clear_image)
                     )
 
                     val_ssim = self.ssim_measure(
-                        self._convert_ycrcb_to_rgb(restored_image),
-                        self._convert_ycrcb_to_rgb(clear_image)
+                        self._convert_ycrcb_to_rgb_if_need(restored_image),
+                        self._convert_ycrcb_to_rgb_if_need(clear_image)
                     )
 
                     acc_rate = val_psnr.item()
@@ -533,7 +562,8 @@ class CustomTrainingPipeline(object):
                     # result_path = os.path.join(self.output_val_images_dir, '{}.png'.format(sample_i + 1))
                     result_path = os.path.join(self.output_val_images_dir, image_name)
                     val_img = (torch.clip(restored_image[0].to('cpu').permute(1, 2, 0), 0, 1) * 255.0).numpy().astype(np.uint8)
-                    val_img = cv2.cvtColor(val_img, cv2.COLOR_YCrCb2RGB)
+                    if self.use_ycrcb and not self.train_sharpness_head:
+                        val_img = cv2.cvtColor(val_img, cv2.COLOR_YCrCb2RGB)
                     Image.fromarray(val_img).save(result_path)
 
         if test_len > 0:
@@ -546,8 +576,11 @@ class CustomTrainingPipeline(object):
 
         return avg_loss_rate, (avg_acc_rate, avg_ssim_rate)
     
-    def _convert_ycrcb_to_rgb(self, _tensor: torch.Tensor) -> torch.Tensor:
-        return kornia.color.ycbcr.ycbcr_to_rgb(_tensor)
+    def _convert_ycrcb_to_rgb_if_need(self, _tensor: torch.Tensor) -> torch.Tensor:
+        if self.use_ycrcb:
+            return kornia.color.ycbcr.ycbcr_to_rgb(_tensor)
+        
+        return _tensor
 
     def _plot_values(self, epoch, avg_train_loss, avg_val_loss, avg_val_acc):
         avg_val_psnr, avg_val_ssim = avg_val_acc
@@ -596,6 +629,9 @@ class CustomTrainingPipeline(object):
             'acc': avg_acc_rate,
             'epoch': epoch
         }
+        if self.train_sharpness_head:
+            save_state['model'] = self.model.base_model.state_dict()
+            save_state['sharpness_head'] = self.model.sharp_head.state_dict()
 
         torch.save(
             save_state,
@@ -673,6 +709,18 @@ def parse_args() -> Namespace:
         help='Count of batches to accumulate gradiets.'
     )
     parser.add_argument(
+        '--pix_loss_coeff', type=float, required=False, default=1.0,
+        help='Count of batches to accumulate gradiets.'
+    )
+    parser.add_argument(
+        '--wavelet_loss_coeff', type=float, required=False, default=0.5,
+        help='Count of batches to accumulate gradiets.'
+    )
+    parser.add_argument(
+        '--use_ycrcb', action='store_true',
+        help='Use YCrCb color space for image training.'
+    )
+    parser.add_argument(
         '--preload_datasets', action='store_true',
         help='Load images from datasaets into memory.'
     )
@@ -724,7 +772,10 @@ if __name__ == '__main__':
         no_load_optim=args.no_load_optim,
         gradient_accumulation_steps=args.grad_accum_steps,
         annottaion_str=args.annotation,
-        train_sharpness_head=args.train_sharpness_head
+        train_sharpness_head=args.train_sharpness_head,
+        loss_coefficients=(args.pix_loss_coeff, args.wavelet_loss_coeff),
+        use_ycrcb=args.use_ycrcb,
+        full_args=args
     ).fit()
 
     exit(0)

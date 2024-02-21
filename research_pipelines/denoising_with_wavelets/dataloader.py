@@ -20,7 +20,8 @@ class PairedDenoiseDataset(Dataset):
                  window_size: int = 224,
                  optional_dataset_size: Optional[int] = None,
                  preload: bool = False,
-                 return_names: bool = False):
+                 return_names: bool = False,
+                 use_ycrcb: bool = False):
         self.noisy_images = {
             os.path.splitext(img_name)[0]: os.path.join(noisy_images_path, img_name)
             for img_name in os.listdir(noisy_images_path)
@@ -37,6 +38,7 @@ class PairedDenoiseDataset(Dataset):
         self.window_size = window_size
         self.need_crop = need_crop
         self.return_names = return_names
+        self.use_ycrcb = use_ycrcb
 
         self.names = [img_name for img_name in os.listdir(clear_images_path)]
 
@@ -67,8 +69,9 @@ class PairedDenoiseDataset(Dataset):
                 random_swap=False
             )
 
-        noisy_image = cv2.cvtColor(noisy_image, cv2.COLOR_RGB2YCrCb)
-        clear_image = cv2.cvtColor(clear_image, cv2.COLOR_RGB2YCrCb)
+        if self.use_ycrcb:
+            noisy_image = cv2.cvtColor(noisy_image, cv2.COLOR_RGB2YCrCb)
+            clear_image = cv2.cvtColor(clear_image, cv2.COLOR_RGB2YCrCb)
 
         if self.return_names:
             img_name = self.names[idx]
@@ -82,7 +85,8 @@ class SyntheticNoiseDataset(Dataset):
                  clear_images_path, 
                  window_size: int = 224,
                  optional_dataset_size: Optional[int] = None,
-                 preload: bool = False):
+                 preload: bool = False,
+                 use_ycrcb: bool = False):
         self.clear_images = [
             os.path.join(clear_images_path, img_name)
             for img_name in os.listdir(clear_images_path)
@@ -97,6 +101,7 @@ class SyntheticNoiseDataset(Dataset):
 
         self.dataset_size = len(self.clear_images) if optional_dataset_size is None else optional_dataset_size
         self.window_size = window_size
+        self.use_ycrcb = use_ycrcb
 
         self.noise_transform = A.Compose([
             A.OneOf([
@@ -115,7 +120,7 @@ class SyntheticNoiseDataset(Dataset):
     def __len__(self):
         return self.dataset_size
 
-    def __getitem__(self, _idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, _idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         idx = _idx % len(self.clear_images)
 
         if np.random.randint(1, 101) > 80:
@@ -141,8 +146,9 @@ class SyntheticNoiseDataset(Dataset):
         else:
             noisy_crop = clear_crop.copy()
 
-        noisy_crop = cv2.cvtColor(noisy_crop, cv2.COLOR_RGB2YCrCb)
-        clear_crop = cv2.cvtColor(clear_crop, cv2.COLOR_RGB2YCrCb)
+        if self.use_ycrcb:
+            noisy_crop = cv2.cvtColor(noisy_crop, cv2.COLOR_RGB2YCrCb)
+            clear_crop = cv2.cvtColor(clear_crop, cv2.COLOR_RGB2YCrCb)
 
         return preprocess_image(noisy_crop, 0, 1), preprocess_image(clear_crop, 0, 1)
 

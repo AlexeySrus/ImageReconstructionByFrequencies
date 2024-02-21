@@ -1,5 +1,6 @@
-from typing import Iterator, Tuple, List, Optional
+from typing import Iterator, Tuple, List, Optional, Callable
 from collections import OrderedDict
+import kornia
 import torch
 import torch.nn as nn
 from timm import create_model
@@ -922,11 +923,23 @@ class SharpnessHead(nn.Module):
     def parameters(self, recurse: bool = True) -> Iterator[nn.Parameter]:
         return self.sharp_head.parameters(recurse)
 
+    def load_model(self, state: dict):
+        assert 'model' in state.keys()
+        assert 'sharpness_head' in state.keys()
+
+        self.base_model.load_state_dict(state['model'])
+        self.sharp_head.load_state_dict(state['sharpness_head'])
+
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor], List[torch.Tensor]]:
-        first_output  = self.base_model(x)
-        out_img = first_output[0]
-        second_x = torch.concatenate((x, out_img), dim=1)
-        out_img = self.sharp_head(second_x)
+        x_in = x
+
+        with torch.no_grad():
+            first_output  = self.base_model(x)
+            out_img = first_output[0]
+
+        second_x = torch.concatenate((x_in, out_img), dim=1)
+        out_img, head_sa = self.sharp_head(second_x)
+        first_output[2].append(head_sa)
         return out_img, first_output[1], first_output[2]
 
 
@@ -938,7 +951,7 @@ if __name__ == '__main__':
 
     device = 'cpu'
 
-    model = UnetTimm(model_name='efficientnet_b0').to(device)
+    model = UnetTimm(model_name='resnet10t').to(device)
     model.eval()
 
     wsize = 256
