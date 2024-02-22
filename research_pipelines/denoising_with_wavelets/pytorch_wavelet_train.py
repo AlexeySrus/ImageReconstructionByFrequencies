@@ -172,7 +172,7 @@ class CustomTrainingPipeline(object):
                 clear_images_path=synth_data_paths,
                 window_size=self.image_shape[0],
                 preload=preload_data,
-                optional_dataset_size=10000,
+                optional_dataset_size=200000,
                 use_ycrcb=use_ycrcb
             )
 
@@ -277,6 +277,7 @@ class CustomTrainingPipeline(object):
                 if 'sharpness_head' in load_data.keys():
                     self.model.sharp_head.load_state_dict(load_data['sharpness_head'])
                 else:
+                    print('WARNING: weights for sharpness head has not been load, if it is initial training, all right')
                     self.resume_epoch = 1
             else:
                 self.model.load_state_dict(load_data['model'])

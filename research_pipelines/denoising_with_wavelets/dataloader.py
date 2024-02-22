@@ -105,11 +105,6 @@ class SyntheticNoiseDataset(Dataset):
 
         self.noise_transform = A.Compose([
             A.OneOf([
-                # A.OneOf(
-                #     [
-                #         A.Blur(p=0.5),
-                #         A.GaussianBlur(p=0.5)
-                #     ]
                 # ),
                 A.GaussNoise(var_limit=(10.0, 150.0), always_apply=True),
                 A.ISONoise(always_apply=True),
@@ -141,8 +136,20 @@ class SyntheticNoiseDataset(Dataset):
             random_swap=False
         )
 
-        if np.random.randint(1, 101) > 20:
-            noisy_crop = self.noise_transform(image=clear_crop)['image']
+        if np.random.randint(1, 101) > 10:
+            if np.random.randint(1, 101) > 20:
+                if np.random.randint(1, 101) > 20:
+                    noise = np.random.poisson(clear_crop.astype(np.float32))
+                    noisy_crop = clear_crop.astype(np.float32) + noise
+                    noisy_crop = 255.0 * (noisy_crop / (np.amax(noisy_crop) + 1E-7))
+                else:
+                    std = np.random.uniform(0, 90)
+                    noise = np.random.normal(0, std, clear_crop.shape)
+                    noisy_crop = clear_crop.astype(np.float32) + noise
+            else:
+                noisy_crop = self.noise_transform(image=clear_crop)['image']
+
+            noisy_crop = np.clip(noisy_crop, 0.0, 255.0).astype(np.uint8)
         else:
             noisy_crop = clear_crop.copy()
 
