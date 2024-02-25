@@ -267,6 +267,7 @@ class CustomTrainingPipeline(object):
         # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
 
         if load_path is not None:
+            need_to_load_optim = False
             load_data = torch.load(load_path, map_location=self.device)
 
             self.resume_epoch = load_data['epoch']
@@ -276,6 +277,7 @@ class CustomTrainingPipeline(object):
 
                 if 'sharpness_head' in load_data.keys():
                     self.model.sharp_head.load_state_dict(load_data['sharpness_head'])
+                    need_to_load_optim = True
                 else:
                     print('WARNING: weights for sharpness head has not been load, if it is initial training, all right')
                     self.resume_epoch = 1
@@ -286,7 +288,7 @@ class CustomTrainingPipeline(object):
                 '#' * 5 + ' Model has been loaded by path: {} '.format(load_path) +  '#' * 5
             )
 
-            if not no_load_optim and not train_sharpness_head:
+            if not no_load_optim and (not train_sharpness_head or need_to_load_optim):
                 self.optimizer.load_state_dict(load_data['optimizer'])
                 print(
                     '#' * 5 + ' Optimizer has been loaded by path: {} '.format(load_path) + '#' * 5
