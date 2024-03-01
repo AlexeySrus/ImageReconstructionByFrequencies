@@ -127,7 +127,7 @@ class OneLevelUNet(nn.Module):
                 DoubleConvWithoutLastActivation(out_ch * 8, out_ch * 8)
             )
 
-        self.up_cbam = CBAM(out_ch * 8)
+        self.up_cbam = CBAM(out_ch * 8, reduction=min(out_ch * 8, 16))
         self.up_layer = DoubleConv(out_ch * 8, out_ch)
 
         self.out_conv = nn.Conv2d(out_ch, out_ch, kernel_size=1)
@@ -144,7 +144,7 @@ class OneLevelUNet(nn.Module):
 
 
 if __name__ == '__main__':
-    net = OneLevelUNet(3, 3)
+    net = OneLevelUNet(3, 1)
 
     x = torch.rand(1, 3, 224, 224)
 

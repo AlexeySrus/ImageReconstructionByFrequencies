@@ -50,20 +50,6 @@ def parse_args() -> Namespace:
     return parser.parse_args()
 
 
-
- # Author: Tobias Plötz, TU Darmstadt (tobias.ploetz@visinf.tu-darmstadt.de)
-
- # This file is part of the implementation as described in the CVPR 2017 paper:
- # Tobias Plötz and Stefan Roth, Benchmarking Denoising Algorithms with Real Photographs.
- # Please see the file LICENSE.txt for the license governing this code.
-
-
-import numpy as np
-import scipy.io as sio
-import os
-import h5py
-
-
 def bundle_submissions_srgb(submission_folder):
     '''
     Bundles submission data for sRGB denoising
@@ -124,11 +110,20 @@ if __name__ == '__main__':
     load_data = torch.load(load_path, map_location=device)
 
     if args.use_sharpness_head:
-        model = SharpnessHead(
-            base_model=model,
-            in_ch=3, out_ch=3
-        ).to(device)
-        model.load_model(load_data)
+        try:
+            model = SharpnessHead(
+                base_model=model,
+                in_ch=3, out_ch=3
+            ).to(device)
+            model.load_model(load_data)
+            print('Used full-channels sharpness head')
+        except:
+            model = SharpnessHeadForYChannel(
+                base_model=model,
+                in_ch=3, out_ch=3
+            ).to(device)
+            model.load_model(load_data)
+            print('Used Y-channel sharpness head')
     else:
         model.load_state_dict(load_data['model'])
 

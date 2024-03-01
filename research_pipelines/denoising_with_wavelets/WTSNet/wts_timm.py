@@ -911,7 +911,7 @@ class UnetTimm(nn.Module):
 
 
 class SharpnessHead(nn.Module):
-    def __init__(self, base_model: nn.Module, in_ch: int, out_ch: int = int) -> None:
+    def __init__(self, base_model: nn.Module, in_ch: int, out_ch: int) -> None:
         super().__init__()
 
         self.base_model = base_model
@@ -939,6 +939,41 @@ class SharpnessHead(nn.Module):
 
         second_x = torch.concatenate((x_in, out_img), dim=1)
         out_img, head_sa = self.sharp_head(second_x)
+        first_output[2].append(head_sa)
+        return out_img, first_output[1], first_output[2]
+
+
+class SharpnessHeadForYChannel(nn.Module):
+    def __init__(self, base_model: nn.Module, in_ch: int, out_ch: int = 1) -> None:
+        super().__init__()
+
+        self.base_model = base_model
+        self.sharp_head = OneLevelUNet(in_ch + 1, 1)
+
+        for param in self.base_model.parameters():
+            param.requires_grad = False
+
+    def parameters(self, recurse: bool = True) -> Iterator[nn.Parameter]:
+        return self.sharp_head.parameters(recurse)
+
+    def load_model(self, state: dict):
+        assert 'model' in state.keys()
+        assert 'sharpness_head' in state.keys()
+
+        self.base_model.load_state_dict(state['model'])
+        self.sharp_head.load_state_dict(state['sharpness_head'])
+
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor], List[torch.Tensor]]:
+        x_in = x
+
+        with torch.no_grad():
+            first_output  = self.base_model(x)
+            out_img = first_output[0]
+
+        second_x = torch.concatenate((x_in, out_img[:, :1]), dim=1)
+        out_y_ch, head_sa = self.sharp_head(second_x)
+        
+        out_img = torch.concatenate((out_y_ch, out_img[:, 1:]), dim=1)
         first_output[2].append(head_sa)
         return out_img, first_output[1], first_output[2]
 

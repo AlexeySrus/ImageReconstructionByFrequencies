@@ -105,7 +105,6 @@ def denoise_inference(
     return result_img
 
 
-
 def eval_denoise_inference(
         tensor_img: torch.Tensor,
         model: torch.nn.Module,

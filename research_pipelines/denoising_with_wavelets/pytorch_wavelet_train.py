@@ -22,7 +22,7 @@ import yaml
 
 from dataloader import PairedDenoiseDataset, SyntheticNoiseDataset
 from callbacks import VisImage, VisAttentionMaps, VisPlot, SaveTableTrainInfo
-from WTSNet.wts_timm import UnetTimm, WTSNetTimm, SharpnessHead
+from WTSNet.wts_timm import UnetTimm, WTSNetTimm, SharpnessHead, SharpnessHeadForYChannel
 from utils.window_inference import denoise_inference
 from utils.hist_loss import HistLoss
 from utils.freq_loss import HFENLoss
@@ -84,6 +84,7 @@ class CustomTrainingPipeline(object):
                  image_size: int = 512,
                  train_workers: int = 0,
                  preload_data: bool = False,
+                 init_lr: float = 0.001,
                  lr_steps: int = 4,
                  no_load_optim: bool = False,
                  gradient_accumulation_steps: int = 1,
@@ -91,6 +92,7 @@ class CustomTrainingPipeline(object):
                  train_sharpness_head: bool = False,
                  loss_coefficients: Tuple[float, float] = (1.0, 0.5),
                  use_ycrcb: bool = False,
+                 use_adasmooth_optim: bool = False,
                  full_args: Optional[Namespace] = None):
         """
         Train U-Net denoising model
@@ -109,12 +111,14 @@ class CustomTrainingPipeline(object):
             image_size (int, optional): Input image size. Defaults to 512.
             train_workers (int, optional): Count of parallel dataloaders. Defaults to 0.
             preload_data (bool, optional): Load training and validation data to RAM. Defaults to False.
+            init_lr (float, optional): Start learning rate. Defaults to 0.001.
             lr_steps (int, optional): Count of uniformed LR steps. Defaults to 4.
             no_load_optim (bool, optional): Disable load optimizer from checkpoint. Defaults to False.
             gradient_accumulation_steps (int, optional): Count of saved gradients. Defaults to 1.
             annottaion_str (str, optional): Annotation string of experiment. Defaults to ''.
             train_sharpness_head (bool, optional): Use pretrained WTS model and train additional sharpness module only. Defaults to False.
             use_ycrcb (bool, optional): Use YCrCb color space for image training. Defaults to False.
+            use_adasmooth_optim (bool, optional): Use AdaSmooth optimizer with adaprive learning rate for model training. Defaults to False.
             full_args (Namespace, optional): To save command line arguments only. Defaults to None.
         """
         if train_sharpness_head and load_path is None:
@@ -245,11 +249,9 @@ class CustomTrainingPipeline(object):
             )
 
         self.model = WTSNetTimm(model_name=model_name)
-        # self.model = get_uformer_model(image_size)
-        # self.model.apply(init_weights)
 
         if train_sharpness_head:
-            self.model = SharpnessHead(
+            self.model = SharpnessHeadForYChannel(
                 base_model=self.model, 
                 in_ch=3, out_ch=3
             )
@@ -258,13 +260,10 @@ class CustomTrainingPipeline(object):
         self.iwt = IWTHaar()
         self.model = self.model.to(device)
 
-        if train_sharpness_head:
-            self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.001)
+        if use_adasmooth_optim:
+            self.optimizer = AdaSmooth(params=self.model.parameters(), lr=init_lr, weight_decay=0.1, weight_decouple=True)
         else:
-            self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=0.001, weight_decay=0.01)
-            # self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=0.01)
-
-        # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
+            self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=init_lr, weight_decay=0.01)
 
         if load_path is not None:
             need_to_load_optim = False
@@ -293,10 +292,8 @@ class CustomTrainingPipeline(object):
                 print(
                     '#' * 5 + ' Optimizer has been loaded by path: {} '.format(load_path) + '#' * 5
                 )
-                self.optimizer.param_groups[0]['lr'] = 0.0001
+                self.optimizer.param_groups[0]['lr'] = init_lr
                 print('Optimizer LR: {:.5f}'.format(self.get_lr()))
-
-        # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001)
         
         # self.images_criterion = CharbonnierLoss()
         self.images_criterion = MIXLoss(data_range=1.0)
@@ -323,6 +320,7 @@ class CustomTrainingPipeline(object):
 
         # self.adv_loss = Adversarial(image_size=image_size, in_ch=3).to(device)
         self.wavelets_criterion = torch.nn.functional.l1_loss
+        # self.wavelets_criterion = lambda pred, trurh: torch.linalg.norm(pred - trurh) / pred.size(0)
         # self.wavelets_criterion = SparceLoss()
         # self.wavelets_criterion = CharbonnierLoss()
         self.accuracy_measure = TorchPSNR().to(device)
@@ -380,7 +378,7 @@ class CustomTrainingPipeline(object):
 
             gt_d0_ll = gt_ll
 
-        return _loss / len(pred_wavelets_pyramid)
+        return _loss
 
     def _compute_deep_iwt_loss(self, pred_wavelets_pyramid, pred_image, input_image):
         composed_image = pred_wavelets_pyramid[-1][:, :3]
@@ -398,7 +396,7 @@ class CustomTrainingPipeline(object):
 
         _loss += self.images_criterion(composed_image, pred_image)
 
-        return _loss / (len(pred_wavelets_pyramid) + 1)
+        return _loss
 
     def _compute_adversarial_loss(self, pred_wavelets_pyramid, gt_image, factor: float = 1.0):
         gt_d0_ll = gt_image
@@ -704,6 +702,10 @@ def parse_args() -> Namespace:
         help='Training batch size.'
     )
     parser.add_argument(
+        '--lr', type=float, required=False, default=0.001,
+        help='Start value of learning rate.'
+    )
+    parser.add_argument(
         '--lr_milestones', type=int, required=False, default=3,
         help='Count or learning rate scheduler milestones.'
     )
@@ -771,6 +773,7 @@ if __name__ == '__main__':
         image_size=args.image_size,
         train_workers=args.njobs,
         preload_data=args.preload_datasets,
+        init_lr=args.lr,
         lr_steps=args.lr_milestones,
         no_load_optim=args.no_load_optim,
         gradient_accumulation_steps=args.grad_accum_steps,
