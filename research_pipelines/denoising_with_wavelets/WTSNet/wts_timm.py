@@ -750,11 +750,13 @@ class TimmEncoderWithAttn(nn.Module):
             self.hf_conv4 = conv1x1(self.enc_channels[3], 3*3)
             self.hf_conv5 = conv1x1(self.enc_channels[4], 3*3)
 
-        self.attn1 = CBAM(self.enc_channels[0], kernel_size=5)
-        self.attn2 = CBAM(self.enc_channels[1], kernel_size=5)
-        self.attn3 = CBAM(self.enc_channels[2], kernel_size=5)
-        self.attn4 = CBAM(self.enc_channels[3], kernel_size=5)
-        self.attn5 = CBAM(self.enc_channels[4], kernel_size=5)
+        ksize = 5
+
+        self.attn1 = CBAM(self.enc_channels[0], kernel_size=ksize)
+        self.attn2 = CBAM(self.enc_channels[1], kernel_size=ksize)
+        self.attn3 = CBAM(self.enc_channels[2], kernel_size=ksize)
+        self.attn4 = CBAM(self.enc_channels[3], kernel_size=ksize)
+        self.attn5 = CBAM(self.enc_channels[4], kernel_size=ksize)
 
     def forward(self, x: torch.Tensor) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         x = (x - 0.5) * 2
@@ -915,7 +917,7 @@ class SharpnessHead(nn.Module):
         super().__init__()
 
         self.base_model = base_model
-        self.sharp_head = OneLevelUNet(in_ch + out_ch, out_ch)
+        self.sharp_head = OneLevelUNet(in_ch + out_ch, out_ch, use_bilinear=True)
 
         for param in self.base_model.parameters():
             param.requires_grad = False
@@ -986,12 +988,16 @@ if __name__ == '__main__':
 
     device = 'cpu'
 
-    model = UnetTimm(model_name='resnet10t').to(device)
+    model = WTSNetTimm(model_name='resnet10t').to(device)
+    # model = UnetTimm(model_name='resnet10t', use_biliniar=False).to(device)
     model.eval()
+
+    pamars_count = sum(p.numel() for p in model.parameters())
+    print('Parameters count: {:.2f} M'.format(pamars_count / 1E+6))
 
     wsize = 256
 
-    t = torch.rand(5, 3, wsize, wsize)
+    t = torch.rand(1, 3, wsize, wsize)
 
     with torch.no_grad():
         _ = model(t)
@@ -1003,7 +1009,9 @@ if __name__ == '__main__':
             a = model(t)
     finish_time = default_timer()
 
-    print('Inference time: {:.2f}'.format((finish_time - start_time) / N))
+    print('Inference time: {:.3f} sec'.format((finish_time - start_time) / N))
+
+    exit(0)
 
     img_path = '/media/alexey/SSDData/datasets/denoising_dataset/base_clear_images/cl_img7.jpeg'
     

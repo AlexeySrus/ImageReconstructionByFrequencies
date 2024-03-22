@@ -1,4 +1,4 @@
-from typing import Tuple, List, Dict, Callable, Optional
+from typing import Tuple, List, Dict, Callable
 from argparse import ArgumentParser, Namespace
 import cv2
 import numpy as np
@@ -6,7 +6,6 @@ from tqdm import tqdm
 from skimage.metrics import structural_similarity as ssim
 import torch
 import os
-from torchmetrics.image import PeakSignalNoiseRatio as TorchPSNR
 
 CURRENT_PATH = os.path.dirname(__file__)
 
@@ -14,7 +13,6 @@ from WTSNet.wts_timm import UnetTimm, WTSNetTimm, SharpnessHead, SharpnessHeadFo
 from utils.window_inference import eval_denoise_inference, denoise_inference
 from utils.cas import contrast_adaptive_sharpening
 from utils.haar_utils import HaarForward
-from utils.eval_logger import EvaluateLogger
 
 
 def parse_args() -> Namespace:
@@ -40,12 +38,12 @@ def parse_args() -> Namespace:
         help='Enable printing metrics per each sample)'
     )
     parser.add_argument(
-        '--use_unet', action='store_true',
-        help='Use classic U-Net network decoder architecture'
-    )
-    parser.add_argument(
         '--use_tta', action='store_true',
         help='Use test time augmentations until inference'
+    )
+    parser.add_argument(
+        '--use_unet', action='store_true',
+        help='Use classic U-Net network decoder architecture'
     )
     parser.add_argument(
         '--use_sharpness_head', action='store_true',
@@ -56,19 +54,34 @@ def parse_args() -> Namespace:
         help='Wavelte levels'
     )
     parser.add_argument(
-        '--y_channel', action='store_true',
-        help='Use Y channel of YCrCb color space to evaluate'
-    )
-    parser.add_argument(
-        '-a', '--annotation', type=str, required=False, default='default',
-        help='Experiment annotation'
-    )
-    parser.add_argument(
-        '-s', '--save_annotation_file', type=str, required=False,
-        help='Experiment annotation'
+        '--grayscale', action='store_true',
+        help='Use grayscale images to evaluate'
     )
     return parser.parse_args()
-    
+
+
+def pad_image_to_inference(image: np.ndarray) -> np.ndarray:
+    res = image.copy()
+
+    nearest_size = 2 ** int(np.ceil(np.log2(max(image.shape[:2]))))
+
+    res = cv2.copyMakeBorder(
+        res, 
+        0, nearest_size - image.shape[0], 
+        0, nearest_size - image.shape[1], 
+        cv2.BORDER_REFLECT
+    )
+
+    return res
+
+
+def add_gaussian_noise(image: np.ndarray, std: int = 15) -> np.ndarray:
+    assert std > 0
+    noise = np.random.normal(0, std, image.shape)
+    noisy_image = image.astype(np.float32) + noise
+    noisy_image = np.clip(noisy_image, 0.0, 255.0).astype(np.uint8)
+    return noisy_image
+
 
 def tensor_to_image(t: torch.Tensor) -> np.ndarray:
     _img = t.permute(1, 2, 0).numpy()
@@ -130,8 +143,6 @@ if __name__ == '__main__':
     imgsz = 256
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    psnr_function = TorchPSNR(data_range=1.0).to('cpu')
-
     load_path = args.model
     load_data = torch.load(load_path, map_location=device)
 
@@ -172,108 +183,102 @@ if __name__ == '__main__':
     ssim_values = []
 
     if args.output is None:
-        output_folder = os.path.join(CURRENT_PATH, '../../../materials/eval_results/')
+        output_folder = os.path.join(CURRENT_PATH, '../../../materials/eval_results_SYNTH/')
     else:
         output_folder = args.output
 
     os.makedirs(output_folder, exist_ok=True)
 
-    noisy_folder = os.path.join(args.folder, 'noisy/')
-    clear_folder = os.path.join(args.folder, 'clear/')
+    clear_folder = args.folder
 
-    dataset_wavelet_losses: List[List[Dict[str, float]]] = []
+    noisy_sigmas = [15, 25, 50, 200]
 
-    for image_name in tqdm(os.listdir(noisy_folder)):
-        image_path = os.path.join(noisy_folder, image_name)
-        img = cv2.imread(image_path, cv2.IMREAD_COLOR)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
+    for noise_sigma in noisy_sigmas:
+        print('SIGMA VALUE: {}'.format(noise_sigma))
 
-        gt_image_path = os.path.join(clear_folder, image_name)
-        gt_img = cv2.imread(gt_image_path, cv2.IMREAD_COLOR)
-        gt_img = cv2.cvtColor(gt_img, cv2.COLOR_BGR2YCrCb)
+        output_save_folder = os.path.join(output_folder, 'sigma_{}'.format(noise_sigma))
+        os.makedirs(output_save_folder, exist_ok=True)
 
-        input_tensor = torch.from_numpy(img.astype(np.float32).transpose((2, 0, 1)) / 255.0)
+        dataset_wavelet_losses: List[List[Dict[str, float]]] = []
 
-        with torch.no_grad():
-            restored_image = eval_denoise_inference(
-                tensor_img=input_tensor, model=model, window_size=imgsz, 
-                batch_size=32, crop_size=imgsz // 32, use_tta=args.use_tta, device=device
+        for image_name in tqdm(os.listdir(clear_folder)):
+            gt_image_path = os.path.join(clear_folder, image_name)
+            gt_img = cv2.imread(gt_image_path, cv2.IMREAD_COLOR)
+            img = add_gaussian_noise(gt_img, noise_sigma)
+
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
+            gt_img = cv2.cvtColor(gt_img, cv2.COLOR_BGR2YCrCb)
+
+            assert img.shape[0] == gt_img.shape[0] and img.shape[1] == gt_img.shape[1], image_name
+
+            img = pad_image_to_inference(img)
+            gt_img = pad_image_to_inference(gt_img)
+
+            input_tensor = torch.from_numpy(img.astype(np.float32).transpose((2, 0, 1)) / 255.0)
+
+            with torch.no_grad():
+                restored_image = eval_denoise_inference(
+                    tensor_img=input_tensor, model=model, window_size=imgsz, 
+                    batch_size=32, crop_size=imgsz // 32, use_tta=args.use_tta, device=device
+                )
+
+            input_tensor = input_tensor.to('cpu')
+            pred_image = restored_image.to('cpu')
+
+            if not args.use_sharpness_head:
+                dataset_wavelet_losses.append(
+                    compute_wavelets_losses(
+                        pred_image.unsqueeze(0), 
+                        input_tensor.unsqueeze(0), 
+                        args.levels
+                    )
+                )
+
+            pred_image = torch.clamp(pred_image, 0, 1)
+            pred_image = tensor_to_image(pred_image)
+
+            rgb_pred = cv2.cvtColor(pred_image, cv2.COLOR_YCrCb2RGB)
+            rgb_gt = cv2.cvtColor(gt_img, cv2.COLOR_YCrCb2RGB)
+
+            if args.grayscale:
+                ssim_values.append(ssim(cv2.cvtColor(rgb_pred, cv2.COLOR_RGB2GRAY), cv2.cvtColor(rgb_gt, cv2.COLOR_RGB2GRAY)))
+                psnr_values.append(cv2.PSNR(cv2.cvtColor(rgb_pred, cv2.COLOR_RGB2GRAY), cv2.cvtColor(rgb_gt, cv2.COLOR_RGB2GRAY)))
+            else:
+                ssim_values.append(ssim(rgb_pred, rgb_gt, channel_axis=2))
+                psnr_values.append(cv2.PSNR(rgb_pred, rgb_gt))
+
+            if args.verbose:
+                print('Image: {}, PSNR: {:.2f}, SSIM: {:.3f}'.format(image_name, psnr_values[-1], ssim_values[-1]))
+
+            cv2.imwrite(
+                os.path.join(output_save_folder, image_name),
+                cv2.cvtColor(pred_image, cv2.COLOR_YCrCb2BGR)
             )
 
-        input_tensor = input_tensor.to('cpu')
-        pred_image = restored_image.to('cpu')
+        print('Result PSNR -- mean: {:.2f}, std: {:.2f}'.format(np.array(psnr_values).mean(), np.array(psnr_values).std()))
+        print('Result SSIM -- mean: {:.3f}, std: {:.3f}'.format(np.array(ssim_values).mean(), np.array(ssim_values).std()))
 
         if not args.use_sharpness_head:
-            dataset_wavelet_losses.append(
-                compute_wavelets_losses(
-                    pred_image.unsqueeze(0), 
-                    input_tensor.unsqueeze(0), 
-                    args.levels
-                )
-            )
-
-        pred_image = torch.clamp(pred_image, 0, 1)
-        pred_image = tensor_to_image(pred_image)
-
-        rgb_pred = cv2.cvtColor(pred_image, cv2.COLOR_YCrCb2RGB)
-        rgb_gt = cv2.cvtColor(gt_img, cv2.COLOR_YCrCb2RGB)
-
-        if args.y_channel:
-            ssim_values.append(ssim(pred_image[..., 0], gt_img[..., 0]))
-            psnr_values.append(cv2.PSNR(pred_image[..., 0], gt_img[..., 0]))
-        else:
-            ssim_values.append(ssim(rgb_pred, rgb_gt, channel_axis=2))
-            psnr_values.append(cv2.PSNR(rgb_pred, rgb_gt))
-
-        if args.verbose:
-            print('Image: {}, PSNR: {:.2f}, SSIM: {:.3f}'.format(image_name, psnr_values[-1], ssim_values[-1]))
-
-        cv2.imwrite(
-            os.path.join(output_folder, image_name),
-            cv2.cvtColor(pred_image, cv2.COLOR_YCrCb2BGR)
-        )
-
-    print('Result PSNR -- mean: {:.2f}, std: {:.2f}'.format(np.array(psnr_values).mean(), np.array(psnr_values).std()))
-    print('Result SSIM -- mean: {:.3f}, std: {:.3f}'.format(np.array(ssim_values).mean(), np.array(ssim_values).std()))
-
-    if not args.use_sharpness_head:
-        if args.save_annotation_file is not None:
-            evaluation_logging = EvaluateLogger(
-                file_path=args.save_annotation_file,
-                annotation=args.annotation
-            )
-
+            print('Values below multiplicated on 1e+4')
+            s = 1E4
             for i in range(args.levels):
+                print('\nWavelet level #{}: '.format(i + 1))
+                _data = {
+                    'LH': [],
+                    'HL': [],
+                    'HH': []
+                }
+
                 for waves in dataset_wavelet_losses:
-                    evaluation_logging(
-                        h_loss=waves[i]['LH'],
-                        v_loss=waves[i]['HL'],
-                        d_loss=waves[i]['HH'],
-                        level=i + 1
-                    )
+                    for loss_key in _data.keys():
+                        _data[loss_key].append(waves[i][loss_key])
 
-            evaluation_logging.save_file()
-
-        print('Values below multiplicated on 1e+4')
-        s = 1E4
-        for i in range(args.levels):
-            print('\nWavelet level #{}: '.format(i + 1))
-            _data = {
-                'LH': [],
-                'HL': [],
-                'HH': []
-            }
-
-            for waves in dataset_wavelet_losses:
                 for loss_key in _data.keys():
-                    _data[loss_key].append(waves[i][loss_key])
+                    warr = np.array(_data[loss_key], dtype=np.float32)
+                    _data[loss_key] = (warr.mean() * s, warr.std() * s)
 
-            for loss_key in _data.keys():
-                warr = np.array(_data[loss_key], dtype=np.float32)
-                _data[loss_key] = (warr.mean() * s, warr.std() * s)
-
-                print(
-                    '\t{} -- mean: {:.5f}, std: {:.5f}'.format(
-                        loss_key, *_data[loss_key]
+                    print(
+                        '\t{} -- mean: {:.5f}, std: {:.5f}'.format(
+                            loss_key, *_data[loss_key]
+                        )
                     )
-                )

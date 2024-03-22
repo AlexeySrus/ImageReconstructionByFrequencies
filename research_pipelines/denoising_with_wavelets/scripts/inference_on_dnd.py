@@ -68,7 +68,7 @@ def bundle_submissions_srgb(submission_folder):
     eval_version="1.0"
 
     for i in range(50):
-        Idenoised = np.zeros((20,), dtype=np.object)
+        Idenoised = np.zeros((20,), dtype=np.object_)
         for bb in range(20):
             filename = '%04d_%02d.mat'%(i+1,bb+1)
             s = sio.loadmat(os.path.join(submission_folder,filename))
@@ -101,13 +101,19 @@ if __name__ == '__main__':
     # device = 'cpu'
     print('Device: {}'.format(device))
 
-    if args.use_unet:
-        model = UnetTimm(model_name=args.name).to(device)
-    else:
-        model = WTSNetTimm(model_name=args.name, use_clipping=True).to(device)
-
     load_path = args.model
     load_data = torch.load(load_path, map_location=device)
+
+    if args.use_unet:
+        try:
+            model = UnetTimm(model_name=args.name, use_biliniar=False).to(device)
+            model.load_state_dict(load_data['model'])
+        except:
+            model = UnetTimm(model_name=args.name, use_biliniar=True).to(device)
+            model.load_state_dict(load_data['model'])
+            print('Use U-Net with bilinear')
+    else:
+        model = WTSNetTimm(model_name=args.name, use_clipping=True).to(device)
 
     if args.use_sharpness_head:
         try:

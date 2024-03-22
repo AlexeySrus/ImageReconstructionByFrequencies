@@ -105,10 +105,9 @@ class SyntheticNoiseDataset(Dataset):
 
         self.noise_transform = A.Compose([
             A.OneOf([
-                # ),
                 A.GaussNoise(var_limit=(10.0, 150.0), always_apply=True),
                 A.ISONoise(always_apply=True),
-                # A.MultiplicativeNoise(always_apply=True)
+                A.MultiplicativeNoise(always_apply=True)
             ], p=0.8)
         ])
 

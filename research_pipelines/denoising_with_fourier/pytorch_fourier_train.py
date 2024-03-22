@@ -83,9 +83,14 @@ class CustomTrainingPipeline(object):
                  image_size: int = 512,
                  train_workers: int = 0,
                  preload_data: bool = False,
+                 init_lr: float = 0.001,
                  lr_steps: int = 4,
                  no_load_optim: bool = False,
-                 gradient_accumulation_steps: int =1):
+                 gradient_accumulation_steps: int = 1,
+                 annottaion_str: str = '',
+                 use_ycrcb: bool = False,
+                 grayscale: bool = False,
+                 full_args: Optional[Namespace] = None):
         """
         Train U-Net denoising model
 
@@ -104,14 +109,20 @@ class CustomTrainingPipeline(object):
             image_size (int, optional): Input image size. Defaults to 512.
             train_workers (int, optional): Count of parallel dataloaders. Defaults to 0.
             preload_data (bool, optional): Load training and validation data to RAM. Defaults to False.
+            init_lr (float, optional): Start learning rate. Defaults to 0.001.
             lr_steps (int, optional): Count of uniformed LR steps. Defaults to 4.
             no_load_optim (bool, optional): Disable load optimizer from checkpoint. Defaults to False.
             gradient_accumulation_steps (bool, optional): Count of accumulated gradients per train batches.
+            annottaion_str (str, optional): Annotation string of experiment. Defaults to ''.
+            use_ycrcb (bool, optional): Use YCrCb color space. Defaults to False.
+            grayscale (bool, optional): Use 1-channel images in pipeline. Defaults to False.
+            full_args (Namespace, optional): All command-line arguments. Defaules to None.
         """
         self.device = device
         self.experiment_folder = experiment_folder
         self.checkpoints_dir = os.path.join(experiment_folder, 'checkpoints/')
         self.output_val_images_dir = os.path.join(experiment_folder, 'val_outputs/')
+        self.annotation_file = os.path.join(experiment_folder, 'annotation.txt')
 
         self.load_path = load_path
         self.visdom_port = visdom_port  # Set None to disable
@@ -121,6 +132,8 @@ class CustomTrainingPipeline(object):
         self.stop_criteria = stop_criteria
         self.best_test_score = 0
         self.gradient_accumulation_steps = gradient_accumulation_steps
+        self.use_ycrcb = use_ycrcb
+        self.grayscale = grayscale
 
         self.image_shape = (image_size, image_size)
 
@@ -128,6 +141,14 @@ class CustomTrainingPipeline(object):
         os.makedirs(self.checkpoints_dir, exist_ok=True)
         os.makedirs(self.output_val_images_dir, exist_ok=True)
 
+        if len(annottaion_str) > 0:
+            with open(self.annotation_file, 'w') as f:
+                f.write(annottaion_str + '\n')
+
+        if full_args is not None:
+            save_args_file = os.path.join(experiment_folder, 'args.yaml')
+            with open(save_args_file, 'w') as f:
+                yaml.safe_dump(vars(full_args), f)
 
         self.train_base_dataset = PairedDenoiseDataset(
                 noisy_images_path=train_data_paths[0],
@@ -135,7 +156,9 @@ class CustomTrainingPipeline(object):
                 need_crop=True,
                 window_size=self.image_shape[0],
                 optional_dataset_size=25000,
-                preload=preload_data
+                preload=preload_data,
+                use_ycrcb=use_ycrcb,
+                grayscale=grayscale
             )
 
         if synth_data_paths is not None:
@@ -143,7 +166,9 @@ class CustomTrainingPipeline(object):
                 clear_images_path=synth_data_paths,
                 window_size=self.image_shape[0],
                 preload=preload_data,
-                optional_dataset_size=2500
+                optional_dataset_size=2500,
+                use_ycrcb=use_ycrcb,
+                grayscale=grayscale
             )
 
             self.train_base_dataset = torch.utils.data.ConcatDataset(
@@ -155,7 +180,10 @@ class CustomTrainingPipeline(object):
             noisy_images_path=val_data_paths[0],
             clear_images_path=val_data_paths[1],
             need_crop=False,
-            preload=preload_data
+            return_names=True,
+            preload=preload_data,
+            use_ycrcb=use_ycrcb,
+            grayscale=grayscale
         )
 
         self.train_dataloader = torch.utils.data.DataLoader(
@@ -170,7 +198,9 @@ class CustomTrainingPipeline(object):
             title='Denoising',
             port=visdom_port,
             vis_step=150,
-            scale=2
+            scale=2,
+            use_ycrcb=use_ycrcb,
+            grayscale=grayscale
         )
 
         self.attention_visualizer = None if visdom_port is None else VisAttentionMaps(
@@ -212,10 +242,10 @@ class CustomTrainingPipeline(object):
         self.model = FFTAttentionUNet()
         self.model.apply(init_weights)
         self.model = self.model.to(device)
-        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=0.01, nesterov=True, momentum=0.9, weight_decay=1E-2)
-        self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=0.001, betas=(0.9, 0.999), eps=1e-8, weight_decay=1E-2)
-        # self.optimizer = torch.optim.Adam(params=self.model.parameters(), lr=0.00001, betas=(0.9, 0.999), eps=1e-8)
-        # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=0.001, weight_decay=1E-5)
+        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=init_lr, nesterov=True, momentum=0.9, weight_decay=1E-2)
+        self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=init_lr, betas=(0.9, 0.999), eps=1e-8, weight_decay=1E-2)
+        # self.optimizer = torch.optim.Adam(params=self.model.parameters(), lr=init_lr, betas=(0.9, 0.999), eps=1e-8)
+        # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=init_lr, weight_decay=1E-5)
 
         if load_path is not None:
             load_data = torch.load(load_path, map_location=self.device)
@@ -230,7 +260,7 @@ class CustomTrainingPipeline(object):
                 print(
                     '#' * 5 + ' Optimizer has been loaded by path: {} '.format(load_path) + '#' * 5
                 )
-                self.optimizer.param_groups[0]['lr'] = 0.0001
+                self.optimizer.param_groups[0]['lr'] = init_lr
                 print('Optimizer LR: {:.5f}'.format(self.get_lr()))
 
         # self.images_criterion = CharbonnierLoss().to(self.device)
@@ -301,8 +331,8 @@ class CustomTrainingPipeline(object):
                     p_loss = self.perceptual_loss(
                         # pred_image,
                         # clear_image
-                        self._convert_ycrcb_to_rgb(pred_image), 
-                        self._convert_ycrcb_to_rgb(clear_image)
+                        self._convert_to_rgb(pred_image), 
+                        self._convert_to_rgb(clear_image)
                     )
                     
                 # a_loss = self.adv_loss(pred_image, clear_image)
@@ -312,13 +342,13 @@ class CustomTrainingPipeline(object):
                 # )
 
                 f_loss = self.hf_loss(
-                    self._convert_ycrcb_to_rgb(pred_image), 
-                    self._convert_ycrcb_to_rgb(clear_image)
+                    self._convert_to_rgb(pred_image), 
+                    self._convert_to_rgb(clear_image)
                 )
 
                 # h_loss = self.final_hist_loss(
-                #     self._convert_ycrcb_to_rgb(pred_image), 
-                #     self._convert_ycrcb_to_rgb(clear_image)
+                #     self._convert_to_rgb(pred_image), 
+                #     self._convert_to_rgb(clear_image)
                 # )
 
                 total_loss = loss + f_loss
@@ -374,7 +404,7 @@ class CustomTrainingPipeline(object):
 
         if self.val_dataset is not None:
             for sample_i in tqdm.tqdm(range(len(self.val_dataset))):
-                _noisy_image, _clear_image = self.val_dataset[sample_i]
+                _noisy_image, _clear_image, image_name = self.val_dataset[sample_i]
 
                 noisy_image = _noisy_image.to(self.device)
                 clear_image = _clear_image.to(self.device).unsqueeze(0)
@@ -399,17 +429,13 @@ class CustomTrainingPipeline(object):
                     restored_image = torch.clamp(restored_image, 0, 1)
 
                     val_psnr = self.accuracy_measure(
-                        # restored_image,
-                        # clear_image
-                        self._convert_ycrcb_to_rgb(restored_image),
-                        self._convert_ycrcb_to_rgb(clear_image)
+                        self._convert_to_rgb(restored_image),
+                        self._convert_to_rgb(clear_image)
                     )
 
                     val_ssim = self.ssim_measure(
-                        # restored_image,
-                        # clear_image
-                        self._convert_ycrcb_to_rgb(restored_image),
-                        self._convert_ycrcb_to_rgb(clear_image)
+                        self._convert_to_rgb(restored_image),
+                        self._convert_to_rgb(clear_image)
                     )
 
                     acc_rate = val_psnr.item()
@@ -419,9 +445,14 @@ class CustomTrainingPipeline(object):
                     del val_ssim
                     test_len += 1
 
-                    result_path = os.path.join(self.output_val_images_dir, '{}.png'.format(sample_i + 1))
+                    result_path = os.path.join(self.output_val_images_dir, image_name)
                     val_img = (restored_image.squeeze(0).to('cpu').permute(1, 2, 0) * 255.0).numpy().astype(np.uint8)
-                    val_img = cv2.cvtColor(val_img, cv2.COLOR_YCrCb2RGB)
+                    
+                    if self.use_ycrcb and not self.grayscale:
+                        val_img = cv2.cvtColor(val_img, cv2.COLOR_YCrCb2RGB)
+                    elif self.grayscale:
+                        val_img = cv2.cvtColor(val_img, cv2.COLOR_GRAY2RGB)
+
                     Image.fromarray(val_img).save(result_path)
 
         if test_len > 0:
@@ -434,8 +465,12 @@ class CustomTrainingPipeline(object):
 
         return avg_loss_rate, (avg_acc_rate, avg_ssim_rate)
 
-    def _convert_ycrcb_to_rgb(self, _tensor: torch.Tensor) -> torch.Tensor:
-        return kornia.color.ycbcr.ycbcr_to_rgb(_tensor)
+    def _convert_to_rgb(self, _tensor: torch.Tensor) -> torch.Tensor:
+        if self.use_ycrcb and not self.grayscale:
+            return kornia.color.ycbcr.ycbcr_to_rgb(_tensor)
+        elif:
+            return kornia.color.grayscale_to_rgb(_tensor)
+        return _tensor
 
     def _plot_values(self, epoch, avg_train_loss, avg_val_loss, avg_val_acc):
         avg_val_psnr, avg_val_ssim = avg_val_acc
@@ -540,8 +575,20 @@ def parse_args() -> Namespace:
         help='Count of batches to accumulate gradiets.'
     )
     parser.add_argument(
+        '--use_ycrcb', action='store_true',
+        help='Use YCrCb color space for image training.'
+    )
+    parser.add_argument(
+        '--use_grayscale', action='store_true',
+        help='Use 1-channel for image training.'
+    )
+    parser.add_argument(
         '--batch_size', type=int, required=False, default=32,
         help='Training batch size.'
+    )
+    parser.add_argument(
+        '--lr', type=float, required=False, default=0.001,
+        help='Start value of learning rate.'
     )
     parser.add_argument(
         '--lr_milestones', type=int, required=False, default=3,
@@ -558,6 +605,10 @@ def parse_args() -> Namespace:
     parser.add_argument(
         '--synthetic_data_paths', type=str, required=False,
         help='Path to folder with clear images to generate synthetic noisy dataset.'
+    )
+    parser.add_argument(
+        '--annotation', type=str, required=False, default='',
+        help='Annotation of experiment.'
     )
     return parser.parse_args()
 
@@ -587,9 +638,14 @@ if __name__ == '__main__':
         image_size=args.image_size,
         train_workers=args.njobs,
         preload_data=args.preload_datasets,
+        init_lr=args.lr,
+        annottaion_str=args.annotation,
         lr_steps=args.lr_milestones,
         no_load_optim=args.no_load_optim,
-        gradient_accumulation_steps=args.grad_accum_steps
+        gradient_accumulation_steps=args.grad_accum_steps,
+        use_ycrcb=args.use_ycrcb,
+        grayscale=args.use_grayscale,
+        full_args=args
     ).fit()
 
     exit(0)

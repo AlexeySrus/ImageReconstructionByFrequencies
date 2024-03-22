@@ -103,7 +103,6 @@ class OutConv(nn.Module):
         return self.conv(x)
 
 
-
 class OneLevelUNet(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, use_bilinear: bool = False) -> None:
         super().__init__()

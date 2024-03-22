@@ -22,13 +22,14 @@ import yaml
 
 from dataloader import PairedDenoiseDataset, SyntheticNoiseDataset
 from callbacks import VisImage, VisAttentionMaps, VisPlot, SaveTableTrainInfo
-from WTSNet.wts_timm import UnetTimm, WTSNetTimm, SharpnessHead, SharpnessHeadForYChannel
+from WTSNet.wts_timm import UnetTimm, WTSNetTimm, SharpnessHead
+from WTSNet.unet_wts import MWCNNCBAM
 from utils.window_inference import denoise_inference
 from utils.hist_loss import HistLoss
 from utils.freq_loss import HFENLoss
 from utils.sparce_loss import SparceLoss
 from utils.adversarial_loss import Adversarial
-from utils.uformer_model import get_uformer_model
+# rom utils.uformer_model import get_uformer_model
 from utils.tv_loss import TVLoss, CharbonnierLoss
 from utils.tensor_utils import MixUp_AUG
 
@@ -93,6 +94,7 @@ class CustomTrainingPipeline(object):
                  loss_coefficients: Tuple[float, float] = (1.0, 0.5),
                  use_ycrcb: bool = False,
                  use_adasmooth_optim: bool = False,
+                 train_unet: bool = False,
                  full_args: Optional[Namespace] = None):
         """
         Train U-Net denoising model
@@ -119,6 +121,7 @@ class CustomTrainingPipeline(object):
             train_sharpness_head (bool, optional): Use pretrained WTS model and train additional sharpness module only. Defaults to False.
             use_ycrcb (bool, optional): Use YCrCb color space for image training. Defaults to False.
             use_adasmooth_optim (bool, optional): Use AdaSmooth optimizer with adaprive learning rate for model training. Defaults to False.
+            train_unet (bool, optional): Train U-Net architecture, wavelets coefficients will be calculated with predict image. Defaults to False.
             full_args (Namespace, optional): To save command line arguments only. Defaults to None.
         """
         if train_sharpness_head and load_path is None:
@@ -248,10 +251,14 @@ class CustomTrainingPipeline(object):
                 legend=['val']
             )
 
-        self.model = WTSNetTimm(model_name=model_name)
+        if train_unet:
+            self.model = UnetTimm(model_name=model_name, use_biliniar=False)
+        else:
+            self.model = WTSNetTimm(model_name=model_name)
+            # self.model = MWCNNCBAM(depth=5, for_wavelet_loss=True)
 
         if train_sharpness_head:
-            self.model = SharpnessHeadForYChannel(
+            self.model = SharpnessHead(
                 base_model=self.model, 
                 in_ch=3, out_ch=3
             )
@@ -263,7 +270,10 @@ class CustomTrainingPipeline(object):
         if use_adasmooth_optim:
             self.optimizer = AdaSmooth(params=self.model.parameters(), lr=init_lr, weight_decay=0.1, weight_decouple=True)
         else:
-            self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=init_lr, weight_decay=0.01)
+            if train_sharpness_head:
+                self.optimizer = torch.optim.RAdam(params=self.model.parameters(), lr=init_lr)
+            else:
+                self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=init_lr, weight_decay=0.01)
 
         if load_path is not None:
             need_to_load_optim = False
@@ -323,7 +333,7 @@ class CustomTrainingPipeline(object):
         # self.wavelets_criterion = lambda pred, trurh: torch.linalg.norm(pred - trurh) / pred.size(0)
         # self.wavelets_criterion = SparceLoss()
         # self.wavelets_criterion = CharbonnierLoss()
-        self.accuracy_measure = TorchPSNR().to(device)
+        self.accuracy_measure = TorchPSNR(data_range=1.0).to(device)
         self.ssim_measure = SSIM(data_range=1.0, channel=3)
 
         self.scheduler = None
@@ -452,7 +462,7 @@ class CustomTrainingPipeline(object):
                 else:
                     p_loss = None
                     loss = self.images_criterion(pred_image, clear_image)
-                    wloss = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image, use_approximation=False)
+                    wloss = self._compute_wavelets_loss(pred_wavelets_pyramid, clear_image, use_approximation=True)
                     total_loss = loss * self.px_coeff + wloss * self.wavelet_coeff
 
                 if self.gradient_accumulation_steps > 1:
@@ -726,6 +736,10 @@ def parse_args() -> Namespace:
         help='Use YCrCb color space for image training.'
     )
     parser.add_argument(
+        '--use_adasmooth_optim', action='store_true',
+        help='Use AdaSmooth optimizer with adaptive learning rate for training.'
+    )
+    parser.add_argument(
         '--preload_datasets', action='store_true',
         help='Load images from datasaets into memory.'
     )
@@ -781,6 +795,7 @@ if __name__ == '__main__':
         train_sharpness_head=args.train_sharpness_head,
         loss_coefficients=(args.pix_loss_coeff, args.wavelet_loss_coeff),
         use_ycrcb=args.use_ycrcb,
+        use_adasmooth_optim=args.use_adasmooth_optim,
         full_args=args
     ).fit()
 
