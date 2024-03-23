@@ -37,7 +37,7 @@ def parse_args() -> Namespace:
     )
     parser.add_argument(
         '--minsize', type=int, required=False, default=256,
-        help='Minimum image size'
+        help='Minimum image size (default: 256)'
     )
     return parser.parse_args()
 
