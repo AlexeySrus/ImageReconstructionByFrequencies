@@ -32,7 +32,7 @@ if  __name__ == '__main__':
     ]
 
     noisy_warp = {
-        os.path.splitext(fn)[1]: os.path.join(noisy_folder, fn)
+        os.path.splitext(fn)[0]: os.path.join(noisy_folder, fn)
         for fn in os.listdir(noisy_folder)
     }
 
