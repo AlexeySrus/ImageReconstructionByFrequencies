@@ -212,3 +212,18 @@ def split_by_wavelets(grayscale_img: np.ndarray, wavelet_type: str = 'bior1.1') 
 def merge_by_wavelets(LL: np.ndarray, LH: np.ndarray, HL: np.ndarray, HH: np.ndarray, wavelet_type: str = 'bior1.1') -> np.ndarray:
     res = pywt.idwt2((LL, (LH, HL, HH)), wavelet_type)
     return res
+
+
+def pad_image_to_inference(image: np.ndarray) -> np.ndarray:
+    res = image.copy()
+
+    nearest_size = 2 ** int(np.ceil(np.log2(max(image.shape[:2]))))
+
+    res = cv2.copyMakeBorder(
+        res, 
+        0, nearest_size - image.shape[0], 
+        0, nearest_size - image.shape[1], 
+        cv2.BORDER_REFLECT_101
+    )
+
+    return res

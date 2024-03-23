@@ -16,6 +16,7 @@ import os
 from torchmetrics.image import PeakSignalNoiseRatio as TorchPSNR
 from pytorch_msssim import SSIM, MS_SSIM
 from piq import DISTS
+import yaml
 from haar_pytorch import HaarForward, HaarInverse
 
 from dataloader import PairedDenoiseDataset, SyntheticNoiseDataset
@@ -69,7 +70,7 @@ class IWTHaar(torch.nn.Module):
 
 class CustomTrainingPipeline(object):
     def __init__(self,
-                 train_data_paths: Tuple[str, str],
+                 train_data_paths: Optional[Tuple[str, str]],
                  val_data_paths: Tuple[str, str],
                  synth_data_paths: Optional[str],
                  experiment_folder: str,
@@ -95,7 +96,7 @@ class CustomTrainingPipeline(object):
         Train U-Net denoising model
 
         Args:
-            train_data_paths (Tuple[str, str]): Pair of paths to noisy images and clear images
+            train_data_paths (Tuple[str, str], optional): Pair of paths to noisy images and clear images
             val_data_paths (Tuple[str, str]): Pair of paths to noisy images and clear images
             synth_data_paths (str, optional): Deprecated parameter, need set as None
             experiment_folder (str): Path to folder with checkpoints and experiments data
@@ -150,16 +151,19 @@ class CustomTrainingPipeline(object):
             with open(save_args_file, 'w') as f:
                 yaml.safe_dump(vars(full_args), f)
 
-        self.train_base_dataset = PairedDenoiseDataset(
-                noisy_images_path=train_data_paths[0],
-                clear_images_path=train_data_paths[1],
-                need_crop=True,
-                window_size=self.image_shape[0],
-                optional_dataset_size=25000,
-                preload=preload_data,
-                use_ycrcb=use_ycrcb,
-                grayscale=grayscale
-            )
+        if train_data_paths is not None:
+            self.train_base_dataset = PairedDenoiseDataset(
+                    noisy_images_path=train_data_paths[0],
+                    clear_images_path=train_data_paths[1],
+                    need_crop=True,
+                    window_size=self.image_shape[0],
+                    optional_dataset_size=25000,
+                    preload=preload_data,
+                    use_ycrcb=use_ycrcb,
+                    grayscale=grayscale
+                )
+        else:
+            self.train_base_dataset = None
 
         if synth_data_paths is not None:
             self.train_synth_dataset = SyntheticNoiseDataset(
@@ -171,10 +175,14 @@ class CustomTrainingPipeline(object):
                 grayscale=grayscale
             )
 
-            self.train_base_dataset = torch.utils.data.ConcatDataset(
-                [self.train_base_dataset, self.train_synth_dataset]
-            )
-            
+            if self.train_base_dataset is not None:
+                self.train_base_dataset = torch.utils.data.ConcatDataset(
+                    [self.train_base_dataset, self.train_synth_dataset]
+                )
+            else:
+                self.train_base_dataset = self.train_synth_dataset
+
+        assert self.train_base_dataset is not None, 'Please set one of datasets: Train or Synthetic'
 
         self.val_dataset = PairedDenoiseDataset(
             noisy_images_path=val_data_paths[0],
@@ -538,7 +546,7 @@ class CustomTrainingPipeline(object):
 def parse_args() -> Namespace:
     parser = ArgumentParser(description='Training pipeline')
     parser.add_argument(
-        '--train_data_folder', type=str, required=True,
+        '--train_data_folder', type=str, required=False,
         help='Path folder with train data (contains clear/ and noisy/ subfolders).'
     )
     parser.add_argument(
@@ -616,10 +624,14 @@ def parse_args() -> Namespace:
 if __name__ == '__main__':
     args = parse_args()
 
-    train_data = (
-        os.path.join(args.train_data_folder, 'noisy/'),
-        os.path.join(args.train_data_folder, 'clear/')
-    )
+    if args.train_data_folder is not None:
+        train_data = (
+            os.path.join(args.train_data_folder, 'noisy/'),
+            os.path.join(args.train_data_folder, 'clear/')
+        )
+    else:
+        train_data = None
+
     val_data = (
         os.path.join(args.validation_data_folder, 'noisy/'),
         os.path.join(args.validation_data_folder, 'clear/')
