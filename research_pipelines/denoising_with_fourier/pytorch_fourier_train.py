@@ -246,8 +246,12 @@ class CustomTrainingPipeline(object):
                 legend=['val']
             )
 
-
-        self.model = FFTAttentionUNet()
+        ch_count = 1 if grayscale else 3
+        self.model = FFTAttentionUNet(
+            in_ch=ch_count,
+            out_ch=ch_count,
+            image_size=image_size
+        )
         self.model.apply(init_weights)
         self.model = self.model.to(device)
         # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=init_lr, nesterov=True, momentum=0.9, weight_decay=1E-2)
