@@ -93,3 +93,4 @@ if  __name__ == '__main__':
                 nimg,
                 [cv2.IMWRITE_PNG_COMPRESSION, 0]
             )
+            assert is_save, noisy_path
