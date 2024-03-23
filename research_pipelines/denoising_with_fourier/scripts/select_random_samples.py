@@ -36,7 +36,7 @@ if  __name__ == '__main__':
         for fn in os.listdir(noisy_folder)
     }
 
-    assert len(clear_files_names > args.number), 'Count of files less then required to save'
+    assert len(clear_files_names) > args.number, 'Count of files less then required to save'
 
     clear_files_names.sort()
     np.random.shuffle(clear_files_names)
