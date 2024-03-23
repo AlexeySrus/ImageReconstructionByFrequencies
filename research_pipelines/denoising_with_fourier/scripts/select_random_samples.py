@@ -14,7 +14,7 @@ def parse_args() -> Namespace:
         help='Path to folder with dataset which contain \'clear\' and \'noisy\' subfolders'
     )
     parser.add_argument(
-        '-n', '--number', type=str, required=False, default=1000,
+        '-n', '--number', type=int, required=False, default=1000,
         help='Count of saving files'
     )
     return parser.parse_args()
