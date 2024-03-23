@@ -276,7 +276,7 @@ class CustomTrainingPipeline(object):
                 print('Optimizer LR: {:.5f}'.format(self.get_lr()))
 
         # self.images_criterion = CharbonnierLoss().to(self.device)
-        self.images_criterion = MIXLoss(data_range=1.0)
+        self.images_criterion = MIXLoss(data_range=1.0, channel=ch_count)
         # self.perceptual_loss = DISTS()
         self.perceptual_loss = None
         # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
@@ -290,7 +290,7 @@ class CustomTrainingPipeline(object):
 
         # self.ssim_loss = None
         self.accuracy_measure = TorchPSNR().to(device)
-        self.ssim_measure = SSIM(data_range=1.0, channel=3)
+        self.ssim_measure = SSIM(data_range=1.0, channel=ch_count)
 
         self.mixup = MixUp_AUG()
 
