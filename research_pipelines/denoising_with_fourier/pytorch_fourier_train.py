@@ -421,6 +421,9 @@ class CustomTrainingPipeline(object):
                 noisy_image = _noisy_image.to(self.device)
                 clear_image = _clear_image.to(self.device).unsqueeze(0)
 
+                assert noisy_image.size(1) > self.image_shape[0] and noisy_image.size(2) > self.image_shape[1], \
+                    str(noisy_image.shape)
+
                 # # Convert network input to YCrCb
                 # noisy_image = kornia.color.ycbcr.rgb_to_ycbcr(noisy_image).squeeze(0)
                 # clear_image = kornia.color.ycbcr.rgb_to_ycbcr(clear_image)
