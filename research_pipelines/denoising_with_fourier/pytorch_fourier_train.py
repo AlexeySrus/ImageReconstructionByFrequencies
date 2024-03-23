@@ -476,7 +476,7 @@ class CustomTrainingPipeline(object):
     def _convert_to_rgb(self, _tensor: torch.Tensor) -> torch.Tensor:
         if self.use_ycrcb and not self.grayscale:
             return kornia.color.ycbcr.ycbcr_to_rgb(_tensor)
-        elif:
+        else:
             return kornia.color.grayscale_to_rgb(_tensor)
         return _tensor
 
