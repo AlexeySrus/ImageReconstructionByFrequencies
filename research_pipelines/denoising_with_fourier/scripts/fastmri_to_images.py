@@ -69,7 +69,7 @@ if  __name__ == '__main__':
 
                 is_save = cv2.imwrite(
                     res_path,
-                    nimg,
+                    nimg[slice_id],
                     [cv2.IMWRITE_PNG_COMPRESSION, 0]
                 )
                 assert is_save, res_path
