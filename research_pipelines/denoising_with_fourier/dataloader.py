@@ -165,8 +165,8 @@ class SyntheticNoiseDataset(Dataset):
         else:
             noisy_crop = clear_crop.copy()
 
-        noisy_image = convert_to_rgb_or_grayscale(noisy_image, self.use_ycrcb, self.grayscale)
-        clear_image = convert_to_rgb_or_grayscale(clear_image, self.use_ycrcb, self.grayscale)
+        noisy_crop = convert_to_rgb_or_grayscale(noisy_crop, self.use_ycrcb, self.grayscale)
+        clear_crop = convert_to_rgb_or_grayscale(clear_crop, self.use_ycrcb, self.grayscale)
 
         return preprocess_image(noisy_crop, 0, 1), preprocess_image(clear_crop, 0, 1)
 
