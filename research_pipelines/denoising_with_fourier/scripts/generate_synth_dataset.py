@@ -8,7 +8,7 @@ import os
 import sys
 
 CURRENT_PATH = os.path.dirname(__file__)
-sys.path.insert(os.path.join(CURRENT_PATH, '../'), 0)
+sys.path.insert(0, os.path.join(CURRENT_PATH, '../'))
 
 from utils.image_utils import pad_image_to_inference
 
