@@ -290,7 +290,7 @@ class CustomTrainingPipeline(object):
 
         # self.ssim_loss = None
         self.accuracy_measure = TorchPSNR().to(device)
-        self.ssim_measure = SSIM(data_range=1.0, channel=ch_count)
+        self.ssim_measure = SSIM(data_range=1.0, channel=3)
 
         self.mixup = MixUp_AUG()
 
