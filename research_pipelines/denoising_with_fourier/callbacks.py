@@ -227,7 +227,7 @@ class VisPlot(AbstractCallback):
 
 class VisImageForFourier(AbstractCallback):
     def __init__(self, title, server='http://localhost', port=8080,
-                 vis_step=1, scale=10):
+                 vis_step=1, scale=10, use_ycrcb: bool = False, grayscale: bool = False):
         self.viz = Visdom(server=server, port=port)
         self.title = title + ' input | predicted | original'
         self.windows = {1: None}
@@ -239,6 +239,9 @@ class VisImageForFourier(AbstractCallback):
         self.img_std = 1
         self.w_mean = 0
         self.w_std = 1
+
+        self.use_ycrcb = use_ycrcb
+        self.grayscale = grayscale
 
         random.seed()
 
@@ -252,9 +255,14 @@ class VisImageForFourier(AbstractCallback):
             out = np.clip(out, 0, 255).astype(np.uint8)
         return out
 
-    def _ycrcb_to_rgb(self, im: torch.Tensor) -> torch.Tensor:
+    def _to_rgb(self, im: torch.Tensor) -> torch.Tensor:
         np_image = self._tensor_to_image(im)
-        rgb_image = cv2.cvtColor(np_image, cv2.COLOR_YCrCb2RGB)
+        if self.use_ycrcb and not self.grayscale:
+            rgb_image = cv2.cvtColor(np_image, cv2.COLOR_YCrCb2RGB)
+        elif self.grayscale:
+            rgb_image = cv2.cvtColor(np_image[..., 0], cv2.COLOR_GRAYSCALE2RGB)
+        else:
+            rgb_image = np_image
         return preprocess_image(rgb_image, self.img_mean, self.img_std)
 
     def per_batch(self, args, label=1):
@@ -272,9 +280,9 @@ class VisImageForFourier(AbstractCallback):
                     pred_wavelets = args['pred_wavelets'][i]
                     gt_image = args['gt_image'][i]
 
-                    input_image = self._denorm_image(self._ycrcb_to_rgb(self._merge_by_wavelets(lr_img, gt_wavelets)))
-                    pred_image = self._denorm_image(self._ycrcb_to_rgb(self._merge_by_wavelets(lr_img, pred_wavelets)))
-                    gt_image = self._denorm_image(self._ycrcb_to_rgb(gt_image))
+                    input_image = self._denorm_image(self._to_rgb(self._merge_by_wavelets(lr_img, gt_wavelets)))
+                    pred_image = self._denorm_image(self._to_rgb(self._merge_by_wavelets(lr_img, pred_wavelets)))
+                    gt_image = self._denorm_image(self._to_rgb(gt_image))
 
                     x = torch.cat(
                         (input_image, pred_image, gt_image),
@@ -306,8 +314,9 @@ class VisImageForFourier(AbstractCallback):
 
 class VisImage(VisImageForFourier):
     def __init__(self, title, server='http://localhost', port=8080,
-                 vis_step=1, scale=10):
-        super().__init__(title, server, port, vis_step, scale)
+                 vis_step=1, scale=10,
+                 use_ycrcb: bool = False, grayscale: bool = False):
+        super().__init__(title, server, port, vis_step, scale, use_ycrcb, grayscale)
 
     def per_batch(self, args, label=1, i: Optional[int] = None) -> Optional[int]:
         if self.n % self.step == 0:
@@ -324,9 +333,9 @@ class VisImage(VisImageForFourier):
                     gt_image = torch.clip(gt_image, 0, 1).to('cpu')
                     pred_image = torch.clip(pred_image, 0, 1).to('cpu')
 
-                    inp_image = self._denorm_image(self._ycrcb_to_rgb(inp_image))
-                    gt_image = self._denorm_image(self._ycrcb_to_rgb(gt_image))
-                    pred_image = self._denorm_image(self._ycrcb_to_rgb(pred_image))
+                    inp_image = self._denorm_image(self._to_rgb(inp_image))
+                    gt_image = self._denorm_image(self._to_rgb(gt_image))
+                    pred_image = self._denorm_image(self._to_rgb(pred_image))
 
                     x = torch.cat(
                         (inp_image, pred_image, gt_image),
