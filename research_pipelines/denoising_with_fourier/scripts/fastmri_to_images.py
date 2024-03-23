@@ -61,14 +61,15 @@ if  __name__ == '__main__':
             nimg = (image - image.min()) / (image.max() - image.min())
             nimg = (nimg * 255.0).numpy().astype(np.uint8)
 
-            res_path = os.path.join(
-                args.output, 
-                '{}_{}.png'.format(base_folder_name, bname)
-            )
+            for slice_id in range(nimg.shape[0]):
+                res_path = os.path.join(
+                    args.output, 
+                    '{}_{}_slice_{}.png'.format(base_folder_name, bname, slice_id)
+                )
 
-            is_save = cv2.imwrite(
-                res_path,
-                nimg,
-                [cv2.IMWRITE_PNG_COMPRESSION, 0]
-            )
-            assert is_save, res_path
+                is_save = cv2.imwrite(
+                    res_path,
+                    nimg,
+                    [cv2.IMWRITE_PNG_COMPRESSION, 0]
+                )
+                assert is_save, res_path
