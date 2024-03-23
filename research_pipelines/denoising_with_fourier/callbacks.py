@@ -260,7 +260,7 @@ class VisImageForFourier(AbstractCallback):
         if self.use_ycrcb and not self.grayscale:
             rgb_image = cv2.cvtColor(np_image, cv2.COLOR_YCrCb2RGB)
         elif self.grayscale:
-            rgb_image = cv2.cvtColor(np_image[..., 0], cv2.COLOR_GRAYSCALE2RGB)
+            rgb_image = cv2.cvtColor(np_image[..., 0], cv2.COLOR_GRAY2RGB)
         else:
             rgb_image = np_image
         return preprocess_image(rgb_image, self.img_mean, self.img_std)
