@@ -170,7 +170,7 @@ class CustomTrainingPipeline(object):
                 clear_images_path=synth_data_paths,
                 window_size=self.image_shape[0],
                 preload=preload_data,
-                optional_dataset_size=2500,
+                optional_dataset_size=250000,
                 use_ycrcb=use_ycrcb,
                 grayscale=grayscale
             )
@@ -275,18 +275,18 @@ class CustomTrainingPipeline(object):
                 self.optimizer.param_groups[0]['lr'] = init_lr
                 print('Optimizer LR: {:.5f}'.format(self.get_lr()))
 
-        # self.images_criterion = CharbonnierLoss().to(self.device)
-        self.images_criterion = MIXLoss(data_range=1.0, channel=ch_count)
+        self.images_criterion = CharbonnierLoss().to(self.device)
+        # self.images_criterion = MIXLoss(data_range=1.0, channel=ch_count)
         # self.perceptual_loss = DISTS()
         self.perceptual_loss = None
         # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
         self.final_hist_loss = None
         # self.adv_loss = Adversarial(image_size=self.image_shape[0], gan_type='GAN', spectral_norm=True).to(device)
-        # self.hf_loss = HightFrequencyFFTLoss(self.image_shape).to(device)
-        self.hf_loss = HFENLoss(
-            loss_f=torch.nn.functional.l1_loss,
-            norm=True
-        )
+        self.hf_loss = HightFrequencyFFTLoss(self.image_shape).to(device)
+        # self.hf_loss = HFENLoss(
+        #     loss_f=torch.nn.functional.l1_loss,
+        #     norm=True
+        # )
 
         # self.ssim_loss = None
         self.accuracy_measure = TorchPSNR().to(device)
@@ -354,8 +354,8 @@ class CustomTrainingPipeline(object):
                 # )
 
                 f_loss = self.hf_loss(
-                    self._convert_to_rgb(pred_image), 
-                    self._convert_to_rgb(clear_image)
+                    pred_image, 
+                    clear_image
                 )
 
                 # h_loss = self.final_hist_loss(
@@ -369,7 +369,7 @@ class CustomTrainingPipeline(object):
                     total_loss = total_loss / self.gradient_accumulation_steps
 
                 total_loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                # torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
 
                 if (self.gradient_accumulation_steps <= 1) or (
                         (idx + 1) % self.gradient_accumulation_steps == 0) or (

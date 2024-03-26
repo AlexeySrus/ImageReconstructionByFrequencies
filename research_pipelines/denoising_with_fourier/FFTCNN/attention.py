@@ -19,6 +19,7 @@ import torch
 from torch import nn
 
 from FFTCNN.mixvit import LayerNorm, RISwish, OverlapPatchEmbed, Block
+from utils.haar_utils import HaarForward, HaarInverse
 
 
 def retrieve_elements_from_indices(tensor, indices):
@@ -452,6 +453,37 @@ class HightFrequencyRealImageComponents(nn.Module):
         return hight_freq_x
 
 
+class LowHightFrequencyRealImageComponents(nn.Module):
+    def __init__(self, shape: Tuple[int, int]):
+        super().__init__()
+
+        hight_pass_kernel = 1.0 - generate_batt(shape, 500, 1).astype(np.float32)
+
+        hight_pass_kernel = torch.from_numpy(hight_pass_kernel).unsqueeze(0).unsqueeze(0)
+        hight_pass_kernel = torch.fft.fftshift(hight_pass_kernel)
+        hight_pass_kernel = hight_pass_kernel[:, :, :, :shape[1] // 2 + 1].to(torch.cfloat)
+
+        low_pass_kernel = (1.0 - hight_pass_kernel[:, :, :, :shape[1] // 2 + 1]).to(torch.cfloat)
+        
+        self.hight_pass_kernel = nn.Parameter(hight_pass_kernel, requires_grad=False)
+        self.low_pass_kernel = nn.Parameter(low_pass_kernel, requires_grad=False)
+
+    def apply_fft_kernel(self, x, kernel):
+        return x * kernel
+
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        z = torch.fft.rfft2(x, norm='ortho')
+        
+        hight_freq_z = self.apply_fft_kernel(z, self.hight_pass_kernel)
+        low_freq_z = self.apply_fft_kernel(z, self.low_pass_kernel)
+        
+        hight_freq_x = torch.fft.irfft2(hight_freq_z, norm='ortho').real
+        low_freq_x = torch.fft.irfft2(low_freq_z, norm='ortho').real
+        
+        
+        return low_freq_x, hight_freq_x
+
+
 class HightFrequencySpatialAttention(nn.Module):
     def __init__(self, channel: int, image_size: int, kernel_size=7):
         super(HightFrequencySpatialAttention, self).__init__()
@@ -479,11 +511,34 @@ class HightFrequencySpatialAttention(nn.Module):
         return x * attn, attn
     
 
+
+class SpatialAttention(nn.Module):
+    def __init__(self, kernel_size=7):
+        super(SpatialAttention, self).__init__()
+        self.conv = nn.Conv2d(2, 1, kernel_size, padding=kernel_size//2, bias=False, padding_mode='reflect')
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        avg_out = torch.mean(x, dim=1, keepdim=True)
+        max_out, _ = torch.max(x, dim=1, keepdim=True)
+        out = torch.concat([avg_out, max_out], dim=1)
+        out = self.conv(out)
+        attn = self.sigmoid(out)
+        return x * attn, attn
+
+
 class FrequencySplitFeatures(nn.Module):
+    def get_ksize(self, image_size: int) -> int:
+        if image_size >= 128:
+            return 7
+        elif image_size >= 32:
+            return 5
+        return 3
+
     def __init__(self, channel: int, image_size: int):
         super(FrequencySplitFeatures, self).__init__()
 
-        self.freq_slitter = HightFrequencyRealImageComponents((image_size, image_size))
+        self.freq_slitter = HightFrequencyRealImageComponents(shape=(image_size, image_size))
 
         self.hlf_d1 = nn.Conv2d(channel, channel // 2, 3, stride=1, padding=1, dilation=1, padding_mode='reflect')
         self.hlf_d2 = nn.Conv2d(channel, channel // 2, 3, stride=1, padding=2, dilation=2, padding_mode='reflect')
@@ -494,6 +549,8 @@ class FrequencySplitFeatures(nn.Module):
         self.bn2 = nn.BatchNorm2d(channel)
         self.act2 = nn.LeakyReLU()
 
+        # self.sa = GenerateSpatialAttention(kernel_size=self.get_ksize(image_size))
+
     def forward(self, x):
         hight_freq = self.freq_slitter(x)
 
@@ -503,14 +560,78 @@ class FrequencySplitFeatures(nn.Module):
         d12 = self.bn1(d12)
         d12 = self.act1(d12)
 
-        add_feats = self.hlf_f2(d12)
-        add_feats = self.bn2(add_feats)
-        x = self.act2(x + add_feats)
+        hf_feats = self.hlf_f2(d12)
+        hf_feats = self.bn2(hf_feats)
+        x = self.act2(x + hf_feats)
 
         with torch.no_grad():
-            attn = torch.abs(add_feats.mean(dim=1).unsqueeze(1))
+            attn = torch.abs(hf_feats.mean(dim=1).unsqueeze(1))
+
+        # attn = self.sa(highlight_x)
 
         return x, attn
+
+
+class WaveletSpaialAttention(nn.Module):
+    padding_mode = 'reflect'
+
+    def get_ksize(self, image_size: int) -> int:
+        if image_size >= 128:
+            return 7
+        elif image_size >= 32:
+            return 5
+        return 3
+
+    def __init__(self, channel: int, image_size: int):
+        super(WaveletSpaialAttention, self).__init__()
+
+        self.wavelet_forward = HaarForward()
+        self.wavelet_inverse = HaarInverse()
+
+        self.conv1 = nn.Conv2d(channel * 4, channel * 2, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode)
+        self.bn1 = nn.BatchNorm2d(channel * 2)
+        self.act1 = nn.LeakyReLU()
+
+        self.conv2 = nn.Conv2d(channel * 2, channel * 4, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode)
+        self.bn2 = nn.BatchNorm2d(channel * 4)
+        self.act2 = nn.LeakyReLU()
+
+        self.conv_mid = nn.Conv2d(channel * 4, channel * 4, kernel_size=1, stride=1, bias=False)
+
+        self.conv_last = nn.Conv2d(channel * 4, channel * 4, kernel_size=1, stride=1, bias=False)
+
+        self.ll_sa = SpatialAttention(kernel_size=self.get_ksize(image_size))
+        self.lh_sa = SpatialAttention(kernel_size=self.get_ksize(image_size))
+        self.hl_sa = SpatialAttention(kernel_size=self.get_ksize(image_size))
+        self.hh_sa = SpatialAttention(kernel_size=self.get_ksize(image_size))
+
+    def forward(self, x: torch.Tensor) ->  Tuple[torch.Tensor, torch.Tensor]:
+        w_feats = self.wavelet_forward(x)
+
+        y = self.conv1(w_feats)
+        y = self.bn1(y)
+        y = self.act1(y)
+
+        y = self.conv2(y)
+        y = self.bn2(y)
+        y = self.act2(y + w_feats)
+
+        y = self.conv_mid(y)
+
+        ll_feats, ll_attn = self.ll_sa(y[:, :x.size(1)])
+        lh_feats, lh_attn = self.lh_sa(y[:, x.size(1):x.size(1)*2])
+        hl_feats, hl_attn = self.hl_sa(y[:, x.size(1)*2:x.size(1)*3])
+        hh_feats, hh_attn = self.hh_sa(y[:, x.size(1)*3:])
+
+        y = torch.cat([ll_feats, lh_feats, hl_feats, hh_feats], dim=1)
+
+        y = self.conv_last(y)
+
+        y = self.wavelet_inverse(y)
+
+        attn = ll_attn * lh_attn * hl_attn * hh_attn
+
+        return y, attn
 
 
 class FFTChannelAttention(nn.Module):
@@ -673,8 +794,8 @@ class RealFFTChannelAttentionV2(nn.Module):
 class FFTCAFSModule(nn.Module):
     def __init__(self, image_size: int, channel: int, reduction: int = 16, kernel_size: int = 7) -> None:
         super().__init__()
-        self.fft_sa = FrequencySplitFeatures(channel=channel, image_size=image_size)
         self.fft_ca = RealFFTChannelAttentionV2(channel=channel, reduction=reduction, image_size=image_size)
+        self.fft_sa = WaveletSpaialAttention(channel=channel, image_size=image_size)
 
     def forward(self, x):
         x, ca_tensor = self.fft_ca(x)

@@ -221,13 +221,15 @@ class FeaturesConvTransposeUpsample(nn.Module):
 class FeaturesUpsample(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, window_size: int, image_size: int):
         super().__init__()
+        self.in_features = FeaturesProcessing(in_ch, in_ch, window_size=window_size, image_size=image_size, use_attention=False)
         self.up = torch.nn.UpsamplingBilinear2d(scale_factor=2)
         self.features = FeaturesProcessing(in_ch, out_ch, window_size=window_size, image_size=image_size, use_attention=False)
         self.features_with_attn = FeaturesProcessing(out_ch, out_ch, window_size=window_size, image_size=image_size, use_attention=True)
 
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        y = self.up(x)
+        y, _ = self.in_features(x)
+        y = self.up(y)
         y, _ = self.features(y)
         y, sa = self.features_with_attn(y)
         return y, sa
@@ -295,7 +297,7 @@ class FFTAttentionUNet(nn.Module):
         super().__init__()
 
         self.unet = FFTAttentionUNetModule(in_ch, 16, out_ch, image_size=image_size)
-        self.out_conv = nn.Conv2d(out_ch, out_ch, 1)
+        self.out_conv = nn.Conv2d(out_ch, out_ch, 1, bias=False)
         self.export = False
 
     def to_export(self):
@@ -317,10 +319,11 @@ class FFTAttentionUNet(nn.Module):
             return self.denorm_input(hx + y)
 
         if self.training:
-            sa_list = [
-                nn.functional.interpolate(torch.abs(sa), (x.size(2), x.size(3)))
-                for sa in sa_list
-            ]
+            with torch.no_grad():
+                sa_list = [
+                    nn.functional.interpolate(torch.abs(sa), (x.size(2), x.size(3)), mode='bilinear')
+                    for sa in sa_list
+                ]
 
         return self.denorm_input(hx + y), sa_list
 
