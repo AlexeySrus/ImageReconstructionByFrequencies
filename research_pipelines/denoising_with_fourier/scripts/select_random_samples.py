@@ -3,6 +3,7 @@ from argparse import ArgumentParser, Namespace
 from tqdm import tqdm
 import os
 import numpy as np
+from shutil import copyfile
 
 CURRENT_PATH = os.path.dirname(__file__)
 
@@ -14,8 +15,12 @@ def parse_args() -> Namespace:
         help='Path to folder with dataset which contain \'clear\' and \'noisy\' subfolders'
     )
     parser.add_argument(
+        '-o', '--output', type=str, required=True,
+        help='Path to result folder with sublsamples frin dataset'
+    )
+    parser.add_argument(
         '-n', '--number', type=int, required=False, default=1000,
-        help='Count of saving files'
+        help='Count of selected files'
     )
     return parser.parse_args()
 
@@ -25,6 +30,12 @@ if  __name__ == '__main__':
 
     clear_folder = os.path.join(args.input, 'clear/')
     noisy_folder = os.path.join(args.input, 'noisy/')
+
+    clear_res_folder = os.path.join(args.output, 'clear/')
+    noisy_res_folder = os.path.join(args.output, 'noisy/')
+
+    os.makedirs(clear_res_folder, exist_ok=True)
+    os.makedirs(noisy_res_folder, exist_ok=True)
 
     clear_files_names = [
         fn
@@ -41,9 +52,15 @@ if  __name__ == '__main__':
     clear_files_names.sort()
     np.random.shuffle(clear_files_names)
 
-    for file_to_delete in tqdm(clear_files_names[args.number:]):
+    for file_to_delete in tqdm(clear_files_names[:args.number]):
         clear_image_path = os.path.join(clear_folder, file_to_delete)
         noisy_image_path = noisy_warp[os.path.splitext(file_to_delete)[0]]
+
+        copy_clear_path = os.path.join(clear_res_folder, file_to_delete)
+        copy_noisy_path = os.path.join(noisy_res_folder, os.path.basename(noisy_image_path))
+
+        copyfile(clear_image_path, copy_clear_path)
+        copyfile(noisy_image_path, copy_noisy_path)
 
         os.remove(clear_image_path)
         os.remove(noisy_image_path)

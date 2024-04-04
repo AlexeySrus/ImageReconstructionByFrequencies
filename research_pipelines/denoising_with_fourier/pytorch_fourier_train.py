@@ -170,7 +170,7 @@ class CustomTrainingPipeline(object):
                 clear_images_path=synth_data_paths,
                 window_size=self.image_shape[0],
                 preload=preload_data,
-                optional_dataset_size=250000,
+                optional_dataset_size=100000,
                 use_ycrcb=use_ycrcb,
                 grayscale=grayscale
             )
@@ -277,8 +277,8 @@ class CustomTrainingPipeline(object):
 
         self.images_criterion = CharbonnierLoss().to(self.device)
         # self.images_criterion = MIXLoss(data_range=1.0, channel=ch_count)
-        # self.perceptual_loss = DISTS()
-        self.perceptual_loss = None
+        self.perceptual_loss = DISTS()
+        # self.perceptual_loss = None
         # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
         self.final_hist_loss = None
         # self.adv_loss = Adversarial(image_size=self.image_shape[0], gan_type='GAN', spectral_norm=True).to(device)
@@ -326,8 +326,8 @@ class CustomTrainingPipeline(object):
                 noisy_image = _noisy_image.to(self.device)
                 clear_image = _clear_image.to(self.device)
 
-                if epoch > 1 and np.random.randint(0, 101) > 90:
-                    clear_image, noisy_image = self.mixup.aug(clear_image, noisy_image)
+                # if epoch > 1 and np.random.randint(0, 101) > 90:
+                #     clear_image, noisy_image = self.mixup.aug(clear_image, noisy_image)
 
                 output = self.model(noisy_image)
 
@@ -363,13 +363,13 @@ class CustomTrainingPipeline(object):
                 #     self._convert_to_rgb(clear_image)
                 # )
 
-                total_loss = loss + f_loss
+                total_loss = loss + f_loss + p_loss
 
                 if self.gradient_accumulation_steps > 1:
                     total_loss = total_loss / self.gradient_accumulation_steps
 
                 total_loss.backward()
-                # torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 2.0)
 
                 if (self.gradient_accumulation_steps <= 1) or (
                         (idx + 1) % self.gradient_accumulation_steps == 0) or (
@@ -378,11 +378,12 @@ class CustomTrainingPipeline(object):
                     self.optimizer.zero_grad()
 
                 pbar.postfix = \
-                    'Epoch: {}/{}, px_loss: {:.7f}, f_loss: {:.7f}'.format(
+                    'Epoch: {}/{}, px_loss: {:.7f}, f_loss: {:.7f}, p_loss: {:.7f}'.format(
                         epoch,
                         self.epochs,
                         loss.item(),
-                        f_loss.item()
+                        f_loss.item(),
+                        p_loss.item()
                     )
                 avg_epoch_loss += loss.item() / len(self.train_dataloader)
 
@@ -421,7 +422,7 @@ class CustomTrainingPipeline(object):
                 noisy_image = _noisy_image.to(self.device)
                 clear_image = _clear_image.to(self.device).unsqueeze(0)
 
-                assert noisy_image.size(1) > self.image_shape[0] and noisy_image.size(2) > self.image_shape[1], \
+                assert noisy_image.size(1) >= self.image_shape[0] and noisy_image.size(2) >= self.image_shape[1], \
                     str(noisy_image.shape)
 
                 # # Convert network input to YCrCb

@@ -1,4 +1,4 @@
-from typing import Tuple, List, Dict, Callable
+from typing import Tuple, List, Dict, Callable, Optional
 from argparse import ArgumentParser, Namespace
 import cv2
 import numpy as np
@@ -9,6 +9,7 @@ from tqdm import tqdm
 import os
 import h5py
 import xml.etree.ElementTree as etree
+from dipy.denoise.noise_estimate import piesno
 
 CURRENT_PATH = os.path.dirname(__file__)
 
@@ -20,14 +21,55 @@ def parse_args() -> Namespace:
         help='Path to folder with .h5 files'
     )
     parser.add_argument(
-        '-o', '--output', type=str, required=False,
+        '-o', '--output', type=str, required=True,
         help='Path to folder with output images'
     )
+    parser.add_argument(
+        '--crop', action='store_true',
+        help='Apply crop of useful area'
+    )
+    parser.add_argument(
+        '--minsize', type=int, required=False, default=256,
+        help='Minimum size of frame to save'
+    )
+    # parser.add_argument(
+    #     '-t', '--type', type=str, required=False, default='singlecoil',
+    #     choices=['singlecoil', 'multicoil'],
+    #     help='Type of MRI image: \'singlecoil\' or \'multicoil\''
+    # )
     return parser.parse_args()
+
+
+def signaltonoise(a, axis=None, ddof=0):
+    a = np.asanyarray(a)
+    m = a.mean(axis)
+    sd = a.std(axis=axis, ddof=ddof)
+    return np.where(np.abs(sd) < 1E-5, 0, m/sd)
+
+
+def crop_by_binary_mask(channel: np.ndarray, threshold: int = 15) -> Optional[np.ndarray]:
+    _, bimg = cv2.threshold(channel, threshold, 255, cv2.THRESH_BINARY)
+    x1, y1, w, h = cv2.boundingRect(bimg)
+    x2 = x1 + w
+    y2 = y1 + h
+
+    d = 15
+    x1 = max(0, x1 - d)
+    y1 = max(0, y1 - d)
+    x2 = min(bimg.shape[1] - 1, x2 + d)
+    x2 = min(bimg.shape[0] - 1, y2 + d)
+
+    if (x2 - x1) * (y2 - y1) == 0:
+        return None
+
+    img_to_save = channel[y1:y2, x1:x2].copy()
+    return img_to_save
 
 
 if  __name__ == '__main__':
     args = parse_args()
+
+    use_crop = args.crop
 
     base_folder_name = os.path.basename(str(args.input).rstrip('/'))
 
@@ -40,36 +82,85 @@ if  __name__ == '__main__':
 
         fpath = os.path.join(args.input, fname)
 
-        with h5py.File(fpath, "r") as hf:
-            et_root = etree.fromstring(hf["ismrmrd_header"][()])
-            masked_kspace = transforms.to_tensor(hf["kspace"][()])
+        try:
+            hf = h5py.File(fpath)
+        except Exception as e:
+            print('Scipt proecss file {} because: {}'.format(fname, e))
+            continue
 
-            enc = ["encoding", "encodedSpace", "matrixSize"]
-            crop_size = (
-                int(et_query(et_root, enc + ["x"])),
-                int(et_query(et_root, enc + ["y"])),
+        et_root = etree.fromstring(hf["ismrmrd_header"][()])
+        masked_kspace = transforms.to_tensor(hf["kspace"][()])
+
+        multicoil_reconstruction_rss = hf["reconstruction_rss"][:]
+
+        enc = ["encoding", "encodedSpace", "matrixSize"]
+        crop_size = (
+            int(et_query(et_root, enc + ["x"])),
+            int(et_query(et_root, enc + ["y"])),
+        )
+
+        image = fastmri.ifft2c(masked_kspace)
+
+        if image.shape[-2] < crop_size[1]:
+            crop_size = (image.shape[-2], image.shape[-2])
+
+        image = transforms.complex_center_crop(image, crop_size)
+        image = fastmri.complex_abs(image)
+
+        nimg = (image - image.min()) / (image.max() - image.min())
+        nimg = (nimg * 255.0).numpy().astype(np.uint8)
+
+        sigma_arr = piesno(nimg, N=4, return_mask=False)
+
+        if isinstance(sigma_arr, np.ndarray):
+            sigma = sigma_arr.max()
+        else:
+            sigma = sigma_arr
+
+        if sigma > 0.9:
+            continue
+
+        for slice_id in range(nimg.shape[0]):
+            res_path = os.path.join(
+                args.output, 
+                '{}_{}_slice_{}.png'.format(base_folder_name, bname, slice_id)
             )
 
-            image = fastmri.ifft2c(masked_kspace)
+            img_to_save = None
 
-            if image.shape[-2] < crop_size[1]:
-                crop_size = (image.shape[-2], image.shape[-2])
+            if len(nimg.shape) == 3:
+                # singlecoil type 
+                img_to_save = nimg[slice_id].copy()
+            elif len(nimg.shape) == 4:
+                # multicoil type 
+                sigma = sigma_arr[slice_id]
+                if sigma > 0.9:
+                    continue
 
-            image = transforms.complex_center_crop(image, crop_size)
-            image = fastmri.complex_abs(image)
+                img_to_save = multicoil_reconstruction_rss[slice_id]
 
-            nimg = (image - image.min()) / (image.max() - image.min())
-            nimg = (nimg * 255.0).numpy().astype(np.uint8)
+                img_to_save = (img_to_save - img_to_save.min()) / (img_to_save.max() - img_to_save.min())
+                img_to_save = (img_to_save * 255.0).astype(np.uint8)
+            else:
+                raise RuntimeError('Not supported shape: {}'.format(nimg.shape))
+            
+            snr = signaltonoise(img_to_save)
+            if np.abs(1.0 - snr) > 0.3:
+                continue
 
-            for slice_id in range(nimg.shape[0]):
-                res_path = os.path.join(
-                    args.output, 
-                    '{}_{}_slice_{}.png'.format(base_folder_name, bname, slice_id)
-                )
+            if use_crop:
+                img_to_save = crop_by_binary_mask(img_to_save)
+                if img_to_save is None:
+                    continue
 
-                is_save = cv2.imwrite(
-                    res_path,
-                    nimg[slice_id],
-                    [cv2.IMWRITE_PNG_COMPRESSION, 0]
-                )
-                assert is_save, res_path
+            if min(img_to_save.shape[:2]) < args.minsize:
+                continue
+
+            is_save = cv2.imwrite(
+                res_path,
+                img_to_save,
+                [cv2.IMWRITE_PNG_COMPRESSION, 0]
+            )
+            assert is_save, res_path
+
+        hf.close()

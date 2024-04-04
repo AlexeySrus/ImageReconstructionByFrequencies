@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 import numpy as np
+import math
 
 from utils.filters import get_log_kernel, load_filter
 
@@ -15,11 +16,36 @@ def generate_batt(size=(5, 5), d0=5, n=2):
     return kernel
 
 
+def create_butterworth_high_pass_filter(width, height, d, n):
+    hp_filter = np.zeros((height, width, 2), np.float32)
+    centre = (width / 2, height / 2)
+
+    for i in range(0, hp_filter.shape[1]):  # image width
+        for j in range(0, hp_filter.shape[0]):  # image height
+            radius = max(1, math.sqrt(math.pow((i - centre[0]), 2.0) + math.pow((j - centre[1]), 2.0)))
+            hp_filter[j, i] = 1 / (1 + math.pow((d / radius), (2 * n)))
+    return hp_filter
+
+
+# create a butterworth low pass filter
+
+def create_butterworth_low_pass_filter(width, height, d, n):
+    lp_filter = np.zeros((height, width, 2), np.float32)
+    centre = (width / 2, height / 2)
+
+    for i in range(0, lp_filter.shape[1]):  # image width
+        for j in range(0, lp_filter.shape[0]):  # image height
+            radius = max(1, math.sqrt(math.pow((i - centre[0]), 2.0) + math.pow((j - centre[1]), 2.0)))
+            lp_filter[j, i] = 1 / (1 + math.pow((radius / d), (2 * n)))
+    return lp_filter
+
+
 class HightFrequencyImageComponent(nn.Module):
     def __init__(self, shape: tuple):
         super().__init__()
 
-        kernel = 1.0 - generate_batt(shape, 500, 1).astype(np.float32)
+        # kernel = 1.0 - generate_batt(shape, 500, 1).astype(np.float32)
+        kernel = create_butterworth_high_pass_filter(shape[0], shape[1], 15, 2)[..., 0]
         self.image_shape = shape
 
         kernel = torch.from_numpy(kernel).unsqueeze(0).unsqueeze(0)
@@ -43,7 +69,8 @@ class HightFrequencyFFTLoss(nn.Module):
         assert reduction in ['mean', 'sum'], 'Not supported reduction method: {}'.format(reduction)
         self.reduction = reduction
 
-        hight_pass_kernel = 1.0 - generate_batt(shape, 500, 1).astype(np.float32)
+        # hight_pass_kernel = 1.0 - generate_batt(shape, 500, 1).astype(np.float32)
+        hight_pass_kernel = create_butterworth_high_pass_filter(shape[0], shape[1], 15, 2)[..., 0]
 
         hight_pass_kernel = torch.from_numpy(hight_pass_kernel).unsqueeze(0).unsqueeze(0)
         hight_pass_kernel = torch.fft.fftshift(hight_pass_kernel)

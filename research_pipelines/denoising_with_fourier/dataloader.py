@@ -9,17 +9,24 @@ import os
 from tqdm import tqdm
 
 from utils.image_utils import random_crop_with_transforms, pil_load_image as load_image
+from utils.image_utils import generate_additive_gaussian_noise, generate_additive_poisson_noise
+from utils.fft_mask_utils import ssdu_masks
 from utils.tensor_utils import preprocess_image
 
 
 def convert_to_rgb_or_grayscale(image: np.ndarray, to_ycrcb: bool, to_grayscale: bool):
     if to_ycrcb and not to_grayscale:
-        return cv2.cvtColor(noisy_crop, cv2.COLOR_RGB2YCrCb)
+        return cv2.cvtColor(image, cv2.COLOR_RGB2YCrCb)
     elif to_grayscale:
         res_img = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
         res_img = np.expand_dims(res_img, axis=2)
         return res_img
     return image
+
+
+def get_random_value_from_interval(a: float, b: float) -> float:
+    assert b > a
+    return a + np.random.rand() * (b - a)
 
 
 class PairedDenoiseDataset(Dataset):
@@ -92,6 +99,8 @@ class PairedDenoiseDataset(Dataset):
 
 
 class SyntheticNoiseDataset(Dataset):
+    support_mask_kernels = [4, 8, 16, 32, 64]
+
     def __init__(self, 
                  clear_images_path, 
                  window_size: int = 224,
@@ -121,7 +130,7 @@ class SyntheticNoiseDataset(Dataset):
                 A.GaussNoise(var_limit=(10.0, 150.0), always_apply=True),
                 A.ISONoise(always_apply=True),
                 A.MultiplicativeNoise(always_apply=True)
-            ], p=0.8)
+            ], p=0.5)
         ])
 
     def __len__(self):
@@ -130,7 +139,7 @@ class SyntheticNoiseDataset(Dataset):
     def __getitem__(self, _idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         idx = _idx % len(self.clear_images)
 
-        if np.random.randint(1, 101) > 80:
+        if np.random.randint(1, 101) > 98:
             rand_color = np.random.randint(0, 256, size=3, dtype=np.uint8)
             clear_image = np.zeros((self.window_size, self.window_size, 3), dtype=np.uint8)
             clear_image[:, :] = rand_color
@@ -148,22 +157,29 @@ class SyntheticNoiseDataset(Dataset):
             random_swap=False
         )
 
-        if np.random.randint(1, 101) > 10:
+        if np.random.randint(1, 101) > 2:
             if np.random.randint(1, 101) > 20:
-                if np.random.randint(1, 101) > 20:
-                    noise = np.random.poisson(clear_crop.astype(np.float32))
-                    noisy_crop = clear_crop.astype(np.float32) + noise
-                    noisy_crop = 255.0 * (noisy_crop / (np.amax(noisy_crop) + 1E-7))
+                if np.random.randint(1, 101) > 95:
+                    noisy_crop = generate_additive_poisson_noise(clear_crop)
                 else:
-                    std = np.random.uniform(0, 90)
-                    noise = np.random.normal(0, std, clear_crop.shape)
-                    noisy_crop = clear_crop.astype(np.float32) + noise
+                    std = np.random.uniform(1, 80)
+                    use_fft_noise = self.grayscale and np.random.choice([False, False, False, True])
+                    noisy_crop = generate_additive_gaussian_noise(clear_crop, std, use_fft_noise)
             else:
                 noisy_crop = self.noise_transform(image=clear_crop)['image']
 
             noisy_crop = np.clip(noisy_crop, 0.0, 255.0).astype(np.uint8)
         else:
             noisy_crop = clear_crop.copy()
+
+        if self.grayscale and np.random.randint(1, 101) > 50:
+            block_size = np.random.choice(self.support_mask_kernels)
+            rho = get_random_value_from_interval(0.05, 0.4)
+
+            noisy_crop = ssdu_masks(
+                rho=rho,
+                small_acs_block=(block_size, block_size)
+            ).apply_fft_matrix(noisy_crop)
 
         noisy_crop = convert_to_rgb_or_grayscale(noisy_crop, self.use_ycrcb, self.grayscale)
         clear_crop = convert_to_rgb_or_grayscale(clear_crop, self.use_ycrcb, self.grayscale)

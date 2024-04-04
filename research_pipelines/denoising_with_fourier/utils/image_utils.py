@@ -227,3 +227,62 @@ def pad_image_to_inference(image: np.ndarray) -> np.ndarray:
     )
 
     return res
+
+
+def generate_additive_poisson_noise(image: np.ndarray) -> np.ndarray:
+    noise = np.random.poisson(image.astype(np.float32))
+    noisy_image = image.astype(np.float32) + noise
+    noisy_image = 255.0 * (noisy_image / (np.amax(noisy_image) + 1E-7))
+    noisy_image = np.clip(noisy_image, 0.0, 255.0).astype(np.uint8)
+    return noisy_image
+
+
+def add_gaussian_frequency_noise_to_channel(channel: np.ndarray, sigma: float) -> np.ndarray:
+    fft_x = np.fft.rfft2(channel)
+
+    noise_level = 0.1
+
+    spower = np.sum(fft_x ** 2) / fft_x.size
+    npower = noise_level / (1 - noise_level) * spower
+
+    noise_re = np.random.normal(0, sigma, fft_x.real.shape) * np.sqrt(npower)
+    noise_im = np.random.normal(0, sigma, fft_x.imag.shape) * np.sqrt(npower)
+
+    noise_fft_x = fft_x + (noise_re + 1j * noise_im)
+
+    noisy_image = np.abs(np.fft.irfft2(noise_fft_x))
+    noisy_image = np.clip(noisy_image, 0, 255.0).astype(np.uint8)
+    return noisy_image
+
+
+def generate_additive_gaussian_noise(image: np.ndarray, sigma: float, frequency_domain: bool = False) -> np.ndarray:
+    if not frequency_domain:
+        noise = np.random.normal(0, sigma, image.shape)
+        noisy_image = image.astype(np.float32) + noise
+        noisy_image = np.clip(noisy_image, 0.0, 255.0).astype(np.uint8)
+        return noisy_image
+
+    if len(image.shape) == 2:
+        return add_gaussian_frequency_noise_to_channel(image, sigma / 255.0)
+
+    noisy_image = image.copy()
+
+    for ch in range(image.shape[2]):
+        noisy_image[..., ch] = add_gaussian_frequency_noise_to_channel(noisy_image[..., ch], sigma / 255.0)
+
+    return noisy_image
+
+
+
+if __name__ == '__main__':
+    from PIL import Image
+
+    imgp = '/home/alexey/Downloads/61EZ34nFyCL._AC_SL1000_.jpg'
+    img = Image.open(imgp).convert('L')
+    imgarr = np.array(img)
+
+    nimgarr_fft = generate_additive_gaussian_noise(imgarr, 100, True)
+    nimgarr_px = generate_additive_gaussian_noise(imgarr, 100, False)
+
+    Image.fromarray(nimgarr_fft).show(title='FFT Noise')
+    Image.fromarray(nimgarr_px).show(title='Pixel-wise Noise')

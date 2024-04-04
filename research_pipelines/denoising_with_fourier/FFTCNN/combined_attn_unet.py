@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 
 from FFTCNN.attention import FFTCAFSModule, SpatialAttention, ChannelAttention
+from utils.resample import resample_lanczos
 
 
 padding_mode: str = 'reflect'
@@ -222,7 +223,8 @@ class FeaturesUpsample(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, window_size: int, image_size: int):
         super().__init__()
         self.in_features = FeaturesProcessing(in_ch, in_ch, window_size=window_size, image_size=image_size, use_attention=False)
-        self.up = torch.nn.UpsamplingBilinear2d(scale_factor=2)
+        self.up = lambda x: resample_lanczos(x, scale=2, align_corners=False)
+        # self.up = torch.nn.UpsamplingBilinear2d(scale_factor=2)
         self.features = FeaturesProcessing(in_ch, out_ch, window_size=window_size, image_size=image_size, use_attention=False)
         self.features_with_attn = FeaturesProcessing(out_ch, out_ch, window_size=window_size, image_size=image_size, use_attention=True)
 

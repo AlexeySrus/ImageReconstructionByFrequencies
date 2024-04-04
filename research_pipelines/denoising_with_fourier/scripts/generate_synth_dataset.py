@@ -39,6 +39,10 @@ def parse_args() -> Namespace:
         '--minsize', type=int, required=False, default=256,
         help='Minimum image size (default: 256)'
     )
+    parser.add_argument(
+        '--fixed-noise', action='store_true',
+        help='Use fixed sigma values'
+    )
     return parser.parse_args()
 
 
@@ -51,7 +55,7 @@ if  __name__ == '__main__':
     os.makedirs(output_clear_images_folder, exist_ok=True)
     os.makedirs(output_noisy_images_folder, exist_ok=True)
 
-    noisy_sigmas = [15, 25, 50, 75, 150]
+    noisy_sigmas = [15, 25, 50, 75]
 
     for img_name in tqdm(os.listdir(args.input)):
         bname, ext = os.path.splitext(img_name)
@@ -69,14 +73,22 @@ if  __name__ == '__main__':
         for k in range(len(noisy_sigmas)):
             s1 = noisy_sigmas[k - 1] if k > 0 else 1
             s2 = noisy_sigmas[k]
-
-            sigma = np.random.randint(s1, s2 + 1)
+            
+            if args.fixed_noise:
+                sigma = s2
+            else:
+                sigma = np.random.randint(s1, s2 + 1)
 
             nimg = cv_add_gaussian_noise(img, sigma)
 
-            image_basename = '{}_{}-{}'.format(
-                bname, s1, s2
-            )
+            if args.fixed_noise:
+                image_basename = '{}_{}'.format(
+                    bname, s2
+                )
+            else:
+                image_basename = '{}_{}-{}'.format(
+                    bname, s1, s2
+                )
             
             clear_path = os.path.join(
                 output_clear_images_folder,
