@@ -135,7 +135,7 @@ def eval_denoise_inference(
         tensor_img.unsqueeze(0),
         [d, d + margin_width, d, d + margin_height],
         mode='reflect'
-    ).squeeze()
+    ).squeeze(dim=0)
 
     predicted_images = []
 

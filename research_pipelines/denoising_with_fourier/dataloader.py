@@ -100,6 +100,13 @@ class PairedDenoiseDataset(Dataset):
 
 class SyntheticNoiseDataset(Dataset):
     support_mask_kernels = [4, 8, 16, 32, 64]
+    interpolations = [
+        cv2.INTER_AREA,
+        cv2.INTER_CUBIC,
+        cv2.INTER_LINEAR,
+        cv2.INTER_NEAREST,
+        cv2.INTER_LANCZOS4
+    ]
 
     def __init__(self, 
                  clear_images_path, 
@@ -151,18 +158,27 @@ class SyntheticNoiseDataset(Dataset):
 
         assert min(clear_image.shape[:2]) >= self.window_size
 
+        if self.grayscale and min(clear_image.shape[:2]) > 256:
+            min_scale = self.window_size / min(clear_image.shape[:2])
+            scale = get_random_value_from_interval(min_scale, 1.0) + 1E-5
+
+            clear_image = cv2.resize(
+                clear_image, None, fx=scale, fy=scale, 
+                interpolation=np.random.choice(self.interpolations)
+            )
+
         clear_crop = random_crop_with_transforms(
             clear_image, None,
             window_size=self.window_size,
             random_swap=False
         )
 
-        if np.random.randint(1, 101) > 2:
-            if np.random.randint(1, 101) > 20:
+        if np.random.randint(1, 101) > 10:
+            if np.random.randint(1, 101) > 60:
                 if np.random.randint(1, 101) > 95:
                     noisy_crop = generate_additive_poisson_noise(clear_crop)
                 else:
-                    std = np.random.uniform(1, 80)
+                    std = np.random.uniform(1, 90)
                     use_fft_noise = self.grayscale and np.random.choice([False, False, False, True])
                     noisy_crop = generate_additive_gaussian_noise(clear_crop, std, use_fft_noise)
             else:

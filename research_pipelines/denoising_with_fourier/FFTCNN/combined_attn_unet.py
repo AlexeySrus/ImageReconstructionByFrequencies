@@ -110,6 +110,26 @@ class SpectralPooling(nn.Module):
         new_x = new_x.real
 
         return new_x
+    
+
+class MLPBottleneck(nn.Module):
+    def __init__(self, features: int, reduce: int = 8) -> None:
+        super().__init__()
+
+        self.fc1 = nn.Linear(features, features // reduce)
+        self.act1 = nn.LeakyReLU()
+        self.fc2 = nn.Linear(features // reduce, features)
+        self.act2 = nn.LeakyReLU()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        y = self.fc1(x.view(x.size(0), x.size(1) * x.size(2) * x.size(3)))
+        y = self.act1(y)
+        y = self.fc2(y)
+        
+        y = y.view(x.size(0), x.size(1), x.size(2), x.size(3))
+        y = self.act2(y + x)
+
+        return y
 
 
 class FFTAttention(nn.Module):
@@ -251,6 +271,7 @@ class FFTAttentionUNetModule(nn.Module):
         self.downsample_block4 = FeaturesDownsample(mid_ch * 3, mid_ch * 4, window_size=8, image_size=image_size // 8)
 
         self.deep_conv_block = FeaturesProcessing(mid_ch * 4, mid_ch * 4, window_size=8, image_size=image_size // 16)
+        # self.deep_mlp_block = MLPBottleneck(mid_ch * 4 * image_size // 16 * image_size // 16)
 
         upsample_module = FeaturesUpsample
 
@@ -274,6 +295,7 @@ class FFTAttentionUNetModule(nn.Module):
         down_f4, sa_f4 = self.downsample_block4(down_f3)    # W // 16
 
         deep_f, sa_f = self.deep_conv_block(down_f4)
+        # deep_f = self.deep_mlp_block(deep_f)
 
         deep_f, sa_up_4 = self.upsample4(deep_f)
         decoded_f4 = torch.cat((down_f3, deep_f), axis=1)
@@ -295,12 +317,13 @@ class FFTAttentionUNetModule(nn.Module):
 
 
 class FFTAttentionUNet(nn.Module):
-    def __init__(self, in_ch: int = 3,  out_ch: int = 3, image_size: int = 256):
+    def __init__(self, in_ch: int = 3,  out_ch: int = 3, image_size: int = 256, use_substraction: bool = False):
         super().__init__()
 
         self.unet = FFTAttentionUNetModule(in_ch, 16, out_ch, image_size=image_size)
         self.out_conv = nn.Conv2d(out_ch, out_ch, 1, bias=False)
         self.export = False
+        self.use_substraction = use_substraction
 
     def to_export(self):
         self.export = True
@@ -318,7 +341,9 @@ class FFTAttentionUNet(nn.Module):
         y = self.out_conv(y)
 
         if self.export:
-            return self.denorm_input(hx + y)
+            if self.use_substraction:
+                return self.denorm_input(hx + y)
+            return self.denorm_input(y)
 
         if self.training:
             with torch.no_grad():
@@ -326,8 +351,9 @@ class FFTAttentionUNet(nn.Module):
                     nn.functional.interpolate(torch.abs(sa), (x.size(2), x.size(3)), mode='bilinear')
                     for sa in sa_list
                 ]
-
-        return self.denorm_input(hx + y), sa_list
+        if self.use_substraction:
+            return self.denorm_input(hx + y), sa_list
+        return self.denorm_input(y), sa_list
 
 
 

@@ -20,6 +20,7 @@ from torch import nn
 
 from FFTCNN.mixvit import LayerNorm, RISwish, OverlapPatchEmbed, Block
 from utils.haar_utils import HaarForward, HaarInverse
+from utils.lambda_net_complex import ComplexBatchNorm
 
 
 def retrieve_elements_from_indices(tensor, indices):
@@ -629,7 +630,13 @@ class WaveletSpaialAttention(nn.Module):
 
         y = self.wavelet_inverse(y)
 
-        attn = ll_attn * lh_attn * hl_attn * hh_attn
+        attn = torch.cat(
+            [
+                torch.cat([ll_attn, lh_attn], dim=3),
+                torch.cat([hl_attn, hh_attn], dim=3)
+            ],
+            dim=2
+        )
 
         return y, attn
 
@@ -737,10 +744,12 @@ class FFTChannelAttentionV2(nn.Module):
 class ForFFTPad(nn.Module):
     def __init__(self, padding: int):
         super(ForFFTPad, self).__init__()
+        assert padding > 0
         self.padding = padding
 
     def forward(self, z):
-        z = torch.nn.functional.pad(z, (self.padding, 0, 0, 0), mode='reflect')
+        # z = torch.nn.functional.pad(z, (self.padding, 0, 0, 0), mode='reflect')
+        z = torch.cat([torch.flip(z[:, :, :, :self.padding], dims=(2, 3)), z], dim=3)
         z = torch.nn.functional.pad(z, (0, self.padding, self.padding, self.padding), mode='constant', value=0)
         return z
 
@@ -789,12 +798,75 @@ class RealFFTChannelAttentionV2(nn.Module):
             inv_attn /= (inv_attn.max() + 1E-5)
 
         return x * channel_attn, inv_attn
+    
+
+class ResidualComplesConv(nn.Module):
+    def __init__(self, in_ch: int, out_ch: int) -> None:
+        super().__init__()
+
+        self.pad = ForFFTPad(1)
+        self.conv = nn.Conv2d(in_ch, out_ch, 3, padding=0, dtype=torch.cfloat)
+        self.bn_re = nn.BatchNorm2d(out_ch)
+        self.bn_im = nn.BatchNorm2d(out_ch)
+        self.act = RealImaginaryLeakyReLU()
+
+        self.bottleneck = nn.Conv2d(in_ch, out_ch, 1, padding=0, dtype=torch.cfloat, bias=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        y = self.pad(x)
+        y = self.conv(y)
+        y = self.bn_re(y.real) + 1.0j * self.bn_im(y.imag)
+        y = self.bottleneck(x) + y
+        y = self.act(y)
+        return y
+
+
+class RealFFTChannelAttentionV3(nn.Module):
+    def __init__(self, channel: int, image_size: int, fsize: int = 8, reduction: int = 16):
+        super(RealFFTChannelAttentionV3, self).__init__()
+
+        pooling_depth = int(np.log2(image_size // fsize))
+        
+        self.pool_fft_features = nn.Sequential(
+            *[
+                nn.Sequential(
+                    ResidualComplesConv(channel, channel // 2),
+                    FFTMaxPool2D(2, 2),
+                    ResidualComplesConv(channel // 2, channel // 2 if i == pooling_depth - 1 else channel),
+                )
+                for i in range(pooling_depth)
+            ]
+        )
+        self.fc = nn.Sequential(
+            nn.Linear(channel * fsize * fsize // 2 // 2, channel * fsize * fsize // 2 // 2 // reduction, dtype=torch.cfloat),
+            RealImaginaryLeakyReLU(),
+            nn.Linear(channel * fsize * fsize // 2 // 2 // reduction, channel, dtype=torch.cfloat),
+        )
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        z = torch.fft.rfft2(x, norm='forward')
+        z = rfftshift(z)
+
+        z_deep_feats = self.pool_fft_features(z)
+        z_deep_feats = z_deep_feats.view(x.size(0), -1)
+        channel_attn = self.fc(z_deep_feats)
+        channel_attn = self.sigmoid(channel_attn)
+        channel_attn = torch.abs(channel_attn.unsqueeze(2).unsqueeze(3))
+
+        out = x * channel_attn
+
+        with torch.no_grad():
+            inv_attn = torch.abs(out - x).mean(dim=1).unsqueeze(1)
+            inv_attn /= (inv_attn.max() + 1E-5)
+
+        return x * channel_attn, inv_attn
 
 
 class FFTCAFSModule(nn.Module):
     def __init__(self, image_size: int, channel: int, reduction: int = 16, kernel_size: int = 7) -> None:
         super().__init__()
-        self.fft_ca = RealFFTChannelAttentionV2(channel=channel, reduction=reduction, image_size=image_size)
+        self.fft_ca = RealFFTChannelAttentionV3(channel=channel, reduction=reduction, image_size=image_size)
         self.fft_sa = WaveletSpaialAttention(channel=channel, image_size=image_size)
 
     def forward(self, x):
