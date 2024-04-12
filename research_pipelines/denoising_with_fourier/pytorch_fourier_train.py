@@ -22,13 +22,15 @@ from haar_pytorch import HaarForward, HaarInverse
 from dataloader import PairedDenoiseDataset, SyntheticNoiseDataset
 from callbacks import VisImage, VisAttentionMaps, VisPlot
 from FFTCNN.fftcnn import init_weights
-from FFTCNN.combined_attn_unet import FFTAttentionUNet as FFTAttentionUNet
+from FFTCNN.combined_attn_unet import FFTAttentionUNet
+from FFTCNN.combined_attn_unet_plusplus import FFTAttentionUNetPlusPlus
 # from FFTCNN.unet import AttentionUNet
 from utils.window_inference import denoise_inference
 from utils.hist_loss import HistLoss
 from utils.adasmooth import AdaSmooth
 from utils.adversarial_loss import Adversarial
 from utils.freq_loss import HightFrequencyFFTLoss, HFENLoss
+from utils.focal_frequency_loss import FocalFrequencyLoss
 from utils.tv_loss import CharbonnierLoss, TVLoss
 from utils.tensor_utils import MixUp_AUG
 
@@ -91,6 +93,7 @@ class CustomTrainingPipeline(object):
                  annottaion_str: str = '',
                  use_ycrcb: bool = False,
                  grayscale: bool = False,
+                 use_unetpp: bool = False,
                  full_args: Optional[Namespace] = None):
         """
         Train U-Net denoising model
@@ -117,6 +120,7 @@ class CustomTrainingPipeline(object):
             annottaion_str (str, optional): Annotation string of experiment. Defaults to ''.
             use_ycrcb (bool, optional): Use YCrCb color space. Defaults to False.
             grayscale (bool, optional): Use 1-channel images in pipeline. Defaults to False.
+            use_unetpp (bool, optional): Use U-Net++ architecture. Defaults to False.
             full_args (Namespace, optional): All command-line arguments. Defaules to None.
         """
         self.device = device
@@ -135,6 +139,7 @@ class CustomTrainingPipeline(object):
         self.gradient_accumulation_steps = gradient_accumulation_steps
         self.use_ycrcb = use_ycrcb
         self.grayscale = grayscale
+        self.use_unetpp = use_unetpp
 
         self.image_shape = (image_size, image_size)
 
@@ -157,7 +162,7 @@ class CustomTrainingPipeline(object):
                     clear_images_path=train_data_paths[1],
                     need_crop=True,
                     window_size=self.image_shape[0],
-                    optional_dataset_size=25000,
+                    optional_dataset_size=80000,
                     preload=preload_data,
                     use_ycrcb=use_ycrcb,
                     grayscale=grayscale
@@ -170,7 +175,7 @@ class CustomTrainingPipeline(object):
                 clear_images_path=synth_data_paths,
                 window_size=self.image_shape[0],
                 preload=preload_data,
-                optional_dataset_size=5000,
+                optional_dataset_size=20000,
                 use_ycrcb=use_ycrcb,
                 grayscale=grayscale
             )
@@ -247,12 +252,14 @@ class CustomTrainingPipeline(object):
             )
 
         ch_count = 1 if grayscale else 3
-        self.model = FFTAttentionUNet(
+        used_architecture = FFTAttentionUNetPlusPlus if use_unetpp else FFTAttentionUNet
+        self.model = used_architecture(
             in_ch=ch_count,
             out_ch=ch_count,
             image_size=image_size,
             use_substraction=False
         )
+
         self.model.apply(init_weights)
         self.model = self.model.to(device)
         # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=init_lr, nesterov=True, momentum=0.9, weight_decay=1E-2)
@@ -277,8 +284,9 @@ class CustomTrainingPipeline(object):
                 print('Optimizer LR: {:.5f}'.format(self.get_lr()))
 
         self.images_criterion = CharbonnierLoss().to(self.device)
+        # self.images_criterion = FocalFrequencyLoss(patch_factor=32).to(self.device)
         # self.images_criterion = MIXLoss(data_range=1.0, channel=ch_count)
-        # self.perceptual_loss = DISTS()
+        # self.perceptual_loss = DISTS().to(self.device)
         self.perceptual_loss = None
         # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
         self.final_hist_loss = None
@@ -332,21 +340,38 @@ class CustomTrainingPipeline(object):
 
                 output = self.model(noisy_image)
 
-                pred_image = output[0]
+                pred_images = output[0]
                 spatial_attention_maps = output[1]
 
                 # Pixel-wise loss compuited in 0..1 data range
-                loss = self.images_criterion(pred_image, clear_image)
+                if self.use_unetpp:
+                    loss = sum(
+                        [
+                            self.images_criterion(pred_image, clear_image) / (lvl_i + 1)
+                            for lvl_i, pred_image in enumerate(pred_images)
+                        ]
+                    )
+                else:
+                    loss = self.images_criterion(pred_images, clear_image)
 
                 p_loss = float(0)
                 if self.perceptual_loss is not None:
                     # Perceptual loss calculated in RGB 0..1
-                    p_loss = self.perceptual_loss(
-                        # pred_image,
-                        # clear_image
-                        self._convert_to_rgb(pred_image), 
-                        self._convert_to_rgb(clear_image)
-                    ) * 0.1
+                    if self.use_unetpp:
+                        p_loss = sum(
+                            [
+                                self.perceptual_loss(
+                                    self._convert_to_rgb(pred_image), 
+                                    self._convert_to_rgb(clear_image)
+                                ) / (lvl_i + 1)
+                                for lvl_i, pred_image in enumerate(pred_images)
+                            ]
+                        ) / len(pred_images)
+                    else:
+                        p_loss = self.perceptual_loss(
+                            self._convert_to_rgb(pred_images), 
+                            self._convert_to_rgb(clear_image)
+                        )
                     
                 # a_loss = self.adv_loss(pred_image, clear_image)
                 # f_loss = self.fft_loss(
@@ -354,17 +379,24 @@ class CustomTrainingPipeline(object):
                 #     torch.fft.fft2(clear_image[:, :1], norm='ortho')
                 # )
 
-                f_loss = self.hf_loss(
-                    pred_image, 
-                    clear_image
-                )
+                # if self.use_ycrcb:
+                #     f_loss = self.hf_loss(
+                #         pred_image[:, :1], 
+                #         clear_image[:, :1]
+                #     )
+                # else:
+                #     f_loss = self.hf_loss(
+                #         pred_image, 
+                #         clear_image
+                #     )
 
                 # h_loss = self.final_hist_loss(
                 #     self._convert_to_rgb(pred_image), 
                 #     self._convert_to_rgb(clear_image)
                 # )
 
-                total_loss = loss + f_loss
+                # total_loss = loss #  + f_loss + p_loss
+                total_loss = loss
 
                 if self.gradient_accumulation_steps > 1:
                     total_loss = total_loss / self.gradient_accumulation_steps
@@ -379,11 +411,11 @@ class CustomTrainingPipeline(object):
                     self.optimizer.zero_grad()
 
                 pbar.postfix = \
-                    'Epoch: {}/{}, px_loss: {:.7f}, f_loss: {:.7f}'.format(
+                    'Epoch: {}/{}, px_loss: {:.7f}'.format(
                         epoch,
                         self.epochs,
                         loss.item(),
-                        f_loss.item()
+                        # f_loss.item(),
                         # p_loss.item()
                     )
                 avg_epoch_loss += loss.item() / len(self.train_dataloader)
@@ -393,7 +425,7 @@ class CustomTrainingPipeline(object):
                         vis_idx = self.images_visualizer.per_batch(
                             {
                                 'input_img': noisy_image,
-                                'pred_image': pred_image.detach(),
+                                'pred_image': pred_images[0].detach() if self.use_unetpp else pred_images.detach(),
                                 'gt_image': clear_image
                             }
                         )
@@ -592,6 +624,10 @@ def parse_args() -> Namespace:
         help='Count of batches to accumulate gradiets.'
     )
     parser.add_argument(
+        '--use_unetplusplus', action='store_true',
+        help='Use U-Net++ architecture.'
+    )
+    parser.add_argument(
         '--use_ycrcb', action='store_true',
         help='Use YCrCb color space for image training.'
     )
@@ -666,6 +702,7 @@ if __name__ == '__main__':
         gradient_accumulation_steps=args.grad_accum_steps,
         use_ycrcb=args.use_ycrcb,
         grayscale=args.use_grayscale,
+        use_unetpp=args.use_unetplusplus,
         full_args=args
     ).fit()
 

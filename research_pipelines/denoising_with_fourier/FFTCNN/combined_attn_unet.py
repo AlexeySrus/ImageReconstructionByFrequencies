@@ -160,9 +160,7 @@ class FeaturesProcessing(nn.Module):
         super().__init__()
         self.use_attention = use_attention
         if use_attention:
-            # self.attn1 = FFTAttention(in_ch, window_size=window_size, image_size=image_size)
             self.attn1 = FFTCAFSModule(channel=in_ch, reduction=32, image_size=image_size)
-            # self.attn1 = FFTChannelAttentionV2(channel=in_ch, image_size=image_size, reduction=32)
         else:
             self.attn1 = None
 
@@ -197,9 +195,9 @@ class FeaturesProcessing(nn.Module):
     
 
 class FeaturesProcessingWithLastConv(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int, window_size: int, image_size: int):
+    def __init__(self, in_ch: int, out_ch: int, window_size: int, image_size: int, use_attention: bool = True):
         super().__init__()
-        self.features = FeaturesProcessing(in_ch, out_ch, window_size=window_size, image_size=image_size)
+        self.features = FeaturesProcessing(in_ch, out_ch, window_size=window_size, image_size=image_size, use_attention=use_attention)
         self.final_conv = conv1x1(out_ch, out_ch)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -213,7 +211,8 @@ class FeaturesDownsample(nn.Module):
         super().__init__()
         self.features = FeaturesProcessing(in_ch, out_ch, window_size=window_size, image_size=image_size)
         # self.pool = GeneralizedMeanPooling2d(2, 2)
-        self.pool = nn.MaxPool2d(2, 2)
+        # self.pool = nn.MaxPool2d(2, 2)
+        self.pool = lambda x: resample_lanczos(x, scale=0.5, align_corners=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y, sa = self.features(x)
@@ -245,9 +244,8 @@ class FeaturesUpsample(nn.Module):
         self.in_features = FeaturesProcessing(in_ch, in_ch, window_size=window_size, image_size=image_size, use_attention=False)
         self.up = lambda x: resample_lanczos(x, scale=2, align_corners=False)
         # self.up = torch.nn.UpsamplingBilinear2d(scale_factor=2)
-        self.features = FeaturesProcessing(in_ch, out_ch, window_size=window_size, image_size=image_size, use_attention=False)
+        self.features = FeaturesProcessing(in_ch, out_ch, window_size=window_size, image_size=image_size, use_attention=False)  
         self.features_with_attn = FeaturesProcessing(out_ch, out_ch, window_size=window_size, image_size=image_size, use_attention=True)
-
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y, _ = self.in_features(x)
@@ -321,7 +319,7 @@ class FFTAttentionUNet(nn.Module):
         super().__init__()
 
         self.unet = FFTAttentionUNetModule(in_ch, 16, out_ch, image_size=image_size)
-        self.out_conv = nn.Conv2d(out_ch, out_ch, 1, bias=False)
+        self.out_conv = nn.Conv2d(out_ch, out_ch, 1, bias=True)
         self.export = False
         self.use_substraction = use_substraction
 
