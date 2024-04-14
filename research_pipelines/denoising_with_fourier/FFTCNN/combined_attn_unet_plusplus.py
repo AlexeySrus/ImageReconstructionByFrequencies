@@ -191,7 +191,7 @@ class FFTAttentionUNetPlusPlus(nn.Module):
 
         if self.export:
             if self.use_substraction:
-                return self.denorm_input(hx + y)
+                return self.denorm_input([hx + y[out_i] for out_i in range(4)])
             return self.denorm_input(y)
 
         if self.training:
@@ -200,8 +200,10 @@ class FFTAttentionUNetPlusPlus(nn.Module):
                     nn.functional.interpolate(torch.abs(sa), (x.size(2), x.size(3)), mode='bilinear')
                     for sa in sa_list
                 ]
+
         if self.use_substraction:
             return self.denorm_input([hx + y[out_i] for out_i in range(4)]), sa_list
+        
         return self.denorm_input(y), sa_list
 
 if __name__ == '__main__':

@@ -4,7 +4,7 @@ from argparse import ArgumentParser, Namespace
 import cv2
 import numpy as np
 import kornia
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Union, List, Callable
 import tqdm
 import torch
 from torch.utils import data
@@ -24,7 +24,6 @@ from callbacks import VisImage, VisAttentionMaps, VisPlot
 from FFTCNN.fftcnn import init_weights
 from FFTCNN.combined_attn_unet import FFTAttentionUNet
 from FFTCNN.combined_attn_unet_plusplus import FFTAttentionUNetPlusPlus
-# from FFTCNN.unet import AttentionUNet
 from utils.window_inference import denoise_inference
 from utils.hist_loss import HistLoss
 from utils.adasmooth import AdaSmooth
@@ -32,7 +31,7 @@ from utils.adversarial_loss import Adversarial
 from utils.freq_loss import HightFrequencyFFTLoss, HFENLoss
 from utils.focal_frequency_loss import FocalFrequencyLoss
 from utils.tv_loss import CharbonnierLoss, TVLoss
-from utils.tensor_utils import MixUp_AUG
+from utils.tensor_utils import MixUp_AUG, convert_tensor_to_rgb
 
 
 class SSIMLoss(SSIM):
@@ -68,7 +67,20 @@ class IWTHaar(torch.nn.Module):
 
     def forward(self, ll, lh, hl, hh):
         return self.iwt(torch.cat((ll, lh, hl, hh), dim=1))
+    
 
+def calculate_loss(pred_values, truth_value, loss_function: Callable[[torch.Tensor, torch.Tensor], torch.Tensor], seq_pred: bool) -> torch.Tensor:
+    if seq_pred:
+        res_loss = sum(
+            [
+                loss_function(pred_value, truth_value) / (int(lvl_i > 0) * 10 + lvl_i * 2 + 1)
+                for lvl_i, pred_value in enumerate(pred_values)
+            ]
+        )
+    else:
+        res_loss = loss_function(pred_values, truth_value)
+
+    return res_loss
 
 class CustomTrainingPipeline(object):
     def __init__(self,
@@ -286,20 +298,20 @@ class CustomTrainingPipeline(object):
         self.images_criterion = CharbonnierLoss().to(self.device)
         # self.images_criterion = FocalFrequencyLoss(patch_factor=32).to(self.device)
         # self.images_criterion = MIXLoss(data_range=1.0, channel=ch_count)
-        # self.perceptual_loss = DISTS().to(self.device)
-        self.perceptual_loss = None
+        self.perceptual_loss = DISTS().to(self.device)
+        # self.perceptual_loss = None
         # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
         self.final_hist_loss = None
         # self.adv_loss = Adversarial(image_size=self.image_shape[0], gan_type='GAN', spectral_norm=True).to(device)
-        self.hf_loss = HightFrequencyFFTLoss(self.image_shape).to(device)
-        # self.hf_loss = HFENLoss(
-        #     loss_f=torch.nn.functional.l1_loss,
-        #     norm=True
-        # )
+        # self.hf_loss = HightFrequencyFFTLoss(self.image_shape).to(device)
+        self.hf_loss = HFENLoss(
+            loss_f=torch.nn.functional.l1_loss,
+            norm=False
+        )
 
         # self.ssim_loss = None
-        self.accuracy_measure = TorchPSNR().to(device)
-        self.ssim_measure = SSIM(data_range=1.0, channel=3)
+        self.accuracy_measure = TorchPSNR(data_range=1.0).to(device)
+        self.ssim_measure = SSIM(data_range=1.0, channel=ch_count)
 
         self.mixup = MixUp_AUG()
 
@@ -344,59 +356,41 @@ class CustomTrainingPipeline(object):
                 spatial_attention_maps = output[1]
 
                 # Pixel-wise loss compuited in 0..1 data range
-                if self.use_unetpp:
-                    loss = sum(
-                        [
-                            self.images_criterion(pred_image, clear_image) / (lvl_i + 1)
-                            for lvl_i, pred_image in enumerate(pred_images)
-                        ]
-                    )
-                else:
-                    loss = self.images_criterion(pred_images, clear_image)
+                loss = calculate_loss(pred_images, clear_image, self.images_criterion, self.use_unetpp)
 
                 p_loss = float(0)
                 if self.perceptual_loss is not None:
                     # Perceptual loss calculated in RGB 0..1
-                    if self.use_unetpp:
-                        p_loss = sum(
-                            [
-                                self.perceptual_loss(
-                                    self._convert_to_rgb(pred_image), 
-                                    self._convert_to_rgb(clear_image)
-                                ) / (lvl_i + 1)
-                                for lvl_i, pred_image in enumerate(pred_images)
-                            ]
-                        ) / len(pred_images)
-                    else:
-                        p_loss = self.perceptual_loss(
-                            self._convert_to_rgb(pred_images), 
-                            self._convert_to_rgb(clear_image)
-                        )
-                    
-                # a_loss = self.adv_loss(pred_image, clear_image)
-                # f_loss = self.fft_loss(
-                #     torch.fft.fft2(pred_image[:, :1], norm='ortho'),
-                #     torch.fft.fft2(clear_image[:, :1], norm='ortho')
+                    p_loss = calculate_loss(
+                        pred_images,
+                        self._convert_to_rgb(clear_image),
+                        lambda x, y: self.perceptual_loss(self._convert_to_rgb(x), y),
+                        self.use_unetpp
+                    )
+
+                # f_loss = calculate_loss(
+                #     pred_images,
+                #     clear_image[:, :1] if self.use_ycrcb else kornia.color.rgb_to_y(clear_image),
+                #     lambda x, y: self.hf_loss(
+                #         x[:, :1] if self.use_ycrcb else kornia.color.rgb_to_y(x),
+                #         y
+                #     ),
+                #     self.use_unetpp
                 # )
 
-                # if self.use_ycrcb:
-                #     f_loss = self.hf_loss(
-                #         pred_image[:, :1], 
-                #         clear_image[:, :1]
-                #     )
-                # else:
-                #     f_loss = self.hf_loss(
-                #         pred_image, 
-                #         clear_image
-                #     )
+                f_loss = calculate_loss(
+                    pred_images,
+                    clear_image,
+                    self.hf_loss,
+                    self.use_unetpp
+                )
 
                 # h_loss = self.final_hist_loss(
                 #     self._convert_to_rgb(pred_image), 
                 #     self._convert_to_rgb(clear_image)
                 # )
 
-                # total_loss = loss #  + f_loss + p_loss
-                total_loss = loss
+                total_loss = p_loss + f_loss
 
                 if self.gradient_accumulation_steps > 1:
                     total_loss = total_loss / self.gradient_accumulation_steps
@@ -411,12 +405,12 @@ class CustomTrainingPipeline(object):
                     self.optimizer.zero_grad()
 
                 pbar.postfix = \
-                    'Epoch: {}/{}, px_loss: {:.7f}'.format(
+                    'Epoch: {}/{}, px_loss: {:.7f}, f_loss: {:.7f}, p_loss: {:.7f}'.format(
                         epoch,
                         self.epochs,
                         loss.item(),
-                        # f_loss.item(),
-                        # p_loss.item()
+                        f_loss.item(),
+                        p_loss.item()
                     )
                 avg_epoch_loss += loss.item() / len(self.train_dataloader)
 
@@ -458,13 +452,6 @@ class CustomTrainingPipeline(object):
                 assert noisy_image.size(1) >= self.image_shape[0] and noisy_image.size(2) >= self.image_shape[1], \
                     str(noisy_image.shape)
 
-                # # Convert network input to YCrCb
-                # noisy_image = kornia.color.ycbcr.rgb_to_ycbcr(noisy_image).squeeze(0)
-                # clear_image = kornia.color.ycbcr.rgb_to_ycbcr(clear_image)
-                # # Normalize to -1..1
-                # noisy_image = noisy_image * 2 - 1
-                # clear_image = clear_image * 2 - 1
-
                 with torch.no_grad():
                     restored_image = denoise_inference(
                         tensor_img=noisy_image, model=self.model, window_size=self.image_shape[0], 
@@ -475,16 +462,19 @@ class CustomTrainingPipeline(object):
                     
                     avg_loss_rate += loss.item()
 
-                    restored_image = torch.clamp(restored_image, 0, 1)
+                    rgb_restored_image = self._convert_to_rgb(restored_image)
+                    rgb_clear_image = self._convert_to_rgb(clear_image)
+
+                    rgb_restored_image = torch.clamp(rgb_restored_image, 0, 1)
 
                     val_psnr = self.accuracy_measure(
-                        self._convert_to_rgb(restored_image),
-                        self._convert_to_rgb(clear_image)
+                        rgb_restored_image,
+                        rgb_clear_image
                     )
 
                     val_ssim = self.ssim_measure(
-                        self._convert_to_rgb(restored_image),
-                        self._convert_to_rgb(clear_image)
+                        rgb_restored_image,
+                        rgb_clear_image
                     )
 
                     acc_rate = val_psnr.item()
@@ -495,12 +485,7 @@ class CustomTrainingPipeline(object):
                     test_len += 1
 
                     result_path = os.path.join(self.output_val_images_dir, image_name)
-                    val_img = (restored_image.squeeze(0).to('cpu').permute(1, 2, 0) * 255.0).numpy().astype(np.uint8)
-                    
-                    if self.use_ycrcb and not self.grayscale:
-                        val_img = cv2.cvtColor(val_img, cv2.COLOR_YCrCb2RGB)
-                    elif self.grayscale:
-                        val_img = cv2.cvtColor(val_img, cv2.COLOR_GRAY2RGB)
+                    val_img = (rgb_restored_image.squeeze(0).to('cpu').permute(1, 2, 0) * 255.0).numpy().astype(np.uint8)
 
                     Image.fromarray(val_img).save(result_path)
 
@@ -515,11 +500,7 @@ class CustomTrainingPipeline(object):
         return avg_loss_rate, (avg_acc_rate, avg_ssim_rate)
 
     def _convert_to_rgb(self, _tensor: torch.Tensor) -> torch.Tensor:
-        if self.use_ycrcb and not self.grayscale:
-            return kornia.color.ycbcr.ycbcr_to_rgb(_tensor)
-        elif self.grayscale:
-            return kornia.color.grayscale_to_rgb(_tensor)
-        return _tensor
+        return convert_tensor_to_rgb(_tensor, self.use_ycrcb, self.grayscale)
 
     def _plot_values(self, epoch, avg_train_loss, avg_val_loss, avg_val_acc):
         avg_val_psnr, avg_val_ssim = avg_val_acc

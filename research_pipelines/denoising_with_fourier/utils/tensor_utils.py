@@ -2,10 +2,35 @@ import numpy as np
 import torch
 from enum import Enum
 import cv2
+import kornia
 
 
-def preprocess_image(img: np.ndarray, mean: float = 0.5, std: float = 0.5) -> torch.Tensor:
-    return (torch.FloatTensor(img.copy()).permute(2, 0, 1) / 255.0 - mean) / std   # by default from 0..255 to -1..1
+def convert_tensor_to_ycrcb_or_grayscale(_tensor: torch.Tensor, use_ycrcb: bool, grayscale: bool) -> torch.Tensor:
+    if use_ycrcb and not grayscale:
+        return kornia.color.rgb_to_ycbcr(_tensor)
+    elif grayscale:
+        return kornia.color.rgb_to_grayscale(_tensor)
+    return _tensor
+
+
+def convert_tensor_to_rgb(_tensor: torch.Tensor, use_ycrcb: bool, grayscale: bool) -> torch.Tensor:
+    if use_ycrcb and not grayscale:
+        return kornia.color.ycbcr_to_rgb(_tensor)
+    elif grayscale:
+        return kornia.color.grayscale_to_rgb(_tensor)
+    return _tensor
+
+
+def preprocess_image(img: np.ndarray, 
+                     mean: float = 0.5, 
+                     std: float = 0.5, 
+                     use_ycrcb: bool = False, 
+                     use_grayscale: bool = False) -> torch.Tensor:
+    return convert_tensor_to_ycrcb_or_grayscale(
+        (
+            torch.FloatTensor(img.copy()).permute(2, 0, 1) / 255.0 - mean
+        ).unsqueeze(0) / std, 
+        use_ycrcb, use_grayscale)[0]   # by default from 0..255 to -1..1
 
 
 class TensorRotate(Enum):

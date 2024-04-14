@@ -14,7 +14,7 @@ from utils.fft_mask_utils import ssdu_masks
 from utils.tensor_utils import preprocess_image
 
 
-def convert_to_rgb_or_grayscale(image: np.ndarray, to_ycrcb: bool, to_grayscale: bool):
+def cv_convert_to_rgb_or_grayscale(image: np.ndarray, to_ycrcb: bool, to_grayscale: bool):
     if to_ycrcb and not to_grayscale:
         return cv2.cvtColor(image, cv2.COLOR_RGB2YCrCb)
     elif to_grayscale:
@@ -88,14 +88,15 @@ class PairedDenoiseDataset(Dataset):
                 random_swap=False
             )
 
-        noisy_image = convert_to_rgb_or_grayscale(noisy_image, self.use_ycrcb, self.grayscale)
-        clear_image = convert_to_rgb_or_grayscale(clear_image, self.use_ycrcb, self.grayscale)
-
         if self.return_names:
             img_name = self.names[idx]
-            return preprocess_image(noisy_image, 0, 1), preprocess_image(clear_image, 0, 1), img_name
+            return preprocess_image(
+                noisy_image, 0, 1, self.use_ycrcb, self.grayscale), preprocess_image(
+                    clear_image, 0, 1, self.use_ycrcb, self.grayscale), img_name
 
-        return preprocess_image(noisy_image, 0, 1), preprocess_image(clear_image, 0, 1)
+        return preprocess_image(
+            noisy_image, 0, 1, self.use_ycrcb, self.grayscale), preprocess_image(
+                clear_image, 0, 1, self.use_ycrcb, self.grayscale)
 
 
 class SyntheticNoiseDataset(Dataset):
@@ -175,7 +176,7 @@ class SyntheticNoiseDataset(Dataset):
 
         if np.random.randint(1, 101) > 10:
             if np.random.randint(1, 101) > 60:
-                if np.random.randint(1, 101) > 95:
+                if np.random.randint(1, 101) > 60:
                     noisy_crop = generate_additive_poisson_noise(clear_crop)
                 else:
                     std = np.random.uniform(1, 90)
@@ -197,10 +198,9 @@ class SyntheticNoiseDataset(Dataset):
                 small_acs_block=(block_size, block_size)
             ).apply_fft_matrix(noisy_crop)
 
-        noisy_crop = convert_to_rgb_or_grayscale(noisy_crop, self.use_ycrcb, self.grayscale)
-        clear_crop = convert_to_rgb_or_grayscale(clear_crop, self.use_ycrcb, self.grayscale)
-
-        return preprocess_image(noisy_crop, 0, 1), preprocess_image(clear_crop, 0, 1)
+        return preprocess_image(
+            noisy_crop, 0, 1, self.use_ycrcb, self.grayscale), preprocess_image(
+                clear_crop, 0, 1, self.use_ycrcb, self.grayscale)
 
 
 if __name__ == '__main__':

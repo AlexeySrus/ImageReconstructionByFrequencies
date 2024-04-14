@@ -11,8 +11,8 @@ import os
 CURRENT_PATH = os.path.dirname(__file__)
 
 from FFTCNN.combined_attn_unet import FFTAttentionUNet as FFTCNN
-# from FFTCNN.unet import AttentionUNet as FFTCNN
 from utils.window_inference import eval_denoise_inference
+from utils.tensor_utils import convert_tensor_to_rgb, convert_tensor_to_ycrcb_or_grayscale
 
 
 def parse_args() -> Namespace:
@@ -50,6 +50,17 @@ def tensor_to_image(t: torch.Tensor) -> np.ndarray:
     return _img
 
 
+def convert_cv_image_to_ycrcb_or_grayscale(_img: np.ndarray, use_ycrcb: bool, grayscale: bool) -> np.ndarray:
+    _tensor = torch.from_numpy(_img.astype(np.float32).transpose((2, 0, 1)) / 255.0).unsqueeze(0)
+    _ycbcr_tensor = convert_tensor_to_ycrcb_or_grayscale(_tensor, use_ycrcb, grayscale)
+    return tensor_to_image(_ycbcr_tensor[0])
+
+def convert_cv_image_to_rgb(_img: np.ndarray, use_ycrcb: bool, grayscale: bool) -> np.ndarray:
+    _tensor = torch.from_numpy(_img.astype(np.float32).transpose((2, 0, 1)) / 255.0).unsqueeze(0)
+    _ycbcr_tensor = convert_tensor_to_rgb(_tensor, use_ycrcb, grayscale)
+    return tensor_to_image(_ycbcr_tensor[0])
+
+
 if __name__ == '__main__':
     args = parse_args()
 
@@ -82,22 +93,16 @@ if __name__ == '__main__':
 
     for image_name in tqdm(os.listdir(noisy_folder)):
         image_path = os.path.join(noisy_folder, image_name)
-        if grayscale:
-            img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-            img = np.expand_dims(img, axis=2)
-        else:
-            img = cv2.imread(image_path, cv2.IMREAD_COLOR)
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
+        img = cv2.imread(image_path, cv2.IMREAD_COLOR)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
         gt_image_path = os.path.join(clear_folder, image_name)
+        gt_img = cv2.imread(gt_image_path, cv2.IMREAD_COLOR)
+        gt_img = cv2.cvtColor(gt_img, cv2.COLOR_BGR2RGB)
+        converted_gt_img = convert_cv_image_to_ycrcb_or_grayscale(gt_img, True, grayscale)
 
-        if grayscale:
-            gt_img = cv2.imread(gt_image_path, cv2.IMREAD_GRAYSCALE)
-            gt_img = np.expand_dims(gt_img, axis=2)
-        else:
-            gt_img = cv2.imread(gt_image_path, cv2.IMREAD_COLOR)
-
-        input_tensor = torch.from_numpy(img.astype(np.float32).transpose((2, 0, 1)) / 255.0)
+        input_tensor = torch.from_numpy(img.astype(np.float32).transpose((2, 0, 1)) / 255.0).unsqueeze(0)
+        input_tensor = convert_tensor_to_ycrcb_or_grayscale(input_tensor, True, grayscale)[0]
         
         with torch.no_grad():
             restored_image = eval_denoise_inference(
@@ -115,14 +120,14 @@ if __name__ == '__main__':
             psnr_values.append(
                 cv2.PSNR(
                     pred_image[..., 0], 
-                    gt_img[..., 0]
+                    converted_gt_img[..., 0]
                 )
             )
             
             ssim_values.append(
                 ssim(
                     pred_image[..., 0], 
-                    gt_img[..., 0]
+                    converted_gt_img[..., 0]
                 )
             )
         else:
@@ -130,13 +135,13 @@ if __name__ == '__main__':
                 psnr_values.append(
                     cv2.PSNR(
                         pred_image[..., 0], 
-                        cv2.cvtColor(gt_img, cv2.COLOR_BGR2YCrCb)[..., 0]
+                        converted_gt_img[..., 0]
                     )
                 )
             else:
                 psnr_values.append(
                     cv2.PSNR(
-                        cv2.cvtColor(pred_image, cv2.COLOR_YCrCb2BGR), 
+                        pred_image, 
                         gt_img
                     )
                 )
@@ -144,15 +149,14 @@ if __name__ == '__main__':
             ssim_values.append(
                 ssim(
                     pred_image[..., 0], 
-                    cv2.cvtColor(gt_img, cv2.COLOR_BGR2YCrCb)[..., 0]
+                    converted_gt_img[..., 0]
                 )
             )
 
         if args.verbose:
             print('Image: {}, PSNR: {:.2f}'.format(image_name, psnr_values[-1]))
 
-        if grayscale:
-            pred_image = cv2.cvtColor(pred_image[..., 0], cv2.COLOR_GRAY2RGB)
+        pred_image = convert_cv_image_to_rgb(pred_image)
 
         cv2.imwrite(
             os.path.join(output_folder, image_name),

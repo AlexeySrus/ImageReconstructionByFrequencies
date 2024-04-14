@@ -1,16 +1,14 @@
 from typing import Optional
 import os
-import cv2
+import kornia
 import torch
 import random
 import numpy as np
 from functools import reduce
 from visdom import Visdom
-from torchvision.transforms import ToPILImage, ToTensor
 import torch.nn.functional as F
 
-from utils.image_utils import merge_by_wavelets
-from utils.tensor_utils import preprocess_image
+from utils.tensor_utils import convert_tensor_to_rgb
 
 
 def add_prefix(path, pref):
@@ -256,14 +254,7 @@ class VisImageForFourier(AbstractCallback):
         return out
 
     def _to_rgb(self, im: torch.Tensor) -> torch.Tensor:
-        np_image = self._tensor_to_image(im)
-        if self.use_ycrcb and not self.grayscale:
-            rgb_image = cv2.cvtColor(np_image, cv2.COLOR_YCrCb2RGB)
-        elif self.grayscale:
-            rgb_image = cv2.cvtColor(np_image[..., 0], cv2.COLOR_GRAY2RGB)
-        else:
-            rgb_image = np_image
-        return preprocess_image(rgb_image, self.img_mean, self.img_std)
+        return convert_tensor_to_rgb(im, self.use_ycrcb, self.grayscale)
 
     def per_batch(self, args, label=1):
         if self.n % self.step == 0:

@@ -1,7 +1,14 @@
+from typing import Union, List
 import numpy as np
 import torch
 from tqdm import tqdm
 from .tensor_utils import TensorRotate, rotate_tensor, preprocess_image
+
+
+def get_predict_value(out: Union[torch.Tensor, List[torch.Tensor]]) -> torch.Tensor:
+    if isinstance(out, list):
+        return out[0]
+    return out
 
 
 def denoise_inference(
@@ -62,9 +69,9 @@ def denoise_inference(
 
         outs = torch.cat(
             [
-                model(bc)[0][:, :, crop_d:-crop_d, crop_d:-crop_d] \
+                get_predict_value(model(bc)[0])[:, :, crop_d:-crop_d, crop_d:-crop_d] \
                     if crop_d > 0 else \
-                        model(bc)[0]
+                        get_predict_value(model(bc)[0])
                 for bc in crops_buffer
             ],
             dim=0
@@ -164,9 +171,9 @@ def eval_denoise_inference(
 
         outs = torch.cat(
             [
-                model(bc.to(device))[0].to('cpu')[:, :, crop_d:-crop_d, crop_d:-crop_d] \
+                get_predict_value(model(bc.to(device))[0]).to('cpu')[:, :, crop_d:-crop_d, crop_d:-crop_d] \
                     if crop_d > 0 else \
-                        model(bc.to(device))[0].to('cpu')
+                        get_predict_value(model(bc.to(device))[0]).to('cpu')
                 for bc in crops_buffer
             ],
             dim=0
