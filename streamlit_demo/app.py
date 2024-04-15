@@ -19,6 +19,7 @@ RESEARCH_PATH: str = os.path.join(ROOT_PATH, 'research_pipelines/denoising_with_
 MODEL_PATH: str = os.path.join(ROOT_PATH, 'materials/model.pt')
 DEVICE: str = 'cuda:0'
 IMAGE_SIZE: int = 256
+USE_YCRCB_COLOR_SPACE: bool = False
 USE_UNET_PLUS_PLUS: bool = True
 
 if USE_UNET_PLUS_PLUS:
@@ -34,7 +35,7 @@ from utils.tensor_utils import convert_tensor_to_rgb, convert_tensor_to_ycrcb_or
 def inference(net: torch.nn.Module, _input: np.ndarray) -> np.ndarray:
     img = _input.copy()
     input_tensor = torch.from_numpy(img.astype(np.float32).transpose((2, 0, 1)) / 255.0)
-    input_tensor = convert_tensor_to_ycrcb_or_grayscale(input_tensor.unsqueeze(0), True, False)[0]
+    input_tensor = convert_tensor_to_ycrcb_or_grayscale(input_tensor.unsqueeze(0), USE_YCRCB_COLOR_SPACE, False)[0]
 
     with torch.no_grad():
         restored_image = eval_denoise_inference(
@@ -48,7 +49,7 @@ def inference(net: torch.nn.Module, _input: np.ndarray) -> np.ndarray:
     del input_tensor
 
     pred_image = restored_image.to('cpu')
-    pred_image = convert_tensor_to_rgb(pred_image.unsqueeze(0), True, False)[0]
+    pred_image = convert_tensor_to_rgb(pred_image.unsqueeze(0), USE_YCRCB_COLOR_SPACE, False)[0]
     pred_image = torch.clamp(pred_image, 0, 1)
     pred_image = pred_image.permute(1, 2, 0).numpy()
     pred_image = (pred_image * 255.0).astype(np.uint8)
