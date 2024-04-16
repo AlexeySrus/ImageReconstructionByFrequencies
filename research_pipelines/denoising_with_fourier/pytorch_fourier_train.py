@@ -300,14 +300,14 @@ class CustomTrainingPipeline(object):
         # self.images_criterion = MIXLoss(data_range=1.0, channel=ch_count)
         self.perceptual_loss = DISTS().to(self.device)
         # self.perceptual_loss = None
-        # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
-        self.final_hist_loss = None
+        self.final_hist_loss = HistLoss(image_size=128, device=self.device)
+        # self.final_hist_loss = None
         # self.adv_loss = Adversarial(image_size=self.image_shape[0], gan_type='GAN', spectral_norm=True).to(device)
-        # self.hf_loss = HightFrequencyFFTLoss(self.image_shape).to(device)
-        self.hf_loss = HFENLoss(
-            loss_f=torch.nn.functional.l1_loss,
-            norm=False
-        )
+        self.hf_loss = HightFrequencyFFTLoss(self.image_shape).to(device)
+        # self.hf_loss = HFENLoss(
+        #     loss_f=torch.nn.functional.l1_loss,
+        #     norm=False
+        # )
 
         # self.ssim_loss = None
         self.accuracy_measure = TorchPSNR(data_range=1.0).to(device)
@@ -368,29 +368,31 @@ class CustomTrainingPipeline(object):
                         self.use_unetpp
                     )
 
-                # f_loss = calculate_loss(
-                #     pred_images,
-                #     clear_image[:, :1] if self.use_ycrcb else kornia.color.rgb_to_y(clear_image),
-                #     lambda x, y: self.hf_loss(
-                #         x[:, :1] if self.use_ycrcb else kornia.color.rgb_to_y(x),
-                #         y
-                #     ),
-                #     self.use_unetpp
-                # )
-
                 f_loss = calculate_loss(
                     pred_images,
-                    clear_image,
-                    self.hf_loss,
+                    clear_image[:, :1] if self.use_ycrcb else kornia.color.rgb_to_y(clear_image),
+                    lambda x, y: self.hf_loss(
+                        x[:, :1] if self.use_ycrcb else kornia.color.rgb_to_y(x),
+                        y
+                    ),
                     self.use_unetpp
                 )
 
-                # h_loss = self.final_hist_loss(
-                #     self._convert_to_rgb(pred_image), 
-                #     self._convert_to_rgb(clear_image)
+                # f_loss = calculate_loss(
+                #     pred_images,
+                #     clear_image,
+                #     self.hf_loss,
+                #     self.use_unetpp
                 # )
 
-                total_loss = p_loss + f_loss
+                h_loss = calculate_loss(
+                    pred_images,
+                    self._convert_to_rgb(clear_image),
+                    lambda x, y: self.final_hist_loss(self._convert_to_rgb(x), y),
+                    self.use_unetpp
+                )
+
+                total_loss = f_loss + p_loss + h_loss
 
                 if self.gradient_accumulation_steps > 1:
                     total_loss = total_loss / self.gradient_accumulation_steps
@@ -405,12 +407,12 @@ class CustomTrainingPipeline(object):
                     self.optimizer.zero_grad()
 
                 pbar.postfix = \
-                    'Epoch: {}/{}, px_loss: {:.7f}, f_loss: {:.7f}, p_loss: {:.7f}'.format(
+                    'Epoch: {}/{}, f_loss: {:.7f}, p_loss: {:.7f}, h_loss: {:.7f}'.format(
                         epoch,
                         self.epochs,
-                        loss.item(),
                         f_loss.item(),
-                        p_loss.item()
+                        p_loss.item(),
+                        h_loss.item()
                     )
                 avg_epoch_loss += loss.item() / len(self.train_dataloader)
 

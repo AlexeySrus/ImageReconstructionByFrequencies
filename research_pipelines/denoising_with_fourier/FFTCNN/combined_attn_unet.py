@@ -211,8 +211,8 @@ class FeaturesDownsample(nn.Module):
         super().__init__()
         self.features = FeaturesProcessing(in_ch, out_ch, window_size=window_size, image_size=image_size)
         # self.pool = GeneralizedMeanPooling2d(2, 2)
-        # self.pool = nn.MaxPool2d(2, 2)
-        self.pool = lambda x: resample_lanczos(x, scale=0.5, align_corners=False)
+        self.pool = nn.MaxPool2d(2, 2)
+        # self.pool = lambda x: resample_lanczos(x, scale=0.5, align_corners=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y, sa = self.features(x)
@@ -242,7 +242,7 @@ class FeaturesUpsample(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, window_size: int, image_size: int):
         super().__init__()
         self.in_features = FeaturesProcessing(in_ch, in_ch, window_size=window_size, image_size=image_size, use_attention=False)
-        self.up = lambda x: resample_lanczos(x, scale=2, align_corners=False)
+        self.up = lambda x: resample_lanczos(x, scale=2, align_corners=True)
         # self.up = torch.nn.UpsamplingBilinear2d(scale_factor=2)
         self.features = FeaturesProcessing(in_ch, out_ch, window_size=window_size, image_size=image_size, use_attention=False)  
         self.features_with_attn = FeaturesProcessing(out_ch, out_ch, window_size=window_size, image_size=image_size, use_attention=True)

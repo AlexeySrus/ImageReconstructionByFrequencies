@@ -16,11 +16,12 @@ from streamlit_image_comparison import image_comparison
 
 ROOT_PATH: str = os.path.join(os.path.dirname(__file__), '../')
 RESEARCH_PATH: str = os.path.join(ROOT_PATH, 'research_pipelines/denoising_with_fourier/')
-MODEL_PATH: str = os.path.join(ROOT_PATH, 'materials/model.pt')
+MODEL_PATH: str = os.path.join(ROOT_PATH, 'materials/unet.pt')
 DEVICE: str = 'cuda:0'
 IMAGE_SIZE: int = 256
+USE_TTA: bool = False
 USE_YCRCB_COLOR_SPACE: bool = False
-USE_UNET_PLUS_PLUS: bool = True
+USE_UNET_PLUS_PLUS: bool = False
 
 if USE_UNET_PLUS_PLUS:
     MODEL_PATH: str = os.path.join(ROOT_PATH, 'materials/unet_plus_plus.pt')
@@ -40,7 +41,7 @@ def inference(net: torch.nn.Module, _input: np.ndarray) -> np.ndarray:
     with torch.no_grad():
         restored_image = eval_denoise_inference(
             tensor_img=input_tensor, model=net, window_size=IMAGE_SIZE, 
-            batch_size=4, crop_size=IMAGE_SIZE // 32, use_tta=False, device=DEVICE,
+            batch_size=4, crop_size=IMAGE_SIZE // 32, use_tta=USE_TTA, device=DEVICE,
             progress_bar=stqdm
         )
 
