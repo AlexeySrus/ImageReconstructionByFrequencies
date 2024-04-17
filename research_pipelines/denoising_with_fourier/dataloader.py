@@ -175,8 +175,8 @@ class SyntheticNoiseDataset(Dataset):
         )
 
         if np.random.randint(1, 101) > 10:
-            if np.random.randint(1, 101) > 60:
-                if np.random.randint(1, 101) > 60:
+            if np.random.randint(1, 101) > 30:
+                if np.random.randint(1, 101) > 80:
                     noisy_crop = generate_additive_poisson_noise(clear_crop)
                 else:
                     std = np.random.uniform(1, 90)

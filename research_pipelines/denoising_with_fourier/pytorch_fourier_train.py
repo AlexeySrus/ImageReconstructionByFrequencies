@@ -298,16 +298,17 @@ class CustomTrainingPipeline(object):
         self.images_criterion = CharbonnierLoss().to(self.device)
         # self.images_criterion = FocalFrequencyLoss(patch_factor=32).to(self.device)
         # self.images_criterion = MIXLoss(data_range=1.0, channel=ch_count)
-        self.perceptual_loss = DISTS().to(self.device)
-        # self.perceptual_loss = None
-        self.final_hist_loss = HistLoss(image_size=128, device=self.device)
-        # self.final_hist_loss = None
+        # self.perceptual_loss = DISTS().to(self.device)
+        self.perceptual_loss = None
+        # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
+        self.final_hist_loss = None
         # self.adv_loss = Adversarial(image_size=self.image_shape[0], gan_type='GAN', spectral_norm=True).to(device)
         self.hf_loss = HightFrequencyFFTLoss(self.image_shape).to(device)
         # self.hf_loss = HFENLoss(
         #     loss_f=torch.nn.functional.l1_loss,
         #     norm=False
         # )
+        # self.tv_loss = TVLoss(tv_loss_weight=0.5)
 
         # self.ssim_loss = None
         self.accuracy_measure = TorchPSNR(data_range=1.0).to(device)
@@ -370,13 +371,15 @@ class CustomTrainingPipeline(object):
 
                 f_loss = calculate_loss(
                     pred_images,
-                    clear_image[:, :1] if self.use_ycrcb else kornia.color.rgb_to_y(clear_image),
+                    clear_image[:, :1] if self.use_ycrcb or self.grayscale else kornia.color.rgb_to_y(clear_image),
                     lambda x, y: self.hf_loss(
-                        x[:, :1] if self.use_ycrcb else kornia.color.rgb_to_y(x),
+                        x[:, :1] if self.use_ycrcb or self.grayscale else kornia.color.rgb_to_y(x),
                         y
                     ),
                     self.use_unetpp
                 )
+
+                # tv_loss_value = self.tv_loss(pred_images)
 
                 # f_loss = calculate_loss(
                 #     pred_images,
@@ -385,14 +388,14 @@ class CustomTrainingPipeline(object):
                 #     self.use_unetpp
                 # )
 
-                h_loss = calculate_loss(
-                    pred_images,
-                    self._convert_to_rgb(clear_image),
-                    lambda x, y: self.final_hist_loss(self._convert_to_rgb(x), y),
-                    self.use_unetpp
-                )
+                # h_loss = calculate_loss(
+                #     pred_images,
+                #     self._convert_to_rgb(clear_image),
+                #     lambda x, y: self.final_hist_loss(self._convert_to_rgb(x), y),
+                #     self.use_unetpp
+                # )
 
-                total_loss = f_loss + p_loss + h_loss
+                total_loss = loss + f_loss
 
                 if self.gradient_accumulation_steps > 1:
                     total_loss = total_loss / self.gradient_accumulation_steps
@@ -407,12 +410,12 @@ class CustomTrainingPipeline(object):
                     self.optimizer.zero_grad()
 
                 pbar.postfix = \
-                    'Epoch: {}/{}, f_loss: {:.7f}, p_loss: {:.7f}, h_loss: {:.7f}'.format(
+                    'Epoch: {}/{}, loss: {:.7f}, f_loss: {:.7f}'.format(
                         epoch,
                         self.epochs,
+                        loss.item(),
                         f_loss.item(),
-                        p_loss.item(),
-                        h_loss.item()
+                        # p_loss.item()
                     )
                 avg_epoch_loss += loss.item() / len(self.train_dataloader)
 
@@ -464,19 +467,19 @@ class CustomTrainingPipeline(object):
                     
                     avg_loss_rate += loss.item()
 
-                    rgb_restored_image = self._convert_to_rgb(restored_image)
-                    rgb_clear_image = self._convert_to_rgb(clear_image)
+                    # rgb_restored_image = self._convert_to_rgb(restored_image)
+                    # rgb_clear_image = self._convert_to_rgb(clear_image)
 
-                    rgb_restored_image = torch.clamp(rgb_restored_image, 0, 1)
+                    restored_image = torch.clamp(restored_image, 0, 1)
 
                     val_psnr = self.accuracy_measure(
-                        rgb_restored_image,
-                        rgb_clear_image
+                        restored_image,
+                        clear_image
                     )
 
                     val_ssim = self.ssim_measure(
-                        rgb_restored_image,
-                        rgb_clear_image
+                        restored_image,
+                        clear_image
                     )
 
                     acc_rate = val_psnr.item()
@@ -487,9 +490,9 @@ class CustomTrainingPipeline(object):
                     test_len += 1
 
                     result_path = os.path.join(self.output_val_images_dir, image_name)
-                    val_img = (rgb_restored_image.squeeze(0).to('cpu').permute(1, 2, 0) * 255.0).numpy().astype(np.uint8)
+                    val_img = (restored_image.squeeze(0).to('cpu').permute(1, 2, 0) * 255.0).numpy().astype(np.uint8)
 
-                    Image.fromarray(val_img).save(result_path)
+                    Image.fromarray(val_img[..., 0]).save(result_path)
 
         if test_len > 0:
             avg_acc_rate /= test_len
