@@ -16,7 +16,7 @@ from streamlit_image_comparison import image_comparison
 
 ROOT_PATH: str = os.path.join(os.path.dirname(__file__), '../')
 RESEARCH_PATH: str = os.path.join(ROOT_PATH, 'research_pipelines/denoising_with_fourier/')
-MODEL_PATH: str = os.path.join(ROOT_PATH, 'materials/unet.pt')
+MODEL_PATH: str = os.path.join(ROOT_PATH, 'materials/rgb_unet.trh')
 DEVICE: str = 'cuda:0'
 IMAGE_SIZE: int = 256
 USE_TTA: bool = False
