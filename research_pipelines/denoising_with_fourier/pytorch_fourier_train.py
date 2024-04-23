@@ -18,6 +18,7 @@ from pytorch_msssim import SSIM, MS_SSIM
 from piq import DISTS
 import yaml
 from haar_pytorch import HaarForward, HaarInverse
+from FDL_pytorch import FDL_loss
 
 from dataloader import PairedDenoiseDataset, SyntheticNoiseDataset
 from callbacks import VisImage, VisAttentionMaps, VisPlot
@@ -309,6 +310,7 @@ class CustomTrainingPipeline(object):
         #     norm=False
         # )
         # self.tv_loss = TVLoss(tv_loss_weight=0.5)
+        self.fdl_loss = FDL_loss().to(self.device)
 
         # self.ssim_loss = None
         self.accuracy_measure = TorchPSNR(data_range=1.0).to(device)
@@ -395,13 +397,20 @@ class CustomTrainingPipeline(object):
                 #     self.use_unetpp
                 # )
 
-                total_loss = loss + f_loss
+                p_loss = calculate_loss(
+                    pred_images,
+                    self._convert_to_rgb(clear_image),
+                    lambda x, y: self.fdl_loss(self._convert_to_rgb(x), y),
+                    self.use_unetpp
+                )
+
+                total_loss = p_loss + f_loss
 
                 if self.gradient_accumulation_steps > 1:
                     total_loss = total_loss / self.gradient_accumulation_steps
 
                 total_loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 2.0)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
 
                 if (self.gradient_accumulation_steps <= 1) or (
                         (idx + 1) % self.gradient_accumulation_steps == 0) or (
@@ -410,12 +419,12 @@ class CustomTrainingPipeline(object):
                     self.optimizer.zero_grad()
 
                 pbar.postfix = \
-                    'Epoch: {}/{}, loss: {:.7f}, f_loss: {:.7f}'.format(
+                    'Epoch: {}/{}, f_loss: {:.7f}, p_loss: {:.7f}'.format(
                         epoch,
                         self.epochs,
-                        loss.item(),
+                        # loss.item(),
                         f_loss.item(),
-                        # p_loss.item()
+                        p_loss.item()
                     )
                 avg_epoch_loss += loss.item() / len(self.train_dataloader)
 
