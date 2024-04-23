@@ -12,6 +12,7 @@ import xml.etree.ElementTree as etree
 from dipy.denoise.noise_estimate import piesno
 
 CURRENT_PATH = os.path.dirname(__file__)
+NOISE_SIGMA_THRESHOLD: float = 7.5
 
 
 def parse_args() -> Namespace:
@@ -31,6 +32,10 @@ def parse_args() -> Namespace:
     parser.add_argument(
         '--minsize', type=int, required=False, default=256,
         help='Minimum size of frame to save'
+    )
+    parser.add_argument(
+        '--select-noisy', action='store_true',
+        help='Save only images with noise'
     )
     # parser.add_argument(
     #     '-t', '--type', type=str, required=False, default='singlecoil',
@@ -117,8 +122,12 @@ if  __name__ == '__main__':
         else:
             sigma = sigma_arr
 
-        if sigma > 0.9:
-            continue
+        if args.select_noisy:
+            if sigma < NOISE_SIGMA_THRESHOLD:
+                continue
+        else:
+            if sigma > 0.9:
+                continue
 
         for slice_id in range(nimg.shape[0]):
             res_path = os.path.join(
@@ -134,8 +143,12 @@ if  __name__ == '__main__':
             elif len(nimg.shape) == 4:
                 # multicoil type 
                 sigma = sigma_arr[slice_id]
-                if sigma > 0.9:
-                    continue
+                if args.select_noisy:
+                    if sigma < NOISE_SIGMA_THRESHOLD:
+                        continue
+                else:
+                    if sigma > 0.9:
+                        continue
 
                 img_to_save = multicoil_reconstruction_rss[slice_id]
 

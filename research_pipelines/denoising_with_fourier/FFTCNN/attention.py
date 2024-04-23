@@ -863,6 +863,45 @@ class RealFFTChannelAttentionV3(nn.Module):
         return x * channel_attn, inv_attn
 
 
+class RealFFTChannelAttentionV4(nn.Module):
+    def __init__(self, channel: int, image_size: int, fsize: int = 8, reduction: int = 16):
+        super(RealFFTChannelAttentionV4, self).__init__()
+
+        pooling_depth = int(np.log2(image_size // fsize))
+        
+        self.pool_fft_features = nn.Sequential(
+            ResidualComplesConv(channel, channel // 2),
+            FFTMaxPool2D(2 ** pooling_depth, 2 ** pooling_depth),
+            ResidualComplesConv(channel // 2, channel)
+        )
+        
+        self.fc = nn.Sequential(
+            nn.Linear(channel * fsize * fsize // 2, channel * fsize * fsize // 2 // reduction, dtype=torch.cfloat),
+            RealImaginaryLeakyReLU(),
+            nn.Linear(channel * fsize * fsize // 2 // reduction, channel, dtype=torch.cfloat),
+        )
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        z = torch.fft.rfft2(x, norm='forward')
+        z = rfftshift(z)
+
+        z_deep_feats = self.pool_fft_features(z)
+
+        z_deep_feats = z_deep_feats.view(x.size(0), -1)
+        channel_attn = self.fc(z_deep_feats)
+        channel_attn = self.sigmoid(channel_attn)
+        channel_attn = torch.abs(channel_attn.unsqueeze(2).unsqueeze(3))
+
+        out = x * channel_attn
+
+        with torch.no_grad():
+            inv_attn = torch.abs(out - x).mean(dim=1).unsqueeze(1)
+            inv_attn /= (inv_attn.max() + 1E-5)
+
+        return x * channel_attn, inv_attn
+
+
 class FFTCAFSModule(nn.Module):
     def __init__(self, image_size: int, channel: int, reduction: int = 16, kernel_size: int = 7) -> None:
         super().__init__()

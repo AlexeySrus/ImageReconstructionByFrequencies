@@ -82,7 +82,11 @@ class HightFrequencyFFTLoss(nn.Module):
         z_pred = torch.fft.rfft2(x_pred, norm='ortho')
         z_truth = torch.fft.rfft2(x_truth, norm='ortho')
 
-        err = (torch.abs(z_pred - z_truth) * self.kernel).sum((1, 2, 3))
+        err = z_pred - z_truth
+        err = torch.cat([err.real, err.imag], axis=1)
+        err = torch.abs(err)
+
+        err = (err * self.kernel).sum((1, 2, 3))
         err = err / (self.kernel.sum((1, 2, 3)) + 1E-6)
 
         if self.reduction == 'mean':
@@ -142,7 +146,7 @@ class HFENLoss(nn.Module): # Edge loss with pre_smooth
 
 
 if __name__ == '__main__':
-    loss = HFENLoss(torch.nn.functional.smooth_l1_loss)
+    loss = HightFrequencyFFTLoss(shape=(512, 512))
     t1 = torch.rand(1, 3, 512, 512)
     t2 = torch.rand(1, 3, 512, 512)
     lv = loss(t1, t2)
