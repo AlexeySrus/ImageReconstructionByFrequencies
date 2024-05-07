@@ -211,8 +211,8 @@ class FeaturesDownsample(nn.Module):
         super().__init__()
         self.features = FeaturesProcessing(in_ch, out_ch, window_size=window_size, image_size=image_size)
         # self.pool = GeneralizedMeanPooling2d(2, 2)
-        self.pool = nn.MaxPool2d(2, 2)
-        # self.pool = lambda x: resample_lanczos(x, scale=0.5, align_corners=False)
+        # self.pool = nn.MaxPool2d(2, 2)
+        self.pool = lambda x: resample_lanczos(x, scale=0.5, align_corners=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y, sa = self.features(x)
@@ -349,8 +349,10 @@ class FFTAttentionUNet(nn.Module):
                     nn.functional.interpolate(torch.abs(sa), (x.size(2), x.size(3)), mode='bilinear')
                     for sa in sa_list
                 ]
+
         if self.use_substraction:
             return self.denorm_input(hx + y), sa_list
+        
         return self.denorm_input(y), sa_list
 
 

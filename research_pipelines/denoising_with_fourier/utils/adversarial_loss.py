@@ -355,11 +355,11 @@ class Discriminator(nn.Module):
 
 
 class Adversarial(nn.Module):
-    def __init__(self, gan_k: int = 1, gan_type: str = 'GAN', image_size: int = 512, spectral_norm: bool = False):
+    def __init__(self, gan_k: int = 1, gan_type: str = 'GAN', image_size: int = 512, spectral_norm: bool = False, in_ch: int = 3):
         super(Adversarial, self).__init__()
         self.gan_type = gan_type
         self.gan_k = gan_k
-        self.discriminator = Discriminator(gan_type=gan_type, patch_size=image_size, spectral_norm=spectral_norm)
+        self.discriminator = Discriminator(gan_type=gan_type, patch_size=image_size, spectral_norm=spectral_norm, n_colors=in_ch)
         if gan_type != 'WGAN_GP':
             self.optimizer = make_optimizer('ADAM', self.discriminator)
         else:
