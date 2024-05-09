@@ -17,18 +17,6 @@ def init_weights(m):
 
     if type(m) == nn.Conv2d:
         torch.nn.init.xavier_uniform_(m.weight)
-    
-
-def real_imaginary_relu(z):
-    return nn.functional.relu(z.real) + 1.j * nn.functional.relu(z.imag)
-
-
-class RealImaginaryReLU(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, z):
-        return real_imaginary_relu(z) 
 
 
 def conv1x1(in_ch, out_ch):
@@ -80,79 +68,6 @@ class GeneralizedMeanPooling2d(nn.Module):
             + str(self.eps)
             + ")"
         )
-
-
-def complex_conv_block(in_ch, out_ch):
-    return nn.Sequential(
-        nn.Conv2d(in_ch, out_ch, 3, padding=1, dtype=torch.cfloat),
-        RealImaginaryReLU(),
-        nn.Conv2d(in_ch, out_ch, 3, padding=1, dtype=torch.cfloat)
-    )
-
-
-class SpectralPooling(nn.Module):
-    def __init__(self, k: int = 2):
-        super().__init__()
-        self.k = k
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        h_in, w_in = x.size(2), x.size(3)
-        h = h_in // self.k
-        w = w_in // self.k
-        
-        z = torch.fft.fft2(x, norm='ortho')
-        
-        z = torch.fft.fftshift(z)
-        z = z[:, :, (h_in - h)//2:(h_in + h) // 2, (w_in - w)//2:(w_in + w)//2]
-        z = torch.fft.ifftshift(z)
-
-        new_x = torch.fft.ifft2(z, norm='ortho')
-        new_x = new_x.real
-
-        return new_x
-    
-
-class MLPBottleneck(nn.Module):
-    def __init__(self, features: int, reduce: int = 8) -> None:
-        super().__init__()
-
-        self.fc1 = nn.Linear(features, features // reduce)
-        self.act1 = nn.LeakyReLU()
-        self.fc2 = nn.Linear(features // reduce, features)
-        self.act2 = nn.LeakyReLU()
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        y = self.fc1(x.view(x.size(0), x.size(1) * x.size(2) * x.size(3)))
-        y = self.act1(y)
-        y = self.fc2(y)
-        
-        y = y.view(x.size(0), x.size(1), x.size(2), x.size(3))
-        y = self.act2(y + x)
-
-        return y
-
-
-class FFTAttention(nn.Module):
-    def __init__(self, in_ch: int, reduction: int = 16, kernel_size: int = 7, window_size: int = 64, image_size: int = 256):
-        super().__init__()
-        self.fft_sa = FFTCAFSModule(channel=in_ch, reduction=reduction, image_size=image_size)
-        self.sa = SpatialAttention(kernel_size)
-        self.final_ca = ChannelAttention(in_ch * 2, reduction)
-        self.final_conv = nn.Conv2d(in_ch * 2, in_ch, 1)
-
-    def forward(self, x):
-        out_1, fft_sa = self.fft_sa(x)
-
-        out_2, float_sa = self.sa(x)
-
-        out, _ = self.final_ca(torch.concat((out_1, out_2), dim=1))
-        out = self.final_conv(out)
-
-        with torch.no_grad():
-            inv_attn = torch.abs(out_1 - x).mean(dim=1).unsqueeze(1)
-            inv_attn /= inv_attn.max()
-
-        return out, [fft_sa, torch.clamp(inv_attn, 0, 1), float_sa]
 
 
 class FeaturesProcessing(nn.Module):
@@ -269,7 +184,6 @@ class FFTAttentionUNetModule(nn.Module):
         self.downsample_block4 = FeaturesDownsample(mid_ch * 3, mid_ch * 4, window_size=8, image_size=image_size // 8)
 
         self.deep_conv_block = FeaturesProcessing(mid_ch * 4, mid_ch * 4, window_size=8, image_size=image_size // 16)
-        # self.deep_mlp_block = MLPBottleneck(mid_ch * 4 * image_size // 16 * image_size // 16)
 
         upsample_module = FeaturesUpsample
 
