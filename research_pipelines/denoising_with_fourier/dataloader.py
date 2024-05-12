@@ -147,7 +147,7 @@ class SyntheticNoiseDataset(Dataset):
     def __getitem__(self, _idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         idx = _idx % len(self.clear_images)
 
-        if np.random.randint(1, 101) > 98:
+        if np.random.randint(1, 101) > 95:
             rand_color = np.random.randint(0, 256, size=3, dtype=np.uint8)
             clear_image = np.zeros((self.window_size, self.window_size, 3), dtype=np.uint8)
             clear_image[:, :] = rand_color
@@ -175,7 +175,7 @@ class SyntheticNoiseDataset(Dataset):
         )
 
         if np.random.randint(1, 101) > 10:
-            if np.random.randint(1, 101) > 30:
+            if np.random.randint(1, 101) > 40:
                 if np.random.randint(1, 101) > 80:
                     noisy_crop = generate_additive_poisson_noise(clear_crop)
                 else:
