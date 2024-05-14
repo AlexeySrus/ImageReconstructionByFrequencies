@@ -77,6 +77,7 @@ class MatrixRFFT(nn.Module):
     
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         fft_size = get_even_index(x.size(3))
+        # fft_size = x.size(3) // 2 + 1
 
         z_real = (
             (self.real_w @ x) @ self.real_w.transpose(1, 2)[:, :, :fft_size] - 
@@ -182,7 +183,14 @@ class ChannelAttention(nn.Module):
         max_out = self.fc(self.max_pool(x))
         out = avg_out + max_out
         attn = self.sigmoid(out)
-        return x * attn, attn
+
+        out = x * attn
+
+        with torch.no_grad():
+            vis_att = torch.abs(out - x).mean(dim=1).unsqueeze(dim=1)
+            vis_att = vis_att / (vis_att.max() + 1E-5)
+
+        return out, vis_att
 
 
 class SpatialAttention(nn.Module):
@@ -244,7 +252,12 @@ class Self_Attn(nn.Module):
         pre_out = out.view(m_batchsize,C,width,height)
         
         out = self.gamma*pre_out + x
-        return out
+
+        with torch.no_grad():
+            inv_attn = torch.abs(x - out).mean(dim=1).unsqueeze(1)
+            inv_attn /= (inv_attn.max() + 1E-5)
+
+        return out, inv_attn
     
 
 class SpatialAttention(nn.Module):
@@ -362,7 +375,7 @@ class ShuffledSelfAttention(nn.Module):
 
     def forward(self, x: torch.Tensor) ->  Tuple[torch.Tensor, torch.Tensor]:
         y_pathes = self.pix_unshuffle(x)
-        y_pathes = self.self_attn(y_pathes)
+        y_pathes, _ = self.self_attn(y_pathes)
         y = self.pix_shuffle(y_pathes)
 
         with torch.no_grad():
@@ -473,35 +486,44 @@ class FFTCAFSModule(nn.Module):
         self.fft_ca = RealFFTChannelAttentionV4(channel=channel, reduction=reduction, image_size=image_size)
         self.fft_sa = WaveletSpaialAttentionV2(channel=channel, image_size=image_size)
 
+        # self.cbam = CBAM(channel=channel, reduction=reduction, kernel_size=kernel_size)
+
     def forward(self, x):
+        # Original U-Net (without attention)
         # with torch.no_grad():
         #     att = x.mean(dim=1).unsqueeze(dim=1)
         #     att = att / (att.max() + 1E-5)
         # return x, [att]
 
+        # Own approach
         x, ca_tensor = self.fft_ca(x)
         x, sa_tensor = self.fft_sa(x)
         return x, [ca_tensor, sa_tensor]
-        # return x, [sa_tensor]
 
-        # x, attn = self.attn(x)
-
-        # return x, [attn]
+        # CBAM
+        # x, ca_tensor, sa_tensor = self.cbam(x)
+        # return x, [ca_tensor, sa_tensor]
 
 
 if __name__ == '__main__':
+    import cv2
     from timeit import default_timer as time
     import scipy.linalg
 
-    torch.set_printoptions(precision=4, sci_mode=False)
+    # torch.set_printoptions(precision=4, sci_mode=False)
 
     def DFT_matrices(N):
         i, j = torch.meshgrid(torch.arange(N), torch.arange(N))
         omega = torch.ones(N, N) * torch.FloatTensor([- 2 * torch.pi / N])
         return torch.cos( omega * i * j ).to(torch.float32), torch.sin( omega * i * j ).to(torch.float32)
 
+    image_path = '/media/alexey/SSDData/datasets/denoising_dataset/base_clear_images/DIV2K_0134.png'
+    image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
+    rgb = torch.from_numpy(image.astype(np.float32) / 255.0).permute(2, 0, 1).unsqueeze(0)
+
     N = 256
-    x = torch.rand(2, 3, N, N, dtype=torch.float32)
+    # x = torch.rand(2, 3, N, N, dtype=torch.float32) * 256
+    x = rgb[:, :, :N, :N]
     W = torch.from_numpy(scipy.linalg.dft(N)).to(torch.cfloat)
     # Wr, Wi = DFT_matrices(N)
     Wr = W.real.unsqueeze(0)
@@ -526,16 +548,15 @@ if __name__ == '__main__':
     f = torch.fft.rfft2(x.to('cuda'), norm='forward').to('cpu')
     f2 = mf(x)
 
-    reps = 0.00001
-    aeps = 1e-7
-    # print(f.real)
-    # print(r)
+    reps = 0.001
+    aeps = 1e-3
     print(torch.allclose(f.real, r, rtol=reps, atol=aeps))
     print(torch.allclose(f.real, f2[0], rtol=reps, atol=aeps))
 
     print()
 
-    # print(f.imag.to(torch.float32))
-    # print(i.to(torch.float32))
     print(torch.allclose(f.imag, i, rtol=reps, atol=aeps))
     print(torch.allclose(f.imag, f2[1], rtol=reps, atol=aeps))
+
+    print(torch.abs(f.real - r).max())
+    print(torch.abs(f.imag - i).max())

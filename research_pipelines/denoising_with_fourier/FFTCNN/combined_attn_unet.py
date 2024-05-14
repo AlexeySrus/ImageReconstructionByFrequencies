@@ -52,35 +52,6 @@ def conv3x3(in_ch, out_ch):
     )
 
 
-def gem(x, kernel_size: int, stride: int, p=3, eps=1e-6):
-    return nn.functional.avg_pool2d(x.clamp(min=eps).pow(p), kernel_size, stride).pow(1.0 / p)
-
-
-class GeneralizedMeanPooling2d(nn.Module):
-    def __init__(self, kernel_size: int, stride: int, p=3, eps=1e-6):
-        super(GeneralizedMeanPooling2d, self).__init__()
-        self.kernel_size = kernel_size
-        self.stride = stride
-        self.p = nn.Parameter(torch.ones(1) * p, requires_grad=True)
-        self.eps = eps
-
-    def forward(self, x):
-        x = gem(x, self.kernel_size, self.stride, p=self.p.clamp_min(1), eps=self.eps)
-        return x
-
-    def __repr__(self):
-        return (
-            self.__class__.__name__
-            + "("
-            + "p="
-            + "{:.4f}".format(self.p.data.tolist()[0])
-            + ", "
-            + "eps="
-            + str(self.eps)
-            + ")"
-        )
-
-
 class FeaturesProcessing(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, window_size: int, image_size: int, use_attention: bool = True):
         super().__init__()
@@ -118,27 +89,13 @@ class FeaturesProcessing(nn.Module):
 
         y = self.act_final(hx + y)
         return y, sa_1
-    
-
-class FeaturesProcessingWithLastConv(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int, window_size: int, image_size: int, use_attention: bool = True):
-        super().__init__()
-        self.features = FeaturesProcessing(in_ch, out_ch, window_size=window_size, image_size=image_size, use_attention=use_attention)
-        self.final_conv = conv1x1(out_ch, out_ch)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        y, sa = self.features(x)
-        y = self.final_conv(y)
-        return y, sa
 
 
 class FeaturesDownsample(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, window_size: int, image_size: int, use_attention: bool = True):
         super().__init__()
         self.features_in = FeaturesProcessing(in_ch, in_ch * 2, window_size=window_size, image_size=image_size, use_attention=use_attention)
-        # self.pool = GeneralizedMeanPooling2d(2, 2)
-        # self.pool = nn.MaxPool2d(2, 2)
-        self.pool = lambda x: resample_lanczos(x, scale=0.5, align_corners=False)
+        self.pool = lambda x: torch.nn.functional.interpolate(x, scale_factor=0.5, align_corners=False, mode='bicubic')
         self.features_out = FeaturesProcessing(in_ch * 2, out_ch, window_size=window_size, image_size=image_size, use_attention=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -170,8 +127,7 @@ class FeaturesUpsample(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, window_size: int, image_size: int, use_attention: bool = True):
         super().__init__()
         self.in_features = FeaturesProcessing(in_ch, in_ch, window_size=window_size, image_size=image_size, use_attention=use_attention)
-        self.up = lambda x: resample_lanczos(x, scale=2, align_corners=True)
-        # self.up = torch.nn.UpsamplingBilinear2d(scale_factor=2)
+        self.up = lambda x: torch.nn.functional.interpolate(x, scale_factor=2, align_corners=True, mode='bicubic')
         self.features = FeaturesProcessing(in_ch, out_ch, window_size=window_size, image_size=image_size, use_attention=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -277,12 +233,12 @@ class FFTAttentionUNet(nn.Module):
                 return self.denorm_input(hx + y)
             return self.denorm_input(y)
 
-        if self.training:
-            with torch.no_grad():
-                sa_list = [
-                    nn.functional.interpolate(torch.abs(sa), (x.size(2), x.size(3)), mode='bilinear')
-                    for sa in sa_list
-                ]
+        # if self.training:
+        with torch.no_grad():
+            sa_list = [
+                nn.functional.interpolate(torch.abs(sa), (x.size(2), x.size(3)), mode='bilinear')
+                for sa in sa_list
+            ]
 
         if self.use_substraction:
             return self.denorm_input(hx + y), sa_list
