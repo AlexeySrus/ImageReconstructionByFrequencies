@@ -124,6 +124,7 @@ class CustomTrainingPipeline(object):
                  use_ycrcb: bool = False,
                  grayscale: bool = False,
                  use_unetpp: bool = False,
+                 substracted_noise: bool = False,
                  full_args: Optional[Namespace] = None):
         """
         Train U-Net denoising model
@@ -151,6 +152,7 @@ class CustomTrainingPipeline(object):
             use_ycrcb (bool, optional): Use YCrCb color space. Defaults to False.
             grayscale (bool, optional): Use 1-channel images in pipeline. Defaults to False.
             use_unetpp (bool, optional): Use U-Net++ architecture. Defaults to False.
+            substracted_noise (bool, optinal): Use netwotk prediction as Y = X + F(X). Defaults to False.
             full_args (Namespace, optional): All command-line arguments. Defaules to None.
         """
         self.device = device
@@ -205,7 +207,7 @@ class CustomTrainingPipeline(object):
                 clear_images_path=synth_data_paths,
                 window_size=self.image_shape[0],
                 preload=preload_data,
-                optional_dataset_size=10000, # 20000,
+                optional_dataset_size=20000,
                 use_ycrcb=use_ycrcb,
                 grayscale=grayscale
             )
@@ -287,7 +289,7 @@ class CustomTrainingPipeline(object):
             in_ch=ch_count,
             out_ch=ch_count,
             image_size=image_size,
-            use_substraction=True
+            use_substraction=substracted_noise
         )
 
         self.loss_weighter = ModelMultitask(losses_count=2)
@@ -303,7 +305,7 @@ class CustomTrainingPipeline(object):
         # self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=init_lr, betas=(0.9, 0.999), eps=1e-8, weight_decay=1e-2)
         self.optimizer = torch.optim.AdamW(
             params=[{'params': self.model.parameters()}, {'params': self.loss_weighter.parameters(), 'weight_decay': 0}], 
-            lr=init_lr, betas=(0.9, 0.999), eps=1e-8, weight_decay=1e-2
+            lr=init_lr, betas=(0.9, 0.999), eps=1e-8, weight_decay=1e-4
         )
         # self.optimizer = torch.optim.RAdam(
         #     params=[{'params': self.model.parameters()}, {'params': self.loss_weighter.parameters(), 'weight_decay': 0}], 
@@ -435,12 +437,12 @@ class CustomTrainingPipeline(object):
 
                 # e_loss = calculate_loss(pred_images, clear_image, self.edges_loss, self.use_unetpp)
 
-                # f_loss = calculate_loss(
-                #     pred_images,
-                #     self._convert_to_rgb(clear_image),
-                #     lambda x, y: self.hf_loss(self._convert_to_rgb(x), y),
-                #     self.use_unetpp
-                # )
+                f_loss = calculate_loss(
+                    pred_images,
+                    self._convert_to_rgb(clear_image),
+                    lambda x, y: self.hf_loss(self._convert_to_rgb(x), y),
+                    self.use_unetpp
+                )
 
                 # h_loss = calculate_loss(
                 #     pred_images,
@@ -456,8 +458,8 @@ class CustomTrainingPipeline(object):
                 #     self.use_unetpp
                 # )
 
-                # total_loss = self.loss_weighter([loss, p_loss])
-                total_loss = loss
+                total_loss = self.loss_weighter([loss, f_loss])
+                # total_loss = loss
 
 
                 if self.gradient_accumulation_steps > 1:
@@ -474,11 +476,11 @@ class CustomTrainingPipeline(object):
                     self.optimizer.zero_grad()
 
                 pbar.postfix = \
-                    'Epoch: {}/{}, loss: {:.7f}, w: [{:.2f}, {:.2f}]'.format(
+                    'Epoch: {}/{}, loss: {:.7f}, f_loss: {:.7f}, w: [{:.2f}, {:.2f}]'.format(
                         epoch,
                         self.epochs,
                         loss.item(),
-                        # p_loss.item(),
+                        f_loss.item(),
                         self.loss_weighter.sigma[0].item(),
                         self.loss_weighter.sigma[1].item()
                     )
@@ -699,6 +701,10 @@ def parse_args() -> Namespace:
         help='Use 1-channel for image training.'
     )
     parser.add_argument(
+        '--substracted-noise', action='store_true',
+        help='Use netwotk prediction as Y = X + F(X).'
+    )
+    parser.add_argument(
         '--batch_size', type=int, required=False, default=32,
         help='Training batch size.'
     )
@@ -768,6 +774,7 @@ if __name__ == '__main__':
         use_ycrcb=args.use_ycrcb,
         grayscale=args.use_grayscale,
         use_unetpp=args.use_unetplusplus,
+        substracted_noise=args.substracted_noise,
         full_args=args
     ).fit()
 
