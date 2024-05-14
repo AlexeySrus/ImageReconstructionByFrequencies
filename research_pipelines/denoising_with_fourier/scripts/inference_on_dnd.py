@@ -12,7 +12,7 @@ from timeit import default_timer as time
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 CURRENT_PATH = os.path.dirname(__file__)
 
-from FFTCNN.unet import FFTAttentionUNet as FFTCNN
+from FFTCNN.combined_attn_unet import FFTAttentionUNet as FFTCNN
 from utils.window_inference import eval_denoise_inference
 
 
@@ -112,7 +112,7 @@ if __name__ == '__main__':
 
     print('Device for inference: {}'.format(device))
 
-    model = FFTCNN().to(device)
+    model = FFTCNN(use_substraction=True).to(device)
 
     load_path = args.model
     load_data = torch.load(load_path, map_location=device)
@@ -158,12 +158,12 @@ if __name__ == '__main__':
             crop_img = img[box[0]:box[1], box[2]:box[3]].copy()
 
             input_tensor = torch.from_numpy(crop_img.astype(np.float32).transpose((2, 0, 1)))
-            ycrcb_tensor = RGB2YCrCb(input_tensor)
+            # ycrcb_tensor = RGB2YCrCb(input_tensor)
             
             start_inference_time = time()
             with torch.no_grad():
                 restored_image = eval_denoise_inference(
-                    tensor_img=ycrcb_tensor, model=model, window_size=imgsz, 
+                    tensor_img=input_tensor, model=model, window_size=imgsz, 
                     batch_size=4, crop_size=imgsz // 32, use_tta=True, device=device
                 )
             finish_inference_time = time()
@@ -173,7 +173,7 @@ if __name__ == '__main__':
             input_tensor = input_tensor.to('cpu')
 
             pred = restored_image.to('cpu')
-            pred = YCrCb2RGB(pred)
+            # pred = YCrCb2RGB(pred)
             pred = torch.clamp(pred, 0, 1)
             pred_image = tensor_to_image(pred)
             pred_matrix = tensor_to_srgb_matrix(pred)

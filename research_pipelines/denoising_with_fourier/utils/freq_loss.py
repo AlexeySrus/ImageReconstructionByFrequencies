@@ -77,6 +77,7 @@ class HightFrequencyFFTLoss(nn.Module):
         hight_pass_kernel = hight_pass_kernel[:, :, :, :shape[1] // 2 + 1]
         
         self.kernel = nn.Parameter(hight_pass_kernel, requires_grad=False)
+        self.kernel_sum = nn.Parameter(hight_pass_kernel.sum((1, 2, 3)), requires_grad=False)
 
     def forward(self, x_pred, x_truth):
         z_pred = torch.fft.rfft2(x_pred, norm='ortho')
@@ -87,7 +88,7 @@ class HightFrequencyFFTLoss(nn.Module):
         err = torch.abs(err)
 
         err = (err * self.kernel).sum((1, 2, 3))
-        err = err / (self.kernel.sum((1, 2, 3)) + 1E-6)
+        err = err / (self.kernel_sum + 1E-6)
 
         if self.reduction == 'mean':
             err = err.mean()

@@ -11,6 +11,7 @@ from torch.utils import data
 import torchvision
 import segmentation_models_pytorch as smp
 import timm
+import itertools
 from PIL import Image
 import os
 from torchmetrics.image import PeakSignalNoiseRatio as TorchPSNR
@@ -19,18 +20,20 @@ from piq import DISTS
 import yaml
 from haar_pytorch import HaarForward, HaarInverse
 from FDL_pytorch import FDL_loss
+from pytorch_optimizer import AdaSmooth
 
 from dataloader import PairedDenoiseDataset, SyntheticNoiseDataset
 from callbacks import VisImage, VisAttentionMaps, VisPlot
-from FFTCNN.fftcnn import init_weights
+from FFTCNN.combined_attn_unet import init_weights
 from FFTCNN.combined_attn_unet import FFTAttentionUNet
 from FFTCNN.combined_attn_unet_plusplus import FFTAttentionUNetPlusPlus
 from utils.window_inference import denoise_inference
 from utils.hist_loss import HistLoss
-from utils.adasmooth import AdaSmooth
 from utils.adversarial_loss import Adversarial
 from utils.freq_loss import HightFrequencyFFTLoss, HFENLoss
 from utils.focal_frequency_loss import FocalFrequencyLoss
+from utils.edge_loss import EdgeLoss
+from utils.laplassian_loss import LapLoss
 from utils.tv_loss import CharbonnierLoss, TVLoss
 from utils.tensor_utils import MixUp_AUG, convert_tensor_to_rgb
 from utils.cas import contrast_adaptive_sharpening
@@ -83,6 +86,19 @@ def calculate_loss(pred_values, truth_value, loss_function: Callable[[torch.Tens
         res_loss = loss_function(pred_values, truth_value)
 
     return res_loss
+
+
+class ModelMultitask(torch.nn.Module):
+    def __init__(self, losses_count: int):
+        super().__init__()
+        self.sigma = torch.nn.Parameter(torch.ones(losses_count))
+        self.eps = 1e-7
+	
+    def forward(self, losses: List[torch.Tensor]) -> torch.Tensor:	
+        loss_combine = 0.5 * torch.stack(losses, dim=0) / (self.sigma ** 2 + self.eps)
+        loss_combine = loss_combine.sum() + torch.log(self.sigma.prod() + self.eps)
+        return loss_combine
+
 
 class CustomTrainingPipeline(object):
     def __init__(self,
@@ -189,7 +205,7 @@ class CustomTrainingPipeline(object):
                 clear_images_path=synth_data_paths,
                 window_size=self.image_shape[0],
                 preload=preload_data,
-                optional_dataset_size=20000,
+                optional_dataset_size=10000, # 20000,
                 use_ycrcb=use_ycrcb,
                 grayscale=grayscale
             )
@@ -271,15 +287,32 @@ class CustomTrainingPipeline(object):
             in_ch=ch_count,
             out_ch=ch_count,
             image_size=image_size,
-            use_substraction=False
+            use_substraction=True
         )
+
+        self.loss_weighter = ModelMultitask(losses_count=2)
+        self.loss_weighter = self.loss_weighter.to(self.device)
 
         self.model.apply(init_weights)
         self.model = self.model.to(device)
-        # self.optimizer = torch.optim.SGD(params=self.model.parameters(), lr=init_lr, nesterov=True, momentum=0.9, weight_decay=1E-2)
-        self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=init_lr, betas=(0.9, 0.999), eps=1e-8, weight_decay=1E-2)
-        # self.optimizer = torch.optim.Adam(params=self.model.parameters(), lr=init_lr, betas=(0.9, 0.999), eps=1e-8)
-        # self.optimizer = AdaSmooth(params=self.model.parameters(), lr=init_lr, weight_decay=1E-5)
+
+        # self.optimizer = torch.optim.SGD(
+        #     params=[{'params': self.model.parameters()}, {'params': self.loss_weighter.parameters(), 'weight_decay': 0}], 
+        #     lr=init_lr, nesterov=True, momentum=0.9, weight_decay=1e-4
+        # )
+        # self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=init_lr, betas=(0.9, 0.999), eps=1e-8, weight_decay=1e-2)
+        self.optimizer = torch.optim.AdamW(
+            params=[{'params': self.model.parameters()}, {'params': self.loss_weighter.parameters(), 'weight_decay': 0}], 
+            lr=init_lr, betas=(0.9, 0.999), eps=1e-8, weight_decay=1e-2
+        )
+        # self.optimizer = torch.optim.RAdam(
+        #     params=[{'params': self.model.parameters()}, {'params': self.loss_weighter.parameters(), 'weight_decay': 0}], 
+        #     lr=init_lr, betas=(0.9, 0.999), eps=1e-8, decoupled_weight_decay=True, weight_decay=1e-2
+        # )
+        # self.optimizer = AdaSmooth(
+        #     params=[{'params': self.model.parameters()}, {'params': self.loss_weighter.parameters(), 'weight_decay': 0}], 
+        #     lr=init_lr, weight_decay=1e-2, weight_decouple=True
+        # )
 
         if load_path is not None:
             load_data = torch.load(load_path, map_location=self.device)
@@ -297,22 +330,33 @@ class CustomTrainingPipeline(object):
                 self.optimizer.param_groups[0]['lr'] = init_lr
                 print('Optimizer LR: {:.5f}'.format(self.get_lr()))
 
+                # if hasattr(self, 'loss_weighter') and self.loss_weighter is not None and 'loss_weighter' in load_data.keys():
+                #     self.loss_weighter.load_state_dict(load_data['loss_weighter'])
+                #     print('Loss weighter sigmas have been loaded')
+
+            self.optimizer.param_groups[0]['weight_decay'] = 1e-4
+            print('Optimizer Weights Decay: {:.5f}'.format(self.optimizer.param_groups[0]['weight_decay']))
+            print('Loss Weights Decay: {:.5f}'.format(self.optimizer.param_groups[1]['weight_decay']))
+
+
         self.images_criterion = CharbonnierLoss().to(self.device)
-        # self.images_criterion = FocalFrequencyLoss(patch_factor=32).to(self.device)
+        # self.images_criterion = FocalFrequencyLoss(patch_factor=16, loss_weight=10).to(self.device)
         # self.images_criterion = MIXLoss(data_range=1.0, channel=ch_count)
+        self.val_criterion = self.images_criterion
         # self.perceptual_loss = DISTS().to(self.device)
         self.perceptual_loss = None
-        self.final_hist_loss = HistLoss(image_size=128, device=self.device)
-        # self.final_hist_loss = None
-        # self.adv_loss = Adversarial(image_size=self.image_shape[0], gan_type='WGAN_GP', spectral_norm=True).to(device)
-        self.hf_loss = HightFrequencyFFTLoss(self.image_shape).to(device)
-        # self.hf_loss = HFENLoss(
-        #     loss_f=torch.nn.functional.l1_loss,
-        #     norm=False
-        # )
+        # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
+        self.final_hist_loss = None
+        # self.adv_loss = Adversarial(image_size=self.image_shape[0], gan_type='GAN', spectral_norm=True, in_ch=ch_count).to(device)
+        self.adv_loss = None
+        # self.hf_loss = HightFrequencyFFTLoss(self.image_shape).to(device)
+        self.hf_loss = HFENLoss(
+            loss_f=CharbonnierLoss().to(self.device),
+            norm=False
+        )
+        # self.edges_loss = LapLoss().to(device)
         # self.tv_loss = TVLoss(tv_loss_weight=0.5)
-
-        self.fdl_loss = FDL_loss().to(self.device)
+        # self.fdl_loss = FDL_loss().to(self.device)
 
         # self.ssim_loss = None
         self.accuracy_measure = TorchPSNR(data_range=1.0).to(device)
@@ -342,6 +386,7 @@ class CustomTrainingPipeline(object):
 
     def _train_step(self, epoch) -> float:
         self.model.train()
+        self.optimizer.zero_grad()
         avg_epoch_loss = 0
 
         batches_count = len(self.train_dataloader)
@@ -352,8 +397,8 @@ class CustomTrainingPipeline(object):
                 noisy_image = _noisy_image.to(self.device)
                 clear_image = _clear_image.to(self.device)
 
-                # if epoch > 1 and np.random.randint(0, 101) > 90:
-                #     clear_image, noisy_image = self.mixup.aug(clear_image, noisy_image)
+                if epoch > 3 and np.random.randint(0, 101) > 85:
+                    clear_image, noisy_image = self.mixup.aug(clear_image, noisy_image)
 
                 output = self.model(noisy_image)
 
@@ -373,65 +418,69 @@ class CustomTrainingPipeline(object):
                         self.use_unetpp
                     )
 
-                # tv_loss_value = calculate_loss(
-                #     pred_images, clear_image,
-                #     lambda x, _: self.tv_loss(x),
+                # f_loss = calculate_loss(
+                #     pred_images,
+                #     # kornia.enhance.sharpness(clear_image[:, :1] if self.use_ycrcb or self.grayscale else kornia.color.rgb_to_y(clear_image), 2.0),
+                #     clear_image[:, :1] if self.use_ycrcb or self.grayscale else kornia.color.rgb_to_y(clear_image),
+                #     lambda x, y: self.hf_loss(
+                #         x[:, :1] if self.use_ycrcb or self.grayscale else kornia.color.rgb_to_y(x),
+                #         y
+                #     ),
                 #     self.use_unetpp
                 # )
 
-                f_loss = calculate_loss(
-                    pred_images,
-                    clear_image[:, :1] if self.use_ycrcb or self.grayscale else kornia.color.rgb_to_y(clear_image),
-                    lambda x, y: self.hf_loss(
-                        x[:, :1] if self.use_ycrcb or self.grayscale else kornia.color.rgb_to_y(x),
-                        y
-                    ),
-                    self.use_unetpp
-                )
+                # tv_loss_value = self.tv_loss(pred_images)
+
+                # a_loss = self.adv_loss(pred_images, clear_image)
+
+                # e_loss = calculate_loss(pred_images, clear_image, self.edges_loss, self.use_unetpp)
 
                 # f_loss = calculate_loss(
                 #     pred_images,
-                #     contrast_adaptive_sharpening(clear_image),
-                #     self.hf_loss,
+                #     self._convert_to_rgb(clear_image),
+                #     lambda x, y: self.hf_loss(self._convert_to_rgb(x), y),
                 #     self.use_unetpp
                 # )
 
-                h_loss = calculate_loss(
-                    pred_images,
-                    self._convert_to_rgb(clear_image),
-                    lambda x, y: self.final_hist_loss(self._convert_to_rgb(x), y),
-                    self.use_unetpp
-                )
+                # h_loss = calculate_loss(
+                #     pred_images,
+                #     self._convert_to_rgb(clear_image),
+                #     lambda x, y: self.final_hist_loss(self._convert_to_rgb(x), y),
+                #     self.use_unetpp
+                # )
 
-                # a_loss = self.adv_loss(pred_images, clear_image)
-                p_loss = calculate_loss(
-                    pred_images,
-                    self._convert_to_rgb(clear_image),
-                    lambda x, y: self.fdl_loss(self._convert_to_rgb(x), y),
-                    self.use_unetpp
-                )
+                # p_loss = calculate_loss(
+                #     pred_images,
+                #     self._convert_to_rgb(clear_image),
+                #     lambda x, y: self.fdl_loss(self._convert_to_rgb(x), y),
+                #     self.use_unetpp
+                # )
 
-                total_loss = f_loss + p_loss + h_loss
+                # total_loss = self.loss_weighter([loss, p_loss])
+                total_loss = loss
+
 
                 if self.gradient_accumulation_steps > 1:
                     total_loss = total_loss / self.gradient_accumulation_steps
 
                 total_loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
 
                 if (self.gradient_accumulation_steps <= 1) or (
                         (idx + 1) % self.gradient_accumulation_steps == 0) or (
                         idx + 1 == batches_count):
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                     self.optimizer.step()
+
                     self.optimizer.zero_grad()
 
                 pbar.postfix = \
-                    'Epoch: {}/{}, f_loss: {:.7f},  p_loss: {:.7f}, h_loss: {:.7f}'.format(
+                    'Epoch: {}/{}, loss: {:.7f}, w: [{:.2f}, {:.2f}]'.format(
                         epoch,
                         self.epochs,
-                        f_loss.item(),
-                        p_loss.item(),
-                        h_loss.item()
+                        loss.item(),
+                        # p_loss.item(),
+                        self.loss_weighter.sigma[0].item(),
+                        self.loss_weighter.sigma[1].item()
                     )
                 avg_epoch_loss += loss.item() / len(self.train_dataloader)
 
@@ -479,23 +528,23 @@ class CustomTrainingPipeline(object):
                         batch_size=self.batch_size, crop_size=0
                     ).unsqueeze(0)
 
-                    loss = self.images_criterion(restored_image, clear_image)
+                    loss = self.val_criterion(restored_image, clear_image)
                     
                     avg_loss_rate += loss.item()
 
-                    rgb_restored_image = self._convert_to_rgb(restored_image)
-                    rgb_clear_image = self._convert_to_rgb(clear_image)
+                    # rgb_restored_image = self._convert_to_rgb(restored_image)
+                    # rgb_clear_image = self._convert_to_rgb(clear_image)
 
-                    rgb_restored_image = torch.clamp(rgb_restored_image, 0, 1)
+                    restored_image = torch.clamp(restored_image, 0, 1)
 
                     val_psnr = self.accuracy_measure(
-                        rgb_restored_image,
-                        rgb_clear_image
+                        restored_image,
+                        clear_image
                     )
 
                     val_ssim = self.ssim_measure(
-                        rgb_restored_image,
-                        rgb_clear_image
+                        restored_image,
+                        clear_image
                     )
 
                     acc_rate = val_psnr.item()
@@ -506,7 +555,8 @@ class CustomTrainingPipeline(object):
                     test_len += 1
 
                     result_path = os.path.join(self.output_val_images_dir, image_name)
-                    val_img = (rgb_restored_image.squeeze(0).to('cpu').permute(1, 2, 0) * 255.0).numpy().astype(np.uint8)
+                    val_img = (restored_image.squeeze(0).to('cpu').permute(1, 2, 0) * 255.0).numpy().astype(np.uint8)
+                    val_img = val_img[..., 0] if self.grayscale else val_img
 
                     Image.fromarray(val_img).save(result_path)
 
@@ -516,7 +566,11 @@ class CustomTrainingPipeline(object):
             avg_ssim_rate /= test_len
 
         if self.scheduler is not None:
+            old_lr = self.get_lr()
             self.scheduler.step()
+            new_lr = self.get_lr()
+            if abs(old_lr - new_lr) > 1E-9:
+                print('LR has changed from {:.8f} to {:.8f}'.format(old_lr, new_lr))
 
         return avg_loss_rate, (avg_acc_rate, avg_ssim_rate)
 
@@ -558,6 +612,13 @@ class CustomTrainingPipeline(object):
             'acc': avg_acc_rate,
             'epoch': epoch
         }
+
+        if self.adv_loss is not None:
+            save_state['gan'] = self.adv_loss.state_dict()
+
+        if hasattr(self, 'loss_weighter') and self.loss_weighter is not None:
+            save_state['loss_weighter'] = self.loss_weighter.state_dict()
+
 
         torch.save(
             save_state,
@@ -669,6 +730,8 @@ def parse_args() -> Namespace:
 
 
 if __name__ == '__main__':
+    # torch.autograd.set_detect_anomaly(True)
+
     args = parse_args()
 
     if args.train_data_folder is not None:

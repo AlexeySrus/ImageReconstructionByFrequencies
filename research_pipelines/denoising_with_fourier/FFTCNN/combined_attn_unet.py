@@ -1,5 +1,6 @@
 from typing import Tuple, List, Optional
 from collections import OrderedDict
+import math
 import torch
 import torch.nn as nn
 
@@ -17,18 +18,16 @@ def init_weights(m):
 
     if type(m) == nn.Conv2d:
         torch.nn.init.xavier_uniform_(m.weight)
-    
-
-def real_imaginary_relu(z):
-    return nn.functional.relu(z.real) + 1.j * nn.functional.relu(z.imag)
 
 
-class RealImaginaryReLU(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, z):
-        return real_imaginary_relu(z) 
+def init_weights_kaiming(m):
+    if type(m) == nn.Conv2d:
+        nn.init.kaiming_normal(m.weight.data, a=0, mode='fan_in')
+    elif type(m) == nn.Linear:
+        nn.init.kaiming_normal(m.weight.data, a=0, mode='fan_in')
+    elif type(m) == nn.BatchNorm2d:
+        m.weight.data.normal_(mean=0, std=math.sqrt(2./9./64.)).clamp_(-0.025,0.025)
+        nn.init.constant(m.bias.data, 0.0)
 
 
 def conv1x1(in_ch, out_ch):
@@ -51,108 +50,6 @@ def conv3x3(in_ch, out_ch):
         padding=1,
         padding_mode=padding_mode
     )
-
-
-def gem(x, kernel_size: int, stride: int, p=3, eps=1e-6):
-    return nn.functional.avg_pool2d(x.clamp(min=eps).pow(p), kernel_size, stride).pow(1.0 / p)
-
-
-class GeneralizedMeanPooling2d(nn.Module):
-    def __init__(self, kernel_size: int, stride: int, p=3, eps=1e-6):
-        super(GeneralizedMeanPooling2d, self).__init__()
-        self.kernel_size = kernel_size
-        self.stride = stride
-        self.p = nn.Parameter(torch.ones(1) * p, requires_grad=True)
-        self.eps = eps
-
-    def forward(self, x):
-        x = gem(x, self.kernel_size, self.stride, p=self.p.clamp_min(1), eps=self.eps)
-        return x
-
-    def __repr__(self):
-        return (
-            self.__class__.__name__
-            + "("
-            + "p="
-            + "{:.4f}".format(self.p.data.tolist()[0])
-            + ", "
-            + "eps="
-            + str(self.eps)
-            + ")"
-        )
-
-
-def complex_conv_block(in_ch, out_ch):
-    return nn.Sequential(
-        nn.Conv2d(in_ch, out_ch, 3, padding=1, dtype=torch.cfloat),
-        RealImaginaryReLU(),
-        nn.Conv2d(in_ch, out_ch, 3, padding=1, dtype=torch.cfloat)
-    )
-
-
-class SpectralPooling(nn.Module):
-    def __init__(self, k: int = 2):
-        super().__init__()
-        self.k = k
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        h_in, w_in = x.size(2), x.size(3)
-        h = h_in // self.k
-        w = w_in // self.k
-        
-        z = torch.fft.fft2(x, norm='ortho')
-        
-        z = torch.fft.fftshift(z)
-        z = z[:, :, (h_in - h)//2:(h_in + h) // 2, (w_in - w)//2:(w_in + w)//2]
-        z = torch.fft.ifftshift(z)
-
-        new_x = torch.fft.ifft2(z, norm='ortho')
-        new_x = new_x.real
-
-        return new_x
-    
-
-class MLPBottleneck(nn.Module):
-    def __init__(self, features: int, reduce: int = 8) -> None:
-        super().__init__()
-
-        self.fc1 = nn.Linear(features, features // reduce)
-        self.act1 = nn.LeakyReLU()
-        self.fc2 = nn.Linear(features // reduce, features)
-        self.act2 = nn.LeakyReLU()
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        y = self.fc1(x.view(x.size(0), x.size(1) * x.size(2) * x.size(3)))
-        y = self.act1(y)
-        y = self.fc2(y)
-        
-        y = y.view(x.size(0), x.size(1), x.size(2), x.size(3))
-        y = self.act2(y + x)
-
-        return y
-
-
-class FFTAttention(nn.Module):
-    def __init__(self, in_ch: int, reduction: int = 16, kernel_size: int = 7, window_size: int = 64, image_size: int = 256):
-        super().__init__()
-        self.fft_sa = FFTCAFSModule(channel=in_ch, reduction=reduction, image_size=image_size)
-        self.sa = SpatialAttention(kernel_size)
-        self.final_ca = ChannelAttention(in_ch * 2, reduction)
-        self.final_conv = nn.Conv2d(in_ch * 2, in_ch, 1)
-
-    def forward(self, x):
-        out_1, fft_sa = self.fft_sa(x)
-
-        out_2, float_sa = self.sa(x)
-
-        out, _ = self.final_ca(torch.concat((out_1, out_2), dim=1))
-        out = self.final_conv(out)
-
-        with torch.no_grad():
-            inv_attn = torch.abs(out_1 - x).mean(dim=1).unsqueeze(1)
-            inv_attn /= inv_attn.max()
-
-        return out, [fft_sa, torch.clamp(inv_attn, 0, 1), float_sa]
 
 
 class FeaturesProcessing(nn.Module):
@@ -192,31 +89,19 @@ class FeaturesProcessing(nn.Module):
 
         y = self.act_final(hx + y)
         return y, sa_1
-    
-
-class FeaturesProcessingWithLastConv(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int, window_size: int, image_size: int, use_attention: bool = True):
-        super().__init__()
-        self.features = FeaturesProcessing(in_ch, out_ch, window_size=window_size, image_size=image_size, use_attention=use_attention)
-        self.final_conv = conv1x1(out_ch, out_ch)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        y, sa = self.features(x)
-        y = self.final_conv(y)
-        return y, sa
 
 
 class FeaturesDownsample(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int, window_size: int, image_size: int):
+    def __init__(self, in_ch: int, out_ch: int, window_size: int, image_size: int, use_attention: bool = True):
         super().__init__()
-        self.features = FeaturesProcessing(in_ch, out_ch, window_size=window_size, image_size=image_size)
-        # self.pool = GeneralizedMeanPooling2d(2, 2)
-        self.pool = nn.MaxPool2d(2, 2)
-        # self.pool = lambda x: resample_lanczos(x, scale=0.5, align_corners=False)
+        self.features_in = FeaturesProcessing(in_ch, in_ch * 2, window_size=window_size, image_size=image_size, use_attention=use_attention)
+        self.pool = lambda x: torch.nn.functional.interpolate(x, scale_factor=0.5, align_corners=False, mode='bicubic')
+        self.features_out = FeaturesProcessing(in_ch * 2, out_ch, window_size=window_size, image_size=image_size, use_attention=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        y, sa = self.features(x)
+        y, sa = self.features_in(x)
         y = self.pool(y)
+        y, _ = self.features_out(y)
         return y, sa
     
 
@@ -239,19 +124,16 @@ class FeaturesConvTransposeUpsample(nn.Module):
 
 
 class FeaturesUpsample(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int, window_size: int, image_size: int):
+    def __init__(self, in_ch: int, out_ch: int, window_size: int, image_size: int, use_attention: bool = True):
         super().__init__()
-        self.in_features = FeaturesProcessing(in_ch, in_ch, window_size=window_size, image_size=image_size, use_attention=False)
-        self.up = lambda x: resample_lanczos(x, scale=2, align_corners=True)
-        # self.up = torch.nn.UpsamplingBilinear2d(scale_factor=2)
-        self.features = FeaturesProcessing(in_ch, out_ch, window_size=window_size, image_size=image_size, use_attention=False)  
-        self.features_with_attn = FeaturesProcessing(out_ch, out_ch, window_size=window_size, image_size=image_size, use_attention=True)
+        self.in_features = FeaturesProcessing(in_ch, in_ch, window_size=window_size, image_size=image_size, use_attention=use_attention)
+        self.up = lambda x: torch.nn.functional.interpolate(x, scale_factor=2, align_corners=True, mode='bicubic')
+        self.features = FeaturesProcessing(in_ch, out_ch, window_size=window_size, image_size=image_size, use_attention=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        y, _ = self.in_features(x)
+        y, sa = self.in_features(x)
         y = self.up(y)
         y, _ = self.features(y)
-        y, sa = self.features_with_attn(y)
         return y, sa
 
 
@@ -261,64 +143,72 @@ class FFTAttentionUNetModule(nn.Module):
 
         self.init_block = FeaturesProcessing(in_ch, mid_ch, window_size=64, image_size=image_size, use_attention=False)
 
-        self.init_block_with_attn = FeaturesProcessing(mid_ch, mid_ch, window_size=64, image_size=image_size)
+        self.init_block_2 = FeaturesProcessing(mid_ch, mid_ch, window_size=64, image_size=image_size, use_attention=False)
 
-        self.downsample_block1 = FeaturesDownsample(mid_ch, mid_ch, window_size=64, image_size=image_size)
-        self.downsample_block2 = FeaturesDownsample(mid_ch, mid_ch * 2, window_size=32, image_size=image_size // 2)
-        self.downsample_block3 = FeaturesDownsample(mid_ch * 2, mid_ch * 3, window_size=16, image_size=image_size // 4)
-        self.downsample_block4 = FeaturesDownsample(mid_ch * 3, mid_ch * 4, window_size=8, image_size=image_size // 8)
+        self.downsample_block1 = FeaturesDownsample(mid_ch, mid_ch, window_size=64, image_size=image_size, use_attention=False)
+        self.downsample_block2 = FeaturesDownsample(mid_ch, mid_ch * 2, window_size=32, image_size=image_size // 2, use_attention=False)
+        self.downsample_block3 = FeaturesDownsample(mid_ch * 2, mid_ch * 3, window_size=16, image_size=image_size // 4, use_attention=False)
+        self.downsample_block4 = FeaturesDownsample(mid_ch * 3, mid_ch * 4, window_size=8, image_size=image_size // 8, use_attention=False)
 
-        self.deep_conv_block = FeaturesProcessing(mid_ch * 4, mid_ch * 4, window_size=8, image_size=image_size // 16)
-        # self.deep_mlp_block = MLPBottleneck(mid_ch * 4 * image_size // 16 * image_size // 16)
+        self.connection_attn1 = FFTCAFSModule(channel=mid_ch, reduction=16, image_size=image_size)
+        self.connection_attn2 = FFTCAFSModule(channel=mid_ch, reduction=16, image_size=image_size // 2)
+        self.connection_attn3 = FFTCAFSModule(channel=mid_ch * 2, reduction=32, image_size=image_size // 4)
+        self.connection_attn4 = FFTCAFSModule(channel=mid_ch * 3, reduction=32, image_size=image_size // 8)
+
+        self.deep_conv_block = FeaturesProcessing(mid_ch * 4, mid_ch * 4, window_size=8, image_size=image_size // 16, use_attention=False)
 
         upsample_module = FeaturesUpsample
 
-        self.upsample4 = upsample_module(mid_ch * 4, mid_ch * 3, window_size=16, image_size=image_size // 8)
-        self.upsample3 = upsample_module(mid_ch * 3, mid_ch * 2, window_size=32, image_size=image_size // 4)
-        self.upsample2 = upsample_module(mid_ch * 2, mid_ch, window_size=64 , image_size=image_size // 2)
-        self.upsample1 = upsample_module(mid_ch, mid_ch, window_size=64 , image_size=image_size)
+        self.upsample4 = upsample_module(mid_ch * 4, mid_ch * 3, window_size=16, image_size=image_size // 8, use_attention=False)
+        self.upsample3 = upsample_module(mid_ch * 3, mid_ch * 2, window_size=32, image_size=image_size // 4, use_attention=False)
+        self.upsample2 = upsample_module(mid_ch * 2, mid_ch, window_size=64 , image_size=image_size // 2, use_attention=False)
+        self.upsample1 = upsample_module(mid_ch, mid_ch, window_size=64 , image_size=image_size, use_attention=False)
         
-        self.upsample_features_block4 = FeaturesProcessing(mid_ch * 3 + mid_ch * 3, mid_ch * 3, window_size=8, image_size=image_size // 8)
-        self.upsample_features_block3 = FeaturesProcessing(mid_ch * 2 + mid_ch * 2, mid_ch * 2, window_size=16, image_size=image_size // 4)
-        self.upsample_features_block2 = FeaturesProcessing(mid_ch + mid_ch, mid_ch, window_size=32, image_size=image_size // 2)
-        self.upsample_features_block1 = FeaturesProcessing(mid_ch + mid_ch, out_ch, window_size=64 , image_size=image_size)
+        self.upsample_features_block4 = FeaturesProcessing(mid_ch * 3 + mid_ch * 3, mid_ch * 3, window_size=8, image_size=image_size // 8, use_attention=False)
+        self.upsample_features_block3 = FeaturesProcessing(mid_ch * 2 + mid_ch * 2, mid_ch * 2, window_size=16, image_size=image_size // 4, use_attention=False)
+        self.upsample_features_block2 = FeaturesProcessing(mid_ch + mid_ch, mid_ch, window_size=32, image_size=image_size // 2, use_attention=False)
+        self.upsample_features_block1 = FeaturesProcessing(mid_ch + mid_ch, out_ch, window_size=64 , image_size=image_size, use_attention=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         hx, _ = self.init_block(x)
-        hx, sa_init = self.init_block_with_attn(hx)
+        hx, _ = self.init_block_2(hx)
 
-        down_f1, sa_f1 = self.downsample_block1(hx)         # W // 2
-        down_f2, sa_f2 = self.downsample_block2(down_f1)    # W // 4
-        down_f3, sa_f3 = self.downsample_block3(down_f2)    # W // 8
-        down_f4, sa_f4 = self.downsample_block4(down_f3)    # W // 16
+        down_f1, _ = self.downsample_block1(hx)         # W // 2
+        down_f2, _ = self.downsample_block2(down_f1)    # W // 4
+        down_f3, _ = self.downsample_block3(down_f2)    # W // 8
+        down_f4, _ = self.downsample_block4(down_f3)    # W // 16
 
-        deep_f, sa_f = self.deep_conv_block(down_f4)
-        # deep_f = self.deep_mlp_block(deep_f)
+        deep_f, _ = self.deep_conv_block(down_f4)
 
-        deep_f, sa_up_4 = self.upsample4(deep_f)
+        hx,      sa_f1 = self.connection_attn1(hx)
+        down_f1, sa_f2 = self.connection_attn2(down_f1)
+        down_f2, sa_f3 = self.connection_attn3(down_f2)
+        down_f3, sa_f4 = self.connection_attn4(down_f3)
+
+        deep_f, _ = self.upsample4(deep_f)
         decoded_f4 = torch.cat((down_f3, deep_f), axis=1)
-        decoded_f4, sa_df4 = self.upsample_features_block4(decoded_f4)
+        decoded_f4, _ = self.upsample_features_block4(decoded_f4)
 
-        deep_f, sa_up_3 = self.upsample3(decoded_f4)
+        deep_f, _ = self.upsample3(decoded_f4)
         decoded_f3 = torch.cat((down_f2, deep_f), axis=1)
-        decoded_f3, sa_df3 = self.upsample_features_block3(decoded_f3)
+        decoded_f3, _ = self.upsample_features_block3(decoded_f3)
 
-        deep_f, sa_up_2 = self.upsample2(decoded_f3)
+        deep_f, _ = self.upsample2(decoded_f3)
         decoded_f2 = torch.cat((down_f1, deep_f), axis=1)
-        decoded_f2, sa_df2 = self.upsample_features_block2(decoded_f2)
+        decoded_f2, _ = self.upsample_features_block2(decoded_f2)
 
-        deep_f, sa_up_1 = self.upsample1(decoded_f2)
+        deep_f, _ = self.upsample1(decoded_f2)
         decoded_f1 = torch.cat((hx, deep_f), dim=1)
-        decoded_f1, sa_df1 = self.upsample_features_block1(decoded_f1)
+        decoded_f1, _ = self.upsample_features_block1(decoded_f1)
 
-        return decoded_f1, sa_init + sa_f1 + sa_f2 + sa_f3 + sa_f4 + sa_f + sa_up_4 + sa_up_3 + sa_up_2 + sa_up_1 + sa_df4 + sa_df3 + sa_df2 + sa_df1
+        return decoded_f1,  sa_f1 + sa_f2 + sa_f3 + sa_f4
 
 
 class FFTAttentionUNet(nn.Module):
     def __init__(self, in_ch: int = 3,  out_ch: int = 3, image_size: int = 256, use_substraction: bool = False):
         super().__init__()
 
-        self.unet = FFTAttentionUNetModule(in_ch, 16, out_ch, image_size=image_size)
+        self.unet = FFTAttentionUNetModule(in_ch, 32, out_ch, image_size=image_size)
         self.out_conv = nn.Conv2d(out_ch, out_ch, 1, bias=True)
         self.export = False
         self.use_substraction = use_substraction
@@ -343,14 +233,16 @@ class FFTAttentionUNet(nn.Module):
                 return self.denorm_input(hx + y)
             return self.denorm_input(y)
 
-        if self.training:
-            with torch.no_grad():
-                sa_list = [
-                    nn.functional.interpolate(torch.abs(sa), (x.size(2), x.size(3)), mode='bilinear')
-                    for sa in sa_list
-                ]
+        # if self.training:
+        with torch.no_grad():
+            sa_list = [
+                nn.functional.interpolate(torch.abs(sa), (x.size(2), x.size(3)), mode='bilinear')
+                for sa in sa_list
+            ]
+
         if self.use_substraction:
             return self.denorm_input(hx + y), sa_list
+        
         return self.denorm_input(y), sa_list
 
 

@@ -17,7 +17,7 @@ from streamlit_image_comparison import image_comparison
 
 ROOT_PATH: str = os.path.join(os.path.dirname(__file__), '../')
 RESEARCH_PATH: str = os.path.join(ROOT_PATH, 'research_pipelines/denoising_with_fourier/')
-MODEL_PATH: str = os.path.join(ROOT_PATH, 'materials/_mri_model.pt')
+MODEL_PATH: str = os.path.join(ROOT_PATH, 'materials/new_unet_mri.trh')
 DEVICE: str = 'cuda:0'
 IMAGE_SIZE: int = 256
 
@@ -76,7 +76,7 @@ class UserImagesStorage(object):
 
 @st.cache_resource()
 def cached_sesstion():
-    model = DenoisingModel(in_ch=1, out_ch=1, image_size=IMAGE_SIZE, use_substraction=True).to(DEVICE)
+    model = DenoisingModel(in_ch=1, out_ch=1, image_size=IMAGE_SIZE, use_substraction=False).to(DEVICE)
     model.load_state_dict(torch.load(MODEL_PATH, map_location=torch.device(DEVICE))['model'])
     model.eval()
     

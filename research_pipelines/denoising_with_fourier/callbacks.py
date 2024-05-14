@@ -386,7 +386,7 @@ class VisAttentionMaps(AbstractCallback):
                     sa_list = [sa[i] for sa in args['sa_list']]
 
                     sa_tensors = []
-                    step_k = 6
+                    step_k = 4
                     for k in range(len(sa_list) // step_k):
                         sa_tensors.append(torch.concat([sa_list[step_k*k + q] for q in range(step_k)], dim=2))
 
