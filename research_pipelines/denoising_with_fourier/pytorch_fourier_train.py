@@ -799,6 +799,7 @@ if __name__ == '__main__':
         no_load_optim=args.no_load_optim,
         gradient_accumulation_steps=args.grad_accum_steps,
         use_ycrcb=args.use_ycrcb,
+        attention_mode=args.attention_mode,
         grayscale=args.use_grayscale,
         use_unetpp=args.use_unetplusplus,
         use_uformer=args.use_uformer,
