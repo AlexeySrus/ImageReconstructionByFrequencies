@@ -19,16 +19,16 @@ MRI_CONGIF: Dict[str, int] = {
     'ADD_NOISE': 10,
     'GAUSS_AND_POISSON_NOISE': 20,
     'POISSON_NOISE': 80,
-    'FFT_MASK': 50
-
-
+    'FFT_MASK': 50,
+    'MIXUP': 95
 }
 RGB_CONFIG: Dict[str, int] = {
     'RAND_FILL': 95,
     'ADD_NOISE': 10,
     'GAUSS_AND_POISSON_NOISE': 40,
     'POISSON_NOISE': 80,
-    'FFT_MASK': 50
+    'FFT_MASK': 50,
+    'MIXUP': 85
 }
 
 SYNTH_CONFIG: Dict[str, int] = MRI_CONGIF

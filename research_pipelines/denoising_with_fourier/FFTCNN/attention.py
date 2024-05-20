@@ -11,7 +11,7 @@ to the entire input feature map, and it allows the network to focus on the most 
 of the image based on their channel relationships.
 """
 
-from typing import Tuple, Union
+from typing import Tuple, Union, List
 
 import numpy as np
 import math
@@ -22,6 +22,20 @@ import scipy.linalg
 from FFTCNN.mixvit import LayerNorm, RISwish, OverlapPatchEmbed, Block
 from utils.haar_utils import HaarForward, HaarInverse
 from utils.lambda_net_complex import ComplexBatchNorm
+
+
+def sim_attention (X: torch.Tensor, lamb: float) -> Tuple[torch.Tensor, torch.Tensor]:
+    n = X.shape[2] * X.shape[3] - 1
+    d = (X - X.mean(dim=[2,3]).unsqueeze(2).unsqueeze(3)).pow(2)
+    v = d.sum(dim=[2,3]).unsqueeze(2).unsqueeze(3) / n
+    E_inv = d / (4 * (v + lamb)) + 0.5
+    out = X * torch.sigmoid(E_inv)
+
+    with torch.no_grad():
+        att = (X - out).mean(dim=1).unsqueeze(dim=1)
+        att = att / (att.max() + 1E-5)
+
+    return out, att
 
 
 def retrieve_elements_from_indices(tensor, indices):
@@ -260,21 +274,6 @@ class Self_Attn(nn.Module):
         return out, inv_attn
     
 
-class SpatialAttention(nn.Module):
-    def __init__(self, kernel_size=7):
-        super(SpatialAttention, self).__init__()
-        self.conv = nn.Conv2d(2, 1, kernel_size, padding=kernel_size//2, bias=False, padding_mode='reflect')
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, x):
-        avg_out = torch.mean(x, dim=1, keepdim=True)
-        max_out, _ = torch.max(x, dim=1, keepdim=True)
-        out = torch.concat([avg_out, max_out], dim=1)
-        out = self.conv(out)
-        attn = self.sigmoid(out)
-        return x * attn, attn
-    
-
 class WaveletSpaialAttentionV2(nn.Module):
     padding_mode = 'reflect'
 
@@ -330,9 +329,9 @@ class WaveletSpaialAttentionV2(nn.Module):
         y = self.features_to_sa(w_feats)
 
         ll_y = self.ll_feats(y)
-        lh_y = self.ll_feats(y)
-        hl_y = self.ll_feats(y)
-        hh_y = self.ll_feats(y)
+        lh_y = self.lh_feats(y)
+        hl_y = self.hl_feats(y)
+        hh_y = self.hh_feats(y)
 
         _, ll_attn = self.ll_sa(ll_y)
         _, lh_attn = self.lh_sa(lh_y)
@@ -357,6 +356,101 @@ class WaveletSpaialAttentionV2(nn.Module):
             ],
             dim=2
         )
+
+        return y, attn
+
+
+class Unet1lvl(nn.Module):
+    padding_mode = 'reflect'
+    def __init__(self, in_ch=3, mid_ch=12, out_ch=3, activation: nn.Module = nn.Identity):
+        super(Unet1lvl, self).__init__()
+
+        self.process1 = nn.Sequential(
+            nn.Conv2d(in_ch, mid_ch, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
+            nn.BatchNorm2d(mid_ch),
+            nn.LeakyReLU()
+        )
+
+        self.pool = nn.MaxPool2d(2, 2)
+
+        self.process2 = nn.Sequential(
+            nn.Conv2d(mid_ch, mid_ch, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
+            nn.BatchNorm2d(mid_ch),
+            nn.LeakyReLU()
+        )
+
+        self.up = nn.Sequential(
+            nn.Conv2d(mid_ch, mid_ch // 2, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
+            nn.BatchNorm2d(mid_ch // 2),
+            nn.LeakyReLU()
+        )
+
+        self.process3 = nn.Sequential(
+            nn.Conv2d(mid_ch // 2 + mid_ch, out_ch, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
+            nn.BatchNorm2d(out_ch)
+        )
+        self.last_act = activation
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        y = self.process1(x)
+        yp1 = self.pool(y)
+        ydf1 = self.process2(yp1)
+        yup1 = self.up(torch.nn.functional.interpolate(ydf1, scale_factor=2, mode='bicubic'))
+        yup1 = torch.cat((yup1, y), dim=1)
+        out = self.process3(yup1)
+        out = self.last_act(out)
+        return out
+
+
+class WaveletSpaialAttentionV4(nn.Module):
+    padding_mode = 'reflect'
+
+    def get_ksize(self, image_size: int) -> int:
+        if image_size >= 128:
+            return 7
+        elif image_size >= 32:
+            return 5
+        return 3
+
+    def __init__(self, channel: int, image_size: int):
+        super(WaveletSpaialAttentionV4, self).__init__()
+
+        self.wavelet_forward = HaarForward()
+        self.wavelet_inverse = HaarInverse()
+
+        self.features_to_sa = Unet1lvl(channel * 4, channel, 4, activation=torch.sigmoid)
+
+        self.conv_last = nn.Conv2d(channel * 4, channel * 4, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode)
+
+    def forward(self, x: torch.Tensor) ->  Tuple[torch.Tensor, torch.Tensor]:
+        w_feats = self.wavelet_forward(x)
+
+        attn_maps = self.features_to_sa(w_feats)
+
+        ll_attn = attn_maps[:, 0].unsqueeze(1)
+        lh_attn = attn_maps[:, 1].unsqueeze(1)
+        hl_attn = attn_maps[:, 2].unsqueeze(1)
+        hh_attn = attn_maps[:, 3].unsqueeze(1)
+
+        ll_y = w_feats[:, :x.size(1)]               * ll_attn
+        lh_y = w_feats[:, x.size(1):x.size(1)*2]    * lh_attn
+        hl_y = w_feats[:, x.size(1)*2:x.size(1)*3]  * hl_attn
+        hh_y = w_feats[:, x.size(1)*3:]             * hh_attn
+
+        w_feats = torch.cat([ll_y, lh_y, hl_y, hh_y], dim=1)
+
+        y = self.conv_last(w_feats)
+
+        y = self.wavelet_inverse(y)
+
+        with torch.no_grad():
+            attn = torch.cat(
+                [
+                    torch.cat([ll_attn, lh_attn], dim=3),
+                    torch.cat([hl_attn, hh_attn], dim=3)
+                ],
+                dim=2
+            )
 
         return y, attn
 
@@ -411,7 +505,7 @@ class ResidualComplexConv(nn.Module):
         self.conv = ComplexConv(in_ch, out_ch, 3, padding=0)
         self.bn_re = nn.BatchNorm2d(out_ch)
         self.bn_im = nn.BatchNorm2d(out_ch)
-        self.act = RealImaginaryLeakyReLU()
+        # self.act = RealImaginaryLeakyReLU()
 
         self.bottleneck = ComplexConv(in_ch, out_ch, 1, padding=0, bias=False)
 
@@ -425,7 +519,7 @@ class ResidualComplexConv(nn.Module):
         y_b = self.bottleneck(z)
         y = (y[0] + y_b[0], y[1] + y_b[1])
 
-        y = self.act(y)
+        # y = self.act(y)
         return y
 
 
@@ -448,18 +542,13 @@ class RealFFTChannelAttentionV4(nn.Module):
             ]
         )
         self.fc = nn.Sequential(
-            # ComplexLinear(channel * fsize * fsize // 2 // 2, channel * fsize * fsize // 2 // 2 // reduction),
             nn.Linear(channel * fsize * fsize // 2 // 2, channel * fsize * fsize // 2 // 2 // reduction),
-            # RealImaginaryLeakyReLU(),
             nn.LeakyReLU(),
-            # ComplexLinear(channel * fsize * fsize // 2 // 2 // reduction, channel)
             nn.Linear(channel * fsize * fsize // 2 // 2 // reduction, channel)
         )
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
-        # z = torch.fft.rfft2(x.to(torch.float64))
-        # z = torch.view_as_real(z)
         z = self.real_fft(x)
 
         z_deep_feats = self.pool_fft_features(z)
@@ -480,68 +569,53 @@ class RealFFTChannelAttentionV4(nn.Module):
         return x * channel_attn, inv_attn
 
 
-class RealFFTChannelAttentionV4(nn.Module):
-    def __init__(self, channel: int, image_size: int, fsize: int = 8, reduction: int = 16):
-        super(RealFFTChannelAttentionV4, self).__init__()
-
-        pooling_depth = int(np.log2(image_size // fsize))
-        
-        self.pool_fft_features = nn.Sequential(
-            ResidualComplesConv(channel, channel // 2),
-            FFTMaxPool2D(2 ** pooling_depth, 2 ** pooling_depth),
-            ResidualComplesConv(channel // 2, channel)
-        )
-        
-        self.fc = nn.Sequential(
-            nn.Linear(channel * fsize * fsize // 2, channel * fsize * fsize // 2 // reduction, dtype=torch.cfloat),
-            RealImaginaryLeakyReLU(),
-            nn.Linear(channel * fsize * fsize // 2 // reduction, channel, dtype=torch.cfloat),
-        )
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, x):
-        z = torch.fft.rfft2(x, norm='forward')
-        z = rfftshift(z)
-
-        z_deep_feats = self.pool_fft_features(z)
-
-        z_deep_feats = z_deep_feats.view(x.size(0), -1)
-        channel_attn = self.fc(z_deep_feats)
-        channel_attn = self.sigmoid(channel_attn)
-        channel_attn = torch.abs(channel_attn.unsqueeze(2).unsqueeze(3))
-
-        out = x * channel_attn
-
-        with torch.no_grad():
-            inv_attn = torch.abs(out - x).mean(dim=1).unsqueeze(1)
-            inv_attn /= (inv_attn.max() + 1E-5)
-
-        return x * channel_attn, inv_attn
-
-
 class FFTCAFSModule(nn.Module):
-    def __init__(self, image_size: int, channel: int, reduction: int = 16, kernel_size: int = 7) -> None:
+    def __init__(self, image_size: int, channel: int, reduction: int = 16, kernel_size: int = 7, mode: str = 'full') -> None:
         super().__init__()
-        self.fft_ca = RealFFTChannelAttentionV4(channel=channel, reduction=reduction, image_size=image_size)
-        self.fft_sa = WaveletSpaialAttentionV2(channel=channel, image_size=image_size)
+        assert mode in ['full', 'ca', 'sa', 'cbam', 'none']
 
-        # self.cbam = CBAM(channel=channel, reduction=reduction, kernel_size=kernel_size)
+        if mode in ['full', 'ca', 'sa']:
+            self.init_conv = nn.Conv2d(in_channels=channel, out_channels=channel, kernel_size=3, stride=1, padding=1, padding_mode='reflect')
 
-    def forward(self, x):
+        if mode in ['full', 'ca']:
+            self.fft_ca = RealFFTChannelAttentionV4(channel=channel, reduction=reduction, image_size=image_size)
+
+        if mode in ['full', 'sa']:
+            self.fft_sa = WaveletSpaialAttentionV4(channel=channel, image_size=image_size)
+
+        if mode == 'cbam':
+            self.cbam = CBAM(channel=channel, reduction=reduction, kernel_size=kernel_size)
+
+        self.mode = mode
+
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         # Original U-Net (without attention)
-        # with torch.no_grad():
-        #     att = x.mean(dim=1).unsqueeze(dim=1)
-        #     att = att / (att.max() + 1E-5)
-        # return x, [att]
+        if self.mode == 'none':
+            with torch.no_grad():
+                att = x.mean(dim=1).unsqueeze(dim=1)
+                att = att / (att.max() + 1E-5)
+            return x, [att]
+        
+        # CBAM
+        if self.mode == 'cbam':
+            x, ca_tensor, sa_tensor = self.cbam(x)
+            return x, [ca_tensor, sa_tensor]
 
         # Own approach
-        x, ca_tensor = self.fft_ca(x)
-        x, sa_tensor = self.fft_sa(x)
-        return x, [ca_tensor, sa_tensor]
+        y = self.init_conv(x)
+        attns_maps = []
 
-        # CBAM
-        # x, ca_tensor, sa_tensor = self.cbam(x)
-        # return x, [ca_tensor, sa_tensor]
+        if self.mode in ['full', 'ca']:
+            y, ca_tensor = self.fft_ca(y)
+            attns_maps.append(ca_tensor)
+
+        if self.mode in ['full', 'sa']:
+            y, sa_tensor = self.fft_sa(y)
+            attns_maps.append(sa_tensor)
+
+        y = y + x
+
+        return y, attns_maps
 
 
 if __name__ == '__main__':

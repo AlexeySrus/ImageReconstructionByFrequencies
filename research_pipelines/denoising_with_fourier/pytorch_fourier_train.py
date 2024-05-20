@@ -22,11 +22,12 @@ from haar_pytorch import HaarForward, HaarInverse
 from FDL_pytorch import FDL_loss
 from pytorch_optimizer import AdaSmooth
 
-from dataloader import PairedDenoiseDataset, SyntheticNoiseDataset
+from dataloader import PairedDenoiseDataset, SyntheticNoiseDataset, SYNTH_CONFIG
 from callbacks import VisImage, VisAttentionMaps, VisPlot
 from FFTCNN.combined_attn_unet import init_weights
 from FFTCNN.combined_attn_unet import FFTAttentionUNet
 from FFTCNN.combined_attn_unet_plusplus import FFTAttentionUNetPlusPlus
+from FFTCNN.uformer import Uformer
 from utils.window_inference import denoise_inference
 from utils.hist_loss import HistLoss
 from utils.adversarial_loss import Adversarial
@@ -122,8 +123,10 @@ class CustomTrainingPipeline(object):
                  gradient_accumulation_steps: int = 1,
                  annottaion_str: str = '',
                  use_ycrcb: bool = False,
+                 attention_mode: str = 'full',
                  grayscale: bool = False,
                  use_unetpp: bool = False,
+                 use_uformer: bool = False,
                  substracted_noise: bool = False,
                  full_args: Optional[Namespace] = None):
         """
@@ -150,8 +153,10 @@ class CustomTrainingPipeline(object):
             gradient_accumulation_steps (bool, optional): Count of accumulated gradients per train batches.
             annottaion_str (str, optional): Annotation string of experiment. Defaults to ''.
             use_ycrcb (bool, optional): Use YCrCb color space. Defaults to False.
+            attention_mode (str, optional): Attention mode. Defaults to 'full'.
             grayscale (bool, optional): Use 1-channel images in pipeline. Defaults to False.
             use_unetpp (bool, optional): Use U-Net++ architecture. Defaults to False.
+            use_uformer (bool, optional): Use U-Former architecture. Defaults to False.
             substracted_noise (bool, optinal): Use netwotk prediction as Y = X + F(X). Defaults to False.
             full_args (Namespace, optional): All command-line arguments. Defaules to None.
         """
@@ -172,6 +177,8 @@ class CustomTrainingPipeline(object):
         self.use_ycrcb = use_ycrcb
         self.grayscale = grayscale
         self.use_unetpp = use_unetpp
+
+        print('Attention mode: {}'.format(attention_mode))
 
         self.image_shape = (image_size, image_size)
 
@@ -284,13 +291,23 @@ class CustomTrainingPipeline(object):
             )
 
         ch_count = 1 if grayscale else 3
-        used_architecture = FFTAttentionUNetPlusPlus if use_unetpp else FFTAttentionUNet
-        self.model = used_architecture(
-            in_ch=ch_count,
-            out_ch=ch_count,
-            image_size=image_size,
-            use_substraction=substracted_noise
-        )
+
+        if use_uformer:
+            self.model = Uformer(
+                img_size=image_size, embed_dim=32, win_size=8, 
+                token_projection='linear', token_mlp='leff',
+                depths=[1, 2, 8, 8, 2, 8, 8, 2, 1], modulator=True,
+                dd_in=ch_count, in_chans=ch_count
+            )
+        else:
+            used_architecture = FFTAttentionUNetPlusPlus if use_unetpp else FFTAttentionUNet
+            self.model = used_architecture(
+                in_ch=ch_count,
+                out_ch=ch_count,
+                image_size=image_size,
+                use_substraction=substracted_noise,
+                attention_mode=attention_mode
+            )
 
         self.loss_weighter = ModelMultitask(losses_count=2)
         self.loss_weighter = self.loss_weighter.to(self.device)
@@ -305,7 +322,7 @@ class CustomTrainingPipeline(object):
         # self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=init_lr, betas=(0.9, 0.999), eps=1e-8, weight_decay=1e-2)
         self.optimizer = torch.optim.AdamW(
             params=[{'params': self.model.parameters()}, {'params': self.loss_weighter.parameters(), 'weight_decay': 0}], 
-            lr=init_lr, betas=(0.9, 0.999), eps=1e-8, weight_decay=1e-4
+            lr=init_lr, betas=(0.9, 0.999), eps=1e-8, weight_decay=1e-2
         )
         # self.optimizer = torch.optim.RAdam(
         #     params=[{'params': self.model.parameters()}, {'params': self.loss_weighter.parameters(), 'weight_decay': 0}], 
@@ -332,11 +349,11 @@ class CustomTrainingPipeline(object):
                 self.optimizer.param_groups[0]['lr'] = init_lr
                 print('Optimizer LR: {:.5f}'.format(self.get_lr()))
 
-                # if hasattr(self, 'loss_weighter') and self.loss_weighter is not None and 'loss_weighter' in load_data.keys():
-                #     self.loss_weighter.load_state_dict(load_data['loss_weighter'])
-                #     print('Loss weighter sigmas have been loaded')
+                if hasattr(self, 'loss_weighter') and self.loss_weighter is not None and 'loss_weighter' in load_data.keys():
+                    self.loss_weighter.load_state_dict(load_data['loss_weighter'])
+                    print('Loss weighter sigmas have been loaded')
 
-            self.optimizer.param_groups[0]['weight_decay'] = 1e-4
+            self.optimizer.param_groups[0]['weight_decay'] = 1e-2
             print('Optimizer Weights Decay: {:.5f}'.format(self.optimizer.param_groups[0]['weight_decay']))
             print('Loss Weights Decay: {:.5f}'.format(self.optimizer.param_groups[1]['weight_decay']))
 
@@ -352,10 +369,10 @@ class CustomTrainingPipeline(object):
         # self.adv_loss = Adversarial(image_size=self.image_shape[0], gan_type='GAN', spectral_norm=True, in_ch=ch_count).to(device)
         self.adv_loss = None
         # self.hf_loss = HightFrequencyFFTLoss(self.image_shape).to(device)
-        self.hf_loss = HFENLoss(
-            loss_f=CharbonnierLoss().to(self.device),
-            norm=False
-        )
+        # self.hf_loss = HFENLoss(
+        #     loss_f=CharbonnierLoss().to(self.device),
+        #     norm=False
+        # )
         # self.edges_loss = LapLoss().to(device)
         # self.tv_loss = TVLoss(tv_loss_weight=0.5)
         # self.fdl_loss = FDL_loss().to(self.device)
@@ -398,8 +415,9 @@ class CustomTrainingPipeline(object):
                 # Take YCrCb in 0..1 data range
                 noisy_image = _noisy_image.to(self.device)
                 clear_image = _clear_image.to(self.device)
+                # clear_image = kornia.enhance.sharpness(clear_image, 2.0)
 
-                if epoch > 3 and np.random.randint(0, 101) > 85:
+                if epoch > 3 and np.random.randint(0, 101) > SYNTH_CONFIG['MIXUP']:
                     clear_image, noisy_image = self.mixup.aug(clear_image, noisy_image)
 
                 output = self.model(noisy_image)
@@ -433,16 +451,16 @@ class CustomTrainingPipeline(object):
 
                 # tv_loss_value = self.tv_loss(pred_images)
 
-                # a_loss = self.adv_loss(pred_images, clear_image)
+                # a_loss = calculate_loss(pred_images, clear_image, self.adv_loss, self.use_unetpp)
 
                 # e_loss = calculate_loss(pred_images, clear_image, self.edges_loss, self.use_unetpp)
 
-                f_loss = calculate_loss(
-                    pred_images,
-                    self._convert_to_rgb(clear_image),
-                    lambda x, y: self.hf_loss(self._convert_to_rgb(x), y),
-                    self.use_unetpp
-                )
+                # f_loss = calculate_loss(
+                #     pred_images,
+                #     self._convert_to_rgb(clear_image),
+                #     lambda x, y: self.hf_loss(self._convert_to_rgb(x), y),
+                #     self.use_unetpp
+                # )
 
                 # h_loss = calculate_loss(
                 #     pred_images,
@@ -458,8 +476,8 @@ class CustomTrainingPipeline(object):
                 #     self.use_unetpp
                 # )
 
-                total_loss = self.loss_weighter([loss, f_loss])
-                # total_loss = loss
+                # total_loss = self.loss_weighter([loss, p_loss])
+                total_loss = loss
 
 
                 if self.gradient_accumulation_steps > 1:
@@ -476,11 +494,11 @@ class CustomTrainingPipeline(object):
                     self.optimizer.zero_grad()
 
                 pbar.postfix = \
-                    'Epoch: {}/{}, loss: {:.7f}, f_loss: {:.7f}, w: [{:.2f}, {:.2f}]'.format(
+                    'Epoch: {}/{}, loss: {:.7f}, w: [{:.2f}, {:.2f}]'.format(
                         epoch,
                         self.epochs,
                         loss.item(),
-                        f_loss.item(),
+                        # p_loss.item(),
                         self.loss_weighter.sigma[0].item(),
                         self.loss_weighter.sigma[1].item()
                     )
@@ -689,8 +707,17 @@ def parse_args() -> Namespace:
         help='Count of batches to accumulate gradiets.'
     )
     parser.add_argument(
+        '--attention_mode', type=str, required=False, default='full',
+        choices=['full', 'ca', 'sa', 'cbam', 'none'],
+        help='Attention mode from \'full\', \'ca\', \'sa\', \'cbam\', \'none\'.'
+    )
+    parser.add_argument(
         '--use_unetplusplus', action='store_true',
         help='Use U-Net++ architecture.'
+    )
+    parser.add_argument(
+        '--use_uformer', action='store_true',
+        help='Use U-Former architecture.'
     )
     parser.add_argument(
         '--use_ycrcb', action='store_true',
@@ -774,6 +801,7 @@ if __name__ == '__main__':
         use_ycrcb=args.use_ycrcb,
         grayscale=args.use_grayscale,
         use_unetpp=args.use_unetplusplus,
+        use_uformer=args.use_uformer,
         substracted_noise=args.substracted_noise,
         full_args=args
     ).fit()

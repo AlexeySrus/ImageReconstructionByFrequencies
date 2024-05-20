@@ -5,7 +5,10 @@ import torch
 import torch.nn as nn
 
 from FFTCNN.attention import FFTCAFSModule, SpatialAttention, ChannelAttention
-from utils.resample import resample_lanczos
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../third_party/traiNNer/codes/'))
+from dataops.imresize import resize
 
 
 padding_mode: str = 'reflect'
@@ -88,6 +91,7 @@ class FeaturesProcessing(nn.Module):
         hx = self.down_bneck(hx)
 
         y = self.act_final(hx + y)
+        
         return y, sa_1
 
 
@@ -95,7 +99,9 @@ class FeaturesDownsample(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, window_size: int, image_size: int, use_attention: bool = True):
         super().__init__()
         self.features_in = FeaturesProcessing(in_ch, in_ch * 2, window_size=window_size, image_size=image_size, use_attention=use_attention)
-        self.pool = lambda x: torch.nn.functional.interpolate(x, scale_factor=0.5, align_corners=False, mode='bicubic')
+        # self.pool = lambda x: torch.nn.functional.interpolate(x, scale_factor=0.5, align_corners=False, mode='bicubic')
+        # self.pool = lambda x: resize(x, scale_factors=0.5, clip=False, interpolation='lanczos4', antialiasing=False)
+        self.pool = nn.MaxPool2d(2, 2)
         self.features_out = FeaturesProcessing(in_ch * 2, out_ch, window_size=window_size, image_size=image_size, use_attention=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -127,7 +133,9 @@ class FeaturesUpsample(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, window_size: int, image_size: int, use_attention: bool = True):
         super().__init__()
         self.in_features = FeaturesProcessing(in_ch, in_ch, window_size=window_size, image_size=image_size, use_attention=use_attention)
-        self.up = lambda x: torch.nn.functional.interpolate(x, scale_factor=2, align_corners=True, mode='bicubic')
+        # self.up = lambda x: torch.nn.functional.interpolate(x, scale_factor=2, align_corners=True, mode='bicubic')
+        # self.up = lambda x: resize(x, scale_factors=2, clip=False, interpolation='lanczos4', antialiasing=False)
+        self.up = lambda x: torch.nn.functional.interpolate(x, scale_factor=2, align_corners=True, mode='bilinear')
         self.features = FeaturesProcessing(in_ch, out_ch, window_size=window_size, image_size=image_size, use_attention=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -138,7 +146,7 @@ class FeaturesUpsample(nn.Module):
 
 
 class FFTAttentionUNetModule(nn.Module):
-    def __init__(self, in_ch: int, mid_ch: int, out_ch: int, need_up_features: bool = False, image_size: int = 256):
+    def __init__(self, in_ch: int, mid_ch: int, out_ch: int, need_up_features: bool = False, image_size: int = 256, attention_mode: str = 'full'):
         super().__init__()
 
         self.init_block = FeaturesProcessing(in_ch, mid_ch, window_size=64, image_size=image_size, use_attention=False)
@@ -150,10 +158,10 @@ class FFTAttentionUNetModule(nn.Module):
         self.downsample_block3 = FeaturesDownsample(mid_ch * 2, mid_ch * 3, window_size=16, image_size=image_size // 4, use_attention=False)
         self.downsample_block4 = FeaturesDownsample(mid_ch * 3, mid_ch * 4, window_size=8, image_size=image_size // 8, use_attention=False)
 
-        self.connection_attn1 = FFTCAFSModule(channel=mid_ch, reduction=16, image_size=image_size)
-        self.connection_attn2 = FFTCAFSModule(channel=mid_ch, reduction=16, image_size=image_size // 2)
-        self.connection_attn3 = FFTCAFSModule(channel=mid_ch * 2, reduction=32, image_size=image_size // 4)
-        self.connection_attn4 = FFTCAFSModule(channel=mid_ch * 3, reduction=32, image_size=image_size // 8)
+        self.connection_attn1 = FFTCAFSModule(channel=mid_ch, reduction=16, image_size=image_size, mode=attention_mode)
+        self.connection_attn2 = FFTCAFSModule(channel=mid_ch, reduction=16, image_size=image_size // 2, mode=attention_mode)
+        self.connection_attn3 = FFTCAFSModule(channel=mid_ch * 2, reduction=32, image_size=image_size // 4, mode=attention_mode)
+        self.connection_attn4 = FFTCAFSModule(channel=mid_ch * 3, reduction=32, image_size=image_size // 8, mode=attention_mode)
 
         self.deep_conv_block = FeaturesProcessing(mid_ch * 4, mid_ch * 4, window_size=8, image_size=image_size // 16, use_attention=False)
 
@@ -205,10 +213,10 @@ class FFTAttentionUNetModule(nn.Module):
 
 
 class FFTAttentionUNet(nn.Module):
-    def __init__(self, in_ch: int = 3,  out_ch: int = 3, image_size: int = 256, use_substraction: bool = False):
+    def __init__(self, in_ch: int = 3,  out_ch: int = 3, image_size: int = 256, use_substraction: bool = False, attention_mode: str = 'full'):
         super().__init__()
 
-        self.unet = FFTAttentionUNetModule(in_ch, 32, out_ch, image_size=image_size)
+        self.unet = FFTAttentionUNetModule(in_ch, 32, out_ch, image_size=image_size, attention_mode=attention_mode)
         self.out_conv = nn.Conv2d(out_ch, out_ch, 1, bias=True)
         self.export = False
         self.use_substraction = use_substraction
@@ -304,6 +312,3 @@ if __name__ == '__main__':
 
     traced = torch.jit.trace(model, example_inputs=t)
     torch.jit.save(traced, '/home/alexey/Downloads/fftcnn.pt')
-
-    gpool = GeneralizedMeanPooling2d(2, 2)
-    print(gpool(t).shape)
