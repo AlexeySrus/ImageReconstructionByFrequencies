@@ -732,7 +732,7 @@ def parse_args() -> Namespace:
         help='Use 1-channel for image training.'
     )
     parser.add_argument(
-        '--substracted-noise', action='store_true',
+        '--substracted_noise', action='store_true',
         help='Use netwotk prediction as Y = X + F(X).'
     )
     parser.add_argument(
