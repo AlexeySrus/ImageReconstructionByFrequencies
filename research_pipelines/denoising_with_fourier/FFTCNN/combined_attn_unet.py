@@ -100,6 +100,7 @@ class FeaturesDownsample(nn.Module):
         super().__init__()
         self.features_in = FeaturesProcessing(in_ch, in_ch * 2, window_size=window_size, image_size=image_size, use_attention=use_attention)
         # self.pool = lambda x: torch.nn.functional.interpolate(x, scale_factor=0.5, align_corners=False, mode='bicubic')
+        # self.pool = lambda x: torch.nn.functional.interpolate(x, scale_factor=0.5, align_corners=False, mode='bilinear')
         # self.pool = lambda x: resize(x, scale_factors=0.5, clip=False, interpolation='lanczos4', antialiasing=False)
         self.pool = nn.MaxPool2d(2, 2)
         self.features_out = FeaturesProcessing(in_ch * 2, out_ch, window_size=window_size, image_size=image_size, use_attention=False)

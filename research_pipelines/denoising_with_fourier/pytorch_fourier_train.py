@@ -322,7 +322,7 @@ class CustomTrainingPipeline(object):
         # self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=init_lr, betas=(0.9, 0.999), eps=1e-8, weight_decay=1e-2)
         self.optimizer = torch.optim.AdamW(
             params=[{'params': self.model.parameters()}, {'params': self.loss_weighter.parameters(), 'weight_decay': 0}], 
-            lr=init_lr, betas=(0.9, 0.999), eps=1e-8, weight_decay=1e-2
+            lr=init_lr, betas=(0.9, 0.999), eps=1e-8, weight_decay=1e-4
         )
         # self.optimizer = torch.optim.RAdam(
         #     params=[{'params': self.model.parameters()}, {'params': self.loss_weighter.parameters(), 'weight_decay': 0}], 
@@ -353,10 +353,9 @@ class CustomTrainingPipeline(object):
                     self.loss_weighter.load_state_dict(load_data['loss_weighter'])
                     print('Loss weighter sigmas have been loaded')
 
-            self.optimizer.param_groups[0]['weight_decay'] = 1e-2
+            self.optimizer.param_groups[0]['weight_decay'] = 1e-4
             print('Optimizer Weights Decay: {:.5f}'.format(self.optimizer.param_groups[0]['weight_decay']))
             print('Loss Weights Decay: {:.5f}'.format(self.optimizer.param_groups[1]['weight_decay']))
-
 
         self.images_criterion = CharbonnierLoss().to(self.device)
         # self.images_criterion = FocalFrequencyLoss(patch_factor=16, loss_weight=10).to(self.device)
@@ -398,6 +397,9 @@ class CustomTrainingPipeline(object):
             )
         else:
             self.scheduler = None
+
+
+        self.model = torch.compile(self.model, mode='reduce-overhead')
 
     def get_lr(self):
         for param_group in self.optimizer.param_groups:
@@ -627,7 +629,9 @@ class CustomTrainingPipeline(object):
 
         self.model.eval()
         save_state = {
-            'model': self.model.state_dict(),
+            'model': self.model._orig_mod.state_dict() 
+                        if hasattr(self.model, '_orig_mod') else 
+                            self.model.state_dict(),
             'optimizer': self.optimizer.state_dict(),
             'acc': avg_acc_rate,
             'epoch': epoch
@@ -764,6 +768,7 @@ def parse_args() -> Namespace:
 
 if __name__ == '__main__':
     # torch.autograd.set_detect_anomaly(True)
+    torch.set_float32_matmul_precision('high')
 
     args = parse_args()
 

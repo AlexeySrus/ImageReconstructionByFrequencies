@@ -581,41 +581,58 @@ class FFTCAFSModule(nn.Module):
             self.fft_ca = RealFFTChannelAttentionV4(channel=channel, reduction=reduction, image_size=image_size)
 
         if mode in ['full', 'sa']:
-            self.fft_sa = WaveletSpaialAttentionV4(channel=channel, image_size=image_size)
+            self.fft_sa = WaveletSpaialAttentionV2(channel=channel, image_size=image_size)
 
         if mode == 'cbam':
             self.cbam = CBAM(channel=channel, reduction=reduction, kernel_size=kernel_size)
 
         self.mode = mode
+        self.forward_methods = {
+            'full':     self.own_full_forward,
+            'ca':       self.own_ca_forward,
+            'sa':       self.own_sa_forward,
+            'cbam':     self.cbam_unet_forward,
+            'none':     self.classic_unet_forward
+        }
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+        self.forward = self.forward_methods[self.mode]
+
+    def classic_unet_forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         # Original U-Net (without attention)
-        if self.mode == 'none':
-            with torch.no_grad():
-                att = x.mean(dim=1).unsqueeze(dim=1)
-                att = att / (att.max() + 1E-5)
-            return x, [att]
+        with torch.no_grad():
+            att = x.mean(dim=1).unsqueeze(dim=1)
+            att = att / (att.max() + 1E-5)
+        return x, [att]
         
-        # CBAM
-        if self.mode == 'cbam':
-            x, ca_tensor, sa_tensor = self.cbam(x)
-            return x, [ca_tensor, sa_tensor]
-
-        # Own approach
+    def cbam_unet_forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+        # U-Net with CBAM
+        y, ca_tensor, sa_tensor = self.cbam(x)
+        return y, [ca_tensor, sa_tensor]
+        
+    def own_ca_forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+        # Use only frequency CA
         y = self.init_conv(x)
-        attns_maps = []
+        y, ca_tensor = self.fft_ca(y)
+        y = y + x
+        return y, [ca_tensor]
+    
+    def own_sa_forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+        # Use only time-frequency SA
+        y = self.init_conv(x)
+        y, sa_tensor = self.fft_sa(y)
+        y = y + x
+        return y, [sa_tensor]
 
-        if self.mode in ['full', 'ca']:
-            y, ca_tensor = self.fft_ca(y)
-            attns_maps.append(ca_tensor)
+    def own_full_forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+        # Use proposed attention module
+        y = self.init_conv(x)
 
-        if self.mode in ['full', 'sa']:
-            y, sa_tensor = self.fft_sa(y)
-            attns_maps.append(sa_tensor)
+        y, ca_tensor = self.fft_ca(y)
+        y, sa_tensor = self.fft_sa(y)
 
         y = y + x
 
-        return y, attns_maps
+        return y, [ca_tensor, sa_tensor]
 
 
 if __name__ == '__main__':
