@@ -19,9 +19,7 @@ import torch
 from torch import nn
 import scipy.linalg
 
-from FFTCNN.mixvit import LayerNorm, RISwish, OverlapPatchEmbed, Block
 from utils.haar_utils import HaarForward, HaarInverse
-from utils.lambda_net_complex import ComplexBatchNorm
 
 
 def sim_attention (X: torch.Tensor, lamb: float) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -704,12 +702,16 @@ class FCABlock(nn.Module):
         self.fc = nn.Linear(channel, channel)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        complex_hf_feats = self.in_feats(x)
-        hf_spectrums = torch.sqrt(torch.pow(complex_hf_feats[0], 2) + torch.pow(complex_hf_feats[1], 2))
+        init_hf_feats = self.in_feats(x)
+
+        complex_complex_hf_feats = self.real_fft(init_hf_feats)
+        hf_spectrums = torch.sqrt(torch.pow(complex_complex_hf_feats[0], 2) + torch.pow(complex_complex_hf_feats[1], 2))
         hf_spectrums = nn.functional.relu(self.conv(hf_spectrums))
         hf_feats = self.pool(hf_spectrums).view(x.size(0), x.size(1))
-        channels_probs = nn.functional.sigmoid(self.fc(hf_feats))
-        weighted_channels = complex_hf_feats * channels_probs
+        channels_probs = nn.functional.sigmoid(self.fc(hf_feats)).unsqueeze(2).unsqueeze(3)
+
+        weighted_channels = init_hf_feats * channels_probs
+
         out = x + weighted_channels
 
         with torch.no_grad():
@@ -798,6 +800,11 @@ if __name__ == '__main__':
     import cv2
     from timeit import default_timer as time
     import scipy.linalg
+
+    layer = FFTCAFSModule(256, 32, mode='fca')
+    out, attn = layer(torch.rand(1, 32, 256, 256))
+
+    exit(0)
 
     # torch.set_printoptions(precision=4, sci_mode=False)
 
