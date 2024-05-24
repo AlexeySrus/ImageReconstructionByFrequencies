@@ -673,7 +673,7 @@ class RealFFTChannelAttentionV4(nn.Module):
         z = self.real_fft(x)
 
         z_deep_feats = self.pool_fft_features(z)
-        z_deep_feats = (z_deep_feats[0].view(x.size(0), -1), z_deep_feats[1].view(x.size(0), -1))
+        z_deep_feats = (z_deep_feats[0].view(x.size(0), -1, 1, 1), z_deep_feats[1].view(x.size(0), -1, 1, 1))
 
         z_abs_feats = z_deep_feats[0] * z_deep_feats[0] + z_deep_feats[1] * z_deep_feats[1]
 
@@ -813,7 +813,7 @@ if __name__ == '__main__':
     from timeit import default_timer as time
     import scipy.linalg
 
-    layer = FFTCAFSModule(256, 32, mode='fca')
+    layer = FFTCAFSModule(256, 32, mode='full')
     out, attn = layer(torch.rand(1, 32, 256, 256))
 
     # torch.set_printoptions(precision=4, sci_mode=False)
