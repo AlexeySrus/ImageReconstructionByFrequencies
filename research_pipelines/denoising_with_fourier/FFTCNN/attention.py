@@ -657,12 +657,7 @@ class RealFFTChannelAttentionV4(nn.Module):
             ],
             ResidualComplexConv(channel, channel // 2)
         )
-        # self.fc = nn.Sequential(
-        #     nn.Linear(channel * fsize * fsize // 2 // 2, channel * fsize * fsize // 2 // 2 // reduction),
-        #     nn.LeakyReLU(),
-        #     nn.Linear(channel * fsize * fsize // 2 // 2 // reduction, channel)
-        # )
-        self.optimizer_fc = nn.Sequential(
+        self.fc = nn.Sequential(
             nn.Conv2d(channel * fsize * fsize // 2 // 2, channel * fsize * fsize // 2 // 2 // reduction, 1, bias=False),
             nn.LeakyReLU(),
             nn.Conv2d(channel * fsize * fsize // 2 // 2 // reduction, channel, 1, bias=False)
@@ -679,7 +674,6 @@ class RealFFTChannelAttentionV4(nn.Module):
 
         channel_attn = self.optimizer_fc(z_abs_feats)
         channel_attn = self.sigmoid(channel_attn)
-        # channel_attn = channel_attn.unsqueeze(2).unsqueeze(3)
 
         out = x * channel_attn
 
