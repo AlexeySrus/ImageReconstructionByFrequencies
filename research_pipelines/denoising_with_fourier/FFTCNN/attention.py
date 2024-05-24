@@ -668,7 +668,7 @@ class RealFFTChannelAttentionV4(nn.Module):
         z_deep_feats = self.pool_fft_features(z)
         z_deep_feats = (z_deep_feats[0].view(x.size(0), -1), z_deep_feats[1].view(x.size(0), -1))
 
-        z_abs_feats = torch.sqrt(z_deep_feats[0] * z_deep_feats[0] + z_deep_feats[1] * z_deep_feats[1])
+        z_abs_feats = z_deep_feats[0] * z_deep_feats[0] + z_deep_feats[1] * z_deep_feats[1]
 
         channel_attn = self.fc(z_abs_feats)
         channel_attn = self.sigmoid(channel_attn)
@@ -705,7 +705,7 @@ class FCABlock(nn.Module):
         init_hf_feats = self.in_feats(x)
 
         complex_complex_hf_feats = self.real_fft(init_hf_feats)
-        hf_spectrums = torch.sqrt(torch.pow(complex_complex_hf_feats[0], 2) + torch.pow(complex_complex_hf_feats[1], 2))
+        hf_spectrums = complex_complex_hf_feats[0] * complex_complex_hf_feats[0]+ complex_complex_hf_feats[1] * complex_complex_hf_feats[1]
         hf_spectrums = nn.functional.relu(self.conv(hf_spectrums))
         hf_feats = self.pool(hf_spectrums).view(x.size(0), x.size(1))
         channels_probs = nn.functional.sigmoid(self.fc(hf_feats)).unsqueeze(2).unsqueeze(3)
