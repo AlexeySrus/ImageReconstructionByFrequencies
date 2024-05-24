@@ -672,7 +672,7 @@ class RealFFTChannelAttentionV4(nn.Module):
 
         z_abs_feats = z_deep_feats[0] * z_deep_feats[0] + z_deep_feats[1] * z_deep_feats[1]
 
-        channel_attn = self.optimizer_fc(z_abs_feats)
+        channel_attn = self.fc(z_abs_feats)
         channel_attn = self.sigmoid(channel_attn)
 
         out = x * channel_attn
