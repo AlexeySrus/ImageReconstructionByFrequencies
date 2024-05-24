@@ -804,8 +804,6 @@ if __name__ == '__main__':
     layer = FFTCAFSModule(256, 32, mode='fca')
     out, attn = layer(torch.rand(1, 32, 256, 256))
 
-    exit(0)
-
     # torch.set_printoptions(precision=4, sci_mode=False)
 
     def DFT_matrices(N):
@@ -813,9 +811,10 @@ if __name__ == '__main__':
         omega = torch.ones(N, N) * torch.FloatTensor([- 2 * torch.pi / N])
         return torch.cos( omega * i * j ).to(torch.float32), torch.sin( omega * i * j ).to(torch.float32)
 
-    image_path = '/media/alexey/SSDData/datasets/denoising_dataset/base_clear_images/DIV2K_0134.png'
-    image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
-    rgb = torch.from_numpy(image.astype(np.float32) / 255.0).permute(2, 0, 1).unsqueeze(0)
+    # image_path = '/media/alexey/SSDData/datasets/denoising_dataset/base_clear_images/DIV2K_0134.png'
+    # image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
+    # rgb = torch.from_numpy(image.astype(np.float32) / 255.0).permute(2, 0, 1).unsqueeze(0)
+    rgb = torch.rand(1, 3, 256, 256)
 
     N = 256
     # x = torch.rand(2, 3, N, N, dtype=torch.float32) * 256
@@ -841,8 +840,10 @@ if __name__ == '__main__':
 
     mf = MatrixRFFT(N)
 
-    f = torch.fft.rfft2(x.to('cuda'), norm='forward').to('cpu')
+    f = torch.fft.rfft2(x.to('cpu'), norm='forward').to('cpu')
     f2 = mf(x)
+
+    print(f.shape, f2[0].shape, f2[1].shape)
 
     reps = 0.001
     aeps = 1e-3
