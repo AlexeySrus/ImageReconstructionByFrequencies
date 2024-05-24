@@ -129,14 +129,25 @@ class ComplexConv(nn.Module):
             in_channels=in_ch, out_channels=out_ch, 
             kernel_size=kernel_size, stride=stride,
             padding=padding, padding_mode=padding_mode,
-            bias=bias
+            bias=False
         )
+
+        if bias:
+            self.real_bias = nn.Parameter(torch.zeros(out_ch, 1, 1))
+            self.imag_bias = nn.Parameter(torch.zeros(out_ch, 1, 1))
+        else:
+            self.real_bias = None
+            self.imag_bias = None
 
     def forward(self, z: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
          z_real, z_imag = z
 
          out_real = self.real_conv(z_real) - self.imag_conv(z_imag)
          out_imag = self.imag_conv(z_real) + self.real_conv(z_imag)
+
+         if self.imag_bias is not None:
+             out_real = out_real + self.real_bias
+             out_imag = out_imag + self.imag_bias
 
          return out_real, out_imag
     
@@ -146,13 +157,24 @@ class ComplexLinear(nn.Module):
         super().__init__()
 
         self.real_fc = nn.Linear(in_features=in_features, out_features=out_features, bias=False)
-        self.imag_fc = nn.Linear(in_features=in_features, out_features=out_features, bias=bias)
+        self.imag_fc = nn.Linear(in_features=in_features, out_features=out_features, bias=False)
+
+        if bias:
+            self.real_bias = nn.Parameter(torch.zeros(out_features, 1))
+            self.imag_bias = nn.Parameter(torch.zeros(out_features, 1))
+        else:
+            self.real_bias = None
+            self.imag_bias = None
 
     def forward(self, z: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
         z_real, z_imag = z
 
         out_real = self.real_fc(z_real) - self.imag_fc(z_imag)
         out_imag = self.imag_fc(z_real) + self.real_fc(z_imag)
+
+        if self.imag_bias is not None:
+             out_real = out_real + self.real_bias
+             out_imag = out_imag + self.imag_bias
 
         return out_real, out_imag
     
@@ -664,6 +686,22 @@ class RealFFTChannelAttentionV4(nn.Module):
             inv_attn /= (inv_attn.max() + 1E-5)
 
         return x * channel_attn, inv_attn
+    
+
+class FCABlock(nn.Module):
+    def __init__(self, channel: int, image_size: int):
+        super().__init__()
+
+        self.real_fft = MatrixRFFT(N=image_size)
+
+        self.in_feats = nn.Sequential(
+            nn.Conv2d(channel, channel, 3, stride=1, padding=1, padding_mode='reflect'),
+            nn.GELU(),
+            nn.Conv2d(channel, channel, 3, stride=1, padding=1, padding_mode='reflect'),
+            nn.GELU()
+        )
+
+        self.complex_conv = ComplexConv(channel, channel, 1)
 
 
 class FFTCAFSModule(nn.Module):
