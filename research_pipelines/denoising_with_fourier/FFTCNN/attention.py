@@ -650,17 +650,17 @@ class RealFFTChannelAttentionV4(nn.Module):
         self.pool_fft_features = nn.Sequential(
             *[
                 nn.Sequential(
-                    ResidualComplexConv(channel, channel),
-                    FFTMaxPool2D(2, 2)
+                    ResidualComplexConv(channel, channel // 2),
+                    FFTMaxPool2D(2, 2),
+                    ResidualComplexConv(channel // 2, channel // 2 if i == pooling_depth - 1 else channel),
                 )
                 for i in range(pooling_depth)
-            ],
-            ResidualComplexConv(channel, channel // 2)
+            ]
         )
         self.fc = nn.Sequential(
-            nn.Conv2d(channel * fsize * fsize // 2 // 2, channel * fsize * fsize // 2 // 2 // reduction, 1, bias=False),
+            nn.Linear(channel * fsize * fsize // 2 // 2, channel * fsize * fsize // 2 // 2 // reduction, bias=False),
             nn.LeakyReLU(),
-            nn.Conv2d(channel * fsize * fsize // 2 // 2 // reduction, channel, 1, bias=False)
+            nn.Linear(channel * fsize * fsize // 2 // 2 // reduction, channel, bias=False)
         )
         self.sigmoid = nn.Sigmoid()
 
@@ -668,12 +668,13 @@ class RealFFTChannelAttentionV4(nn.Module):
         z = self.real_fft(x)
 
         z_deep_feats = self.pool_fft_features(z)
-        z_deep_feats = (z_deep_feats[0].view(x.size(0), -1, 1, 1), z_deep_feats[1].view(x.size(0), -1, 1, 1))
+        z_deep_feats = (z_deep_feats[0].view(x.size(0), -1), z_deep_feats[1].view(x.size(0), -1))
 
         z_abs_feats = z_deep_feats[0] * z_deep_feats[0] + z_deep_feats[1] * z_deep_feats[1]
 
         channel_attn = self.fc(z_abs_feats)
         channel_attn = self.sigmoid(channel_attn)
+        channel_attn = channel_attn.unsqueeze(2).unsqueeze(3)
 
         out = x * channel_attn
 
