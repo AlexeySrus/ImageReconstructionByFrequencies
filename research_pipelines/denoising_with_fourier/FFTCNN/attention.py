@@ -393,8 +393,7 @@ class WaveletSpaialAttentionV2(nn.Module):
                 dim=2
             )
 
-        return y, attn
-    
+        return y, attn    
 
 
 class WaveletSpaialAttentionV2Light(nn.Module):
@@ -624,7 +623,6 @@ class ResidualComplexConv(nn.Module):
         self.conv = ComplexConv(in_ch, out_ch, 3, padding=0)
         self.bn_re = nn.BatchNorm2d(out_ch)
         self.bn_im = nn.BatchNorm2d(out_ch)
-        # self.act = RealImaginaryLeakyReLU()
 
         self.bottleneck = ComplexConv(in_ch, out_ch, 1, padding=0, bias=False)
 
@@ -638,7 +636,6 @@ class ResidualComplexConv(nn.Module):
         y_b = self.bottleneck(z)
         y = (y[0] + y_b[0], y[1] + y_b[1])
 
-        # y = self.act(y)
         return y
 
 
@@ -673,7 +670,7 @@ class RealFFTChannelAttentionV4(nn.Module):
         z_deep_feats = self.pool_fft_features(z)
         z_deep_feats = (z_deep_feats[0].view(x.size(0), -1), z_deep_feats[1].view(x.size(0), -1))
 
-        z_abs_feats = z_deep_feats[0] * z_deep_feats[0] + z_deep_feats[1] * z_deep_feats[1]
+        z_abs_feats = torch.sqrt(z_deep_feats[0] * z_deep_feats[0] + z_deep_feats[1] * z_deep_feats[1])
 
         channel_attn = self.fc(z_abs_feats)
         channel_attn = self.sigmoid(channel_attn)
