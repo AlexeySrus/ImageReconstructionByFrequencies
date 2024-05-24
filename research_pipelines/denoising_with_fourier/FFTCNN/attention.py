@@ -701,13 +701,30 @@ class FCABlock(nn.Module):
             nn.GELU()
         )
 
-        self.complex_conv = ComplexConv(channel, channel, 1)
+        self.pool = nn.AdaptiveAvgPool2d((1, 1))
+
+        self.conv = nn.Conv2d(channel, channel, 1)
+        self.fc = nn.Linear(channel, channel)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        complex_hf_feats = self.in_feats(x)
+        hf_spectrums = torch.sqrt(torch.pow(complex_hf_feats[0], 2) + torch.pow(complex_hf_feats[1], 2))
+        hf_spectrums = nn.functional.relu(self.conv(hf_spectrums))
+        hf_feats = self.pool(hf_spectrums).view(x.size(0), x.size(1))
+        channels_probs = nn.functional.sigmoid(self.fc(hf_feats))
+        weighted_channels = complex_hf_feats * channels_probs
+        out = x + weighted_channels
+
+        with torch.no_grad():
+            attn = weighted_channels.mean(dim=1).unsqueeze(1)
+            attn = attn / (attn.max() + 1e-5)
+        return out, attn
 
 
 class FFTCAFSModule(nn.Module):
     def __init__(self, image_size: int, channel: int, reduction: int = 16, kernel_size: int = 7, mode: str = 'full') -> None:
         super().__init__()
-        assert mode in ['full', 'ca', 'sa', 'cbam', 'none']
+        assert mode in ['full', 'ca', 'sa', 'cbam', 'fca', 'none']
 
         if mode in ['full', 'ca', 'sa']:
             self.in_feats = nn.Sequential(
@@ -729,12 +746,16 @@ class FFTCAFSModule(nn.Module):
         if mode == 'cbam':
             self.cbam = CBAM(channel=channel, reduction=reduction, kernel_size=kernel_size)
 
+        if mode == 'fca':
+            self.fca_block = FCABlock(channel=channel, image_size=image_size)
+
         self.mode = mode
         self.forward_methods = {
             'full':     self.own_full_forward,
             'ca':       self.own_ca_forward,
             'sa':       self.own_sa_forward,
             'cbam':     self.cbam_unet_forward,
+            'fca':      self.fca_unet_forward,
             'none':     self.classic_unet_forward
         }
 
@@ -751,6 +772,11 @@ class FFTCAFSModule(nn.Module):
         # U-Net with CBAM
         y, ca_tensor, sa_tensor = self.cbam(x)
         return y, [ca_tensor, sa_tensor]
+    
+    def fca_unet_forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+        # Use only time-frequency SA
+        y, attn_tensor = self.fca_block(x)
+        return y, [attn_tensor]
         
     def own_ca_forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         # Use only frequency CA
