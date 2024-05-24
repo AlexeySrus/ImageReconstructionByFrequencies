@@ -684,6 +684,7 @@ class RealFFTChannelAttentionV4(nn.Module):
     
 
 class FCABlock(nn.Module):
+    # FCA Block implementation: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC10151012/
     def __init__(self, channel: int, image_size: int):
         super().__init__()
 
@@ -773,18 +774,22 @@ class FFTCAFSModule(nn.Module):
         return y, [ca_tensor, sa_tensor]
     
     def fca_unet_forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
-        # Use only time-frequency SA
+        # U-Net with FCA approach: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC10151012/
         y, attn_tensor = self.fca_block(x)
         return y, [attn_tensor]
         
     def own_ca_forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         # Use only frequency CA
-        y, ca_tensor = self.fft_ca(x)
+        y = self.in_feats(x)
+        y, ca_tensor = self.fft_ca(y)
+        y = x + self.final_conv(y)
         return y, [ca_tensor]
     
     def own_sa_forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         # Use only time-frequency SA
-        y, sa_tensor = self.fft_sa(x)
+        y = self.in_feats(x)
+        y, sa_tensor = self.fft_sa(y)
+        y = x + self.final_conv(y)
         return y, [sa_tensor]
 
     def own_full_forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
