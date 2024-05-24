@@ -206,9 +206,9 @@ class ChannelAttention(nn.Module):
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.max_pool = nn.AdaptiveMaxPool2d(1)
         self.fc = nn.Sequential(
-            nn.Conv2d(channel, channel // reduction, 1, bias=False, padding_mode='reflect'),
+            nn.Conv2d(channel, channel // reduction, 1, bias=False),
             nn.LeakyReLU(),
-            nn.Conv2d(channel // reduction, channel, 1, bias=False, padding_mode='reflect')
+            nn.Conv2d(channel // reduction, channel, 1, bias=False)
         )
         self.sigmoid = nn.Sigmoid()
 
@@ -657,10 +657,15 @@ class RealFFTChannelAttentionV4(nn.Module):
             ],
             ResidualComplexConv(channel, channel // 2)
         )
-        self.fc = nn.Sequential(
-            nn.Linear(channel * fsize * fsize // 2 // 2, channel * fsize * fsize // 2 // 2 // reduction),
+        # self.fc = nn.Sequential(
+        #     nn.Linear(channel * fsize * fsize // 2 // 2, channel * fsize * fsize // 2 // 2 // reduction),
+        #     nn.LeakyReLU(),
+        #     nn.Linear(channel * fsize * fsize // 2 // 2 // reduction, channel)
+        # )
+        self.optimizer_fc = nn.Sequential(
+            nn.Conv2d(channel * fsize * fsize // 2 // 2, channel * fsize * fsize // 2 // 2 // reduction, 1, bias=False),
             nn.LeakyReLU(),
-            nn.Linear(channel * fsize * fsize // 2 // 2 // reduction, channel)
+            nn.Conv2d(channel * fsize * fsize // 2 // 2 // reduction, channel, 1, bias=False)
         )
         self.sigmoid = nn.Sigmoid()
 
@@ -672,9 +677,9 @@ class RealFFTChannelAttentionV4(nn.Module):
 
         z_abs_feats = z_deep_feats[0] * z_deep_feats[0] + z_deep_feats[1] * z_deep_feats[1]
 
-        channel_attn = self.fc(z_abs_feats)
+        channel_attn = self.optimizer_fc(z_abs_feats)
         channel_attn = self.sigmoid(channel_attn)
-        channel_attn = channel_attn.unsqueeze(2).unsqueeze(3)
+        # channel_attn = channel_attn.unsqueeze(2).unsqueeze(3)
 
         out = x * channel_attn
 
