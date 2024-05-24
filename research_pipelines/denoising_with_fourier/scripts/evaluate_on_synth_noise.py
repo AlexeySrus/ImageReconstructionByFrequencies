@@ -40,7 +40,11 @@ def parse_args() -> Namespace:
         '--use_tta', action='store_true',
         help='Use test time augmentations until inference'
     )
-    
+    parser.add_argument(
+        '--attention_mode', type=str, required=False, default='full',
+        choices=['full', 'ca', 'sa', 'cbam', 'none'],
+        help='Attention mode from \'full\', \'ca\', \'sa\', \'cbam\', \'none\'.'
+    )
     return parser.parse_args()
 
 
@@ -64,7 +68,7 @@ if __name__ == '__main__':
     imgsz = 256
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    model = FFTCNN(use_substraction=True).to(device)
+    model = FFTCNN(use_substraction=True, attention_mode=args.attention_mode).to(device)
 
     load_path = args.model
     load_data = torch.load(load_path, map_location=device)

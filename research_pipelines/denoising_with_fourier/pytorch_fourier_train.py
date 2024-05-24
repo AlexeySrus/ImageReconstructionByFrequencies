@@ -128,6 +128,7 @@ class CustomTrainingPipeline(object):
                  use_unetpp: bool = False,
                  use_uformer: bool = False,
                  substracted_noise: bool = False,
+                 compile_model: bool = False,
                  full_args: Optional[Namespace] = None):
         """
         Train U-Net denoising model
@@ -158,6 +159,7 @@ class CustomTrainingPipeline(object):
             use_unetpp (bool, optional): Use U-Net++ architecture. Defaults to False.
             use_uformer (bool, optional): Use U-Former architecture. Defaults to False.
             substracted_noise (bool, optinal): Use netwotk prediction as Y = X + F(X). Defaults to False.
+            compile_model (bool, optinal): Use torc.compile to accelerate model training. Defaults to False.
             full_args (Namespace, optional): All command-line arguments. Defaules to None.
         """
         self.device = device
@@ -297,7 +299,8 @@ class CustomTrainingPipeline(object):
                 img_size=image_size, embed_dim=32, win_size=8, 
                 token_projection='linear', token_mlp='leff',
                 depths=[1, 2, 8, 8, 2, 8, 8, 2, 1], modulator=True,
-                dd_in=ch_count, in_chans=ch_count
+                dd_in=ch_count, in_chans=ch_count,
+                attention_mode=attention_mode
             )
         else:
             used_architecture = FFTAttentionUNetPlusPlus if use_unetpp else FFTAttentionUNet
@@ -398,8 +401,8 @@ class CustomTrainingPipeline(object):
         else:
             self.scheduler = None
 
-
-        self.model = torch.compile(self.model, mode='reduce-overhead')
+        if compile_model:
+            self.model = torch.compile(self.model, mode='reduce-overhead')
 
     def get_lr(self):
         for param_group in self.optimizer.param_groups:
@@ -736,6 +739,10 @@ def parse_args() -> Namespace:
         help='Use netwotk prediction as Y = X + F(X).'
     )
     parser.add_argument(
+        '--compile_model', action='store_true',
+        help='Use torch.compile to accelerate model training.'
+    )
+    parser.add_argument(
         '--batch_size', type=int, required=False, default=32,
         help='Training batch size.'
     )
@@ -809,6 +816,7 @@ if __name__ == '__main__':
         use_unetpp=args.use_unetplusplus,
         use_uformer=args.use_uformer,
         substracted_noise=args.substracted_noise,
+        compile_model=args.compile_model,
         full_args=args
     ).fit()
 

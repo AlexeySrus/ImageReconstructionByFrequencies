@@ -31,7 +31,7 @@ RGB_CONFIG: Dict[str, int] = {
     'MIXUP': 85
 }
 
-SYNTH_CONFIG: Dict[str, int] = MRI_CONGIF
+SYNTH_CONFIG: Dict[str, int] = RGB_CONFIG
 
 
 def cv_convert_to_rgb_or_grayscale(image: np.ndarray, to_ycrcb: bool, to_grayscale: bool):

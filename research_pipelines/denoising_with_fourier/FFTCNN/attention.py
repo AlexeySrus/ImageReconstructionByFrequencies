@@ -291,28 +291,40 @@ class WaveletSpaialAttentionV2(nn.Module):
         self.wavelet_inverse = HaarInverse()
 
         self.features_to_sa = nn.Sequential(
-            nn.Conv2d(channel * 4, channel // 2, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
-            nn.BatchNorm2d(channel // 2),
+            nn.Conv2d(channel * 4, channel, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
+            nn.BatchNorm2d(channel),
             nn.LeakyReLU()
         )
         self.ll_feats = nn.Sequential(
-            nn.Conv2d(channel // 2, channel // 4, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
-            nn.BatchNorm2d(channel // 4),
+            nn.Conv2d(channel, channel // 2, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
+            nn.BatchNorm2d(channel // 2),
+            nn.LeakyReLU(),
+            nn.Conv2d(channel // 2, channel, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
+            nn.BatchNorm2d(channel),
             nn.LeakyReLU()
         )
         self.lh_feats = nn.Sequential(
-            nn.Conv2d(channel // 2, channel // 4, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
-            nn.BatchNorm2d(channel // 4),
+            nn.Conv2d(channel, channel // 2, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
+            nn.BatchNorm2d(channel // 2),
+            nn.LeakyReLU(),
+            nn.Conv2d(channel // 2, channel, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
+            nn.BatchNorm2d(channel),
             nn.LeakyReLU()
         )
         self.hl_feats = nn.Sequential(
-            nn.Conv2d(channel // 2, channel // 4, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
-            nn.BatchNorm2d(channel // 4),
+            nn.Conv2d(channel, channel // 2, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
+            nn.BatchNorm2d(channel // 2),
+            nn.LeakyReLU(),
+            nn.Conv2d(channel // 2, channel, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
+            nn.BatchNorm2d(channel),
             nn.LeakyReLU()
         )
         self.hh_feats = nn.Sequential(
-            nn.Conv2d(channel // 2, channel // 4, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
-            nn.BatchNorm2d(channel // 4),
+            nn.Conv2d(channel, channel // 2, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
+            nn.BatchNorm2d(channel // 2),
+            nn.LeakyReLU(),
+            nn.Conv2d(channel // 2, channel, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
+            nn.BatchNorm2d(channel),
             nn.LeakyReLU()
         )
 
@@ -333,36 +345,109 @@ class WaveletSpaialAttentionV2(nn.Module):
         hl_y = self.hl_feats(y)
         hh_y = self.hh_feats(y)
 
+        w_ll, ll_attn = self.ll_sa(ll_y)
+        w_lh, lh_attn = self.lh_sa(lh_y)
+        w_hl, hl_attn = self.hl_sa(hl_y)
+        w_hh, hh_attn = self.hh_sa(hh_y)
+
+        # ll_y = w_feats[:, :x.size(1)]               * ll_attn
+        # lh_y = w_feats[:, x.size(1):x.size(1)*2]    * lh_attn
+        # hl_y = w_feats[:, x.size(1)*2:x.size(1)*3]  * hl_attn
+        # hh_y = w_feats[:, x.size(1)*3:]             * hh_attn
+
+        # y = torch.cat([ll_y, lh_y, hl_y, hh_y], dim=1)
+        y = torch.cat([w_ll, w_lh, w_hl, w_hh], dim=1)
+
+        y = w_feats + self.conv_last(y)
+
+        y = self.wavelet_inverse(y)
+
+        with torch.no_grad():
+            attn = torch.cat(
+                [
+                    torch.cat([ll_attn, lh_attn], dim=3),
+                    torch.cat([hl_attn, hh_attn], dim=3)
+                ],
+                dim=2
+            )
+
+        return y, attn
+    
+
+
+class WaveletSpaialAttentionV2Light(nn.Module):
+    padding_mode = 'reflect'
+
+    def get_ksize(self, image_size: int) -> int:
+        if image_size >= 128:
+            return 7
+        elif image_size >= 32:
+            return 5
+        return 3
+
+    def __init__(self, channel: int, image_size: int):
+        super(WaveletSpaialAttentionV2Light, self).__init__()
+
+        self.wavelet_forward = HaarForward()
+        self.wavelet_inverse = HaarInverse()
+
+        self.features_to_sa = nn.Sequential(
+            nn.Conv2d(channel * 4, channel * 4, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
+            nn.BatchNorm2d(channel * 4),
+            nn.LeakyReLU(),
+            nn.Conv2d(channel * 4, channel * 4, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode, groups=4),
+            nn.BatchNorm2d(channel * 4),
+            nn.LeakyReLU()
+        )
+
+        self.ll_sa = SpatialAttention(kernel_size=self.get_ksize(image_size))
+        self.lh_sa = SpatialAttention(kernel_size=self.get_ksize(image_size))
+        self.hl_sa = SpatialAttention(kernel_size=self.get_ksize(image_size))
+        self.hh_sa = SpatialAttention(kernel_size=self.get_ksize(image_size))
+
+        self.conv_last = nn.Conv2d(channel * 4, channel * 4, kernel_size=1, stride=1, groups=4)
+
+    def forward(self, x: torch.Tensor) ->  Tuple[torch.Tensor, torch.Tensor]:
+        w_feats = self.wavelet_forward(x)
+
+        y = self.features_to_sa(w_feats)
+
+        ll_y = y[:, :x.size(1)]
+        lh_y = y[:, x.size(1):x.size(1)*2]
+        hl_y = y[:, x.size(1)*2:x.size(1)*3]
+        hh_y = y[:, x.size(1)*3:]
+
         _, ll_attn = self.ll_sa(ll_y)
         _, lh_attn = self.lh_sa(lh_y)
         _, hl_attn = self.hl_sa(hl_y)
         _, hh_attn = self.hh_sa(hh_y)
 
-        ll_y = w_feats[:, :x.size(1)]               * ll_attn
-        lh_y = w_feats[:, x.size(1):x.size(1)*2]    * lh_attn
-        hl_y = w_feats[:, x.size(1)*2:x.size(1)*3]  * hl_attn
-        hh_y = w_feats[:, x.size(1)*3:]             * hh_attn
+        w_ll = w_feats[:, :x.size(1)]               * ll_attn
+        w_lh = w_feats[:, x.size(1):x.size(1)*2]    * lh_attn
+        w_hl = w_feats[:, x.size(1)*2:x.size(1)*3]  * hl_attn
+        w_hh = w_feats[:, x.size(1)*3:]             * hh_attn
 
-        y = torch.cat([ll_y, lh_y, hl_y, hh_y], dim=1)
+        y = torch.cat([w_ll, w_lh, w_hl, w_hh], dim=1)
 
         y = self.conv_last(y)
 
         y = self.wavelet_inverse(y)
 
-        attn = torch.cat(
-            [
-                torch.cat([ll_attn, lh_attn], dim=3),
-                torch.cat([hl_attn, hh_attn], dim=3)
-            ],
-            dim=2
-        )
+        with torch.no_grad():
+            attn = torch.cat(
+                [
+                    torch.cat([ll_attn, lh_attn], dim=3),
+                    torch.cat([hl_attn, hh_attn], dim=3)
+                ],
+                dim=2
+            )
 
         return y, attn
-
+    
 
 class Unet1lvl(nn.Module):
     padding_mode = 'reflect'
-    def __init__(self, in_ch=3, mid_ch=12, out_ch=3, activation: nn.Module = nn.Identity):
+    def __init__(self, in_ch=3, mid_ch=12, out_ch=3, activation: nn.Module = nn.Identity()):
         super(Unet1lvl, self).__init__()
 
         self.process1 = nn.Sequential(
@@ -395,7 +480,7 @@ class Unet1lvl(nn.Module):
         y = self.process1(x)
         yp1 = self.pool(y)
         ydf1 = self.process2(yp1)
-        yup1 = self.up(torch.nn.functional.interpolate(ydf1, scale_factor=2, mode='bicubic'))
+        yup1 = self.up(torch.nn.functional.interpolate(ydf1, scale_factor=2, mode='bilinear'))
         yup1 = torch.cat((yup1, y), dim=1)
         out = self.process3(yup1)
         out = self.last_act(out)
@@ -418,28 +503,40 @@ class WaveletSpaialAttentionV4(nn.Module):
         self.wavelet_forward = HaarForward()
         self.wavelet_inverse = HaarInverse()
 
+        self.in_feats = nn.Sequential(
+            nn.Conv2d(channel * 4, channel * 4, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
+            nn.BatchNorm2d(channel * 4),
+            nn.LeakyReLU(),
+            nn.Conv2d(channel * 4, channel * 4, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
+            nn.BatchNorm2d(channel * 4),
+            nn.LeakyReLU(),
+        )
+
         self.features_to_sa = Unet1lvl(channel * 4, channel, 4, activation=torch.sigmoid)
 
         self.conv_last = nn.Conv2d(channel * 4, channel * 4, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode)
 
+
     def forward(self, x: torch.Tensor) ->  Tuple[torch.Tensor, torch.Tensor]:
         w_feats = self.wavelet_forward(x)
 
-        attn_maps = self.features_to_sa(w_feats)
+        y = self.in_feats(w_feats)
+
+        attn_maps = self.features_to_sa(y)
 
         ll_attn = attn_maps[:, 0].unsqueeze(1)
         lh_attn = attn_maps[:, 1].unsqueeze(1)
         hl_attn = attn_maps[:, 2].unsqueeze(1)
         hh_attn = attn_maps[:, 3].unsqueeze(1)
 
-        ll_y = w_feats[:, :x.size(1)]               * ll_attn
-        lh_y = w_feats[:, x.size(1):x.size(1)*2]    * lh_attn
-        hl_y = w_feats[:, x.size(1)*2:x.size(1)*3]  * hl_attn
-        hh_y = w_feats[:, x.size(1)*3:]             * hh_attn
+        ll_y = y[:, :x.size(1)]               * ll_attn
+        lh_y = y[:, x.size(1):x.size(1)*2]    * lh_attn
+        hl_y = y[:, x.size(1)*2:x.size(1)*3]  * hl_attn
+        hh_y = y[:, x.size(1)*3:]             * hh_attn
 
-        w_feats = torch.cat([ll_y, lh_y, hl_y, hh_y], dim=1)
+        y = torch.cat([ll_y, lh_y, hl_y, hh_y], dim=1)
 
-        y = self.conv_last(w_feats)
+        y = w_feats + self.conv_last(w_feats)
 
         y = self.wavelet_inverse(y)
 
@@ -575,13 +672,21 @@ class FFTCAFSModule(nn.Module):
         assert mode in ['full', 'ca', 'sa', 'cbam', 'none']
 
         if mode in ['full', 'ca', 'sa']:
-            self.init_conv = nn.Conv2d(in_channels=channel, out_channels=channel, kernel_size=3, stride=1, padding=1, padding_mode='reflect')
+            self.in_feats = nn.Sequential(
+                nn.Conv2d(channel, channel, 3, stride=1, padding=1, padding_mode='reflect'),
+                nn.BatchNorm2d(channel),
+                nn.LeakyReLU(),
+                nn.Conv2d(channel, channel, 3, stride=1, padding=1, padding_mode='reflect'),
+                nn.BatchNorm2d(channel),
+                nn.LeakyReLU()
+            )
+            self.final_conv = nn.Conv2d(channel, channel, 1, stride=1, padding=0)
 
         if mode in ['full', 'ca']:
             self.fft_ca = RealFFTChannelAttentionV4(channel=channel, reduction=reduction, image_size=image_size)
 
         if mode in ['full', 'sa']:
-            self.fft_sa = WaveletSpaialAttentionV2(channel=channel, image_size=image_size)
+            self.fft_sa = WaveletSpaialAttentionV2Light(channel=channel, image_size=image_size)
 
         if mode == 'cbam':
             self.cbam = CBAM(channel=channel, reduction=reduction, kernel_size=kernel_size)
@@ -611,27 +716,20 @@ class FFTCAFSModule(nn.Module):
         
     def own_ca_forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         # Use only frequency CA
-        y = self.init_conv(x)
-        y, ca_tensor = self.fft_ca(y)
-        y = y + x
+        y, ca_tensor = self.fft_ca(x)
         return y, [ca_tensor]
     
     def own_sa_forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         # Use only time-frequency SA
-        y = self.init_conv(x)
-        y, sa_tensor = self.fft_sa(y)
-        y = y + x
+        y, sa_tensor = self.fft_sa(x)
         return y, [sa_tensor]
 
     def own_full_forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         # Use proposed attention module
-        y = self.init_conv(x)
-
+        y = self.in_feats(x)
         y, ca_tensor = self.fft_ca(y)
         y, sa_tensor = self.fft_sa(y)
-
-        y = y + x
-
+        y = x + self.final_conv(y)
         return y, [ca_tensor, sa_tensor]
 
 

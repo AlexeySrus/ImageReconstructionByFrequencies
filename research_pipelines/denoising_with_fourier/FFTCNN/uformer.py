@@ -1127,7 +1127,7 @@ class Uformer(nn.Module):
                  norm_layer=nn.LayerNorm, patch_norm=True,
                  use_checkpoint=False, token_projection='linear', token_mlp='leff',
                  dowsample=Downsample, upsample=Upsample, shift_flag=True, modulator=False, 
-                 cross_modulator=False, **kwargs):
+                 cross_modulator=False, attention_mode: str = 'full', **kwargs):
         super().__init__()
 
         self.num_enc_layers = len(depths)//2
@@ -1297,10 +1297,10 @@ class Uformer(nn.Module):
                             token_projection=token_projection,token_mlp=token_mlp,shift_flag=shift_flag,
                             modulator=modulator,cross_modulator=cross_modulator)
         
-        self.connection_attn0 = FFTCAFSModule(channel=embed_dim, reduction=4, image_size=img_size)
-        self.connection_attn1 = FFTCAFSModule(channel=embed_dim * 2, reduction=4, image_size=img_size // 2)
-        self.connection_attn2 = FFTCAFSModule(channel=embed_dim * 4, reduction=8, image_size=img_size // 4)
-        self.connection_attn3 = FFTCAFSModule(channel=embed_dim * 8, reduction=16, image_size=img_size // 8)
+        self.connection_attn0 = FFTCAFSModule(channel=embed_dim, reduction=4, image_size=img_size, mode=attention_mode)
+        self.connection_attn1 = FFTCAFSModule(channel=embed_dim * 2, reduction=4, image_size=img_size // 2, mode=attention_mode)
+        self.connection_attn2 = FFTCAFSModule(channel=embed_dim * 4, reduction=8, image_size=img_size // 4, mode=attention_mode)
+        self.connection_attn3 = FFTCAFSModule(channel=embed_dim * 8, reduction=16, image_size=img_size // 8, mode=attention_mode)
 
         self.apply(self._init_weights)
 
