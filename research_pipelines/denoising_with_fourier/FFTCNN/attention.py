@@ -614,15 +614,16 @@ class ForFFTPad(nn.Module):
     
 
 class ResidualComplexConv(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int) -> None:
+    def __init__(self, channel: int) -> None:
         super().__init__()
 
         self.pad = ForFFTPad(1)
-        self.conv = ComplexConv(in_ch, out_ch, 3, padding=0)
-        self.bn_re = nn.BatchNorm2d(out_ch)
-        self.bn_im = nn.BatchNorm2d(out_ch)
+        self.conv = ComplexConv(channel, channel, 3, padding=0)
+        self.bn_re = nn.BatchNorm2d(channel)
+        self.bn_im = nn.BatchNorm2d(channel)
 
-        self.bottleneck = ComplexConv(in_ch, out_ch, 1, padding=0, bias=False)
+        self.bottleneck = ComplexConv(channel, channel, 1, padding=0, bias=False)
+        self.act = RealImaginaryLeakyReLU()
 
 
     def forward(self, z: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -633,6 +634,7 @@ class ResidualComplexConv(nn.Module):
 
         y_b = self.bottleneck(z)
         y = (y[0] + y_b[0], y[1] + y_b[1])
+        y = self.act(y)
 
         return y
 
@@ -648,12 +650,12 @@ class RealFFTChannelAttentionV4(nn.Module):
         self.pool_fft_features = nn.Sequential(
             *[
                 nn.Sequential(
-                    ResidualComplexConv(channel, channel // 2),
-                    FFTMaxPool2D(2, 2),
-                    ResidualComplexConv(channel // 2, channel // 2 if i == pooling_depth - 1 else channel),
+                    ResidualComplexConv(channel),
+                    FFTMaxPool2D(2, 2)
                 )
                 for i in range(pooling_depth)
-            ]
+            ],
+            ResidualComplexConv(channel),
         )
         self.fc = nn.Sequential(
             nn.Linear(channel * fsize * fsize // 2 // 2, channel * fsize * fsize // 2 // 2 // reduction),
