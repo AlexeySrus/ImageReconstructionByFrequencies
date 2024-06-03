@@ -203,7 +203,7 @@ class CustomTrainingPipeline(object):
                     clear_images_path=train_data_paths[1],
                     need_crop=True,
                     window_size=self.image_shape[0],
-                    optional_dataset_size=80000,
+                    optional_dataset_size=50,
                     preload=preload_data,
                     use_ycrcb=use_ycrcb,
                     grayscale=grayscale
@@ -216,7 +216,7 @@ class CustomTrainingPipeline(object):
                 clear_images_path=synth_data_paths,
                 window_size=self.image_shape[0],
                 preload=preload_data,
-                optional_dataset_size=20000,
+                optional_dataset_size=500,
                 use_ycrcb=use_ycrcb,
                 grayscale=grayscale
             )
@@ -445,7 +445,6 @@ class CustomTrainingPipeline(object):
 
                 # f_loss = calculate_loss(
                 #     pred_images,
-                #     # kornia.enhance.sharpness(clear_image[:, :1] if self.use_ycrcb or self.grayscale else kornia.color.rgb_to_y(clear_image), 2.0),
                 #     clear_image[:, :1] if self.use_ycrcb or self.grayscale else kornia.color.rgb_to_y(clear_image),
                 #     lambda x, y: self.hf_loss(
                 #         x[:, :1] if self.use_ycrcb or self.grayscale else kornia.color.rgb_to_y(x),

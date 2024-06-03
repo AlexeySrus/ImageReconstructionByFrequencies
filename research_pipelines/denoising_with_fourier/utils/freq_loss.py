@@ -79,16 +79,29 @@ class HightFrequencyFFTLoss(nn.Module):
         self.kernel = nn.Parameter(hight_pass_kernel, requires_grad=False)
         self.kernel_sum = nn.Parameter(hight_pass_kernel.sum((1, 2, 3)), requires_grad=False)
 
-    def forward(self, x_pred, x_truth):
-        z_pred = torch.fft.rfft2(x_pred, norm='ortho')
-        z_truth = torch.fft.rfft2(x_truth, norm='ortho')
-
-        err = z_pred - z_truth
-        err = torch.cat([err.real, err.imag], axis=1)
+    def calculate_err_with_mask(self, pred, truth):
+        err = pred - truth
         err = torch.abs(err)
 
         err = (err * self.kernel).sum((1, 2, 3))
         err = err / (self.kernel_sum + 1E-6)
+
+        return err
+
+    def forward(self, x_pred, x_truth):
+        z_pred = torch.fft.rfft2(x_pred, norm='forward')
+        z_truth = torch.fft.rfft2(x_truth, norm='forward')
+
+        abs_err = self.calculate_err_with_mask(
+            torch.abs(z_pred),
+            torch.abs(z_truth)
+        )
+        phase_err = self.calculate_err_with_mask(
+            torch.angle(z_pred),
+            torch.angle(z_truth)
+        )
+
+        err = abs_err / 2 + phase_err / 2
 
         if self.reduction == 'mean':
             err = err.mean()

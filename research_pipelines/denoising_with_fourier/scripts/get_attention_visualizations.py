@@ -99,16 +99,16 @@ if __name__ == '__main__':
             attn_maps[..., i]
         )
 
-    model.to_export()
-    torch.onnx.export(
-        model,
-        torch.rand(1, 3, imgsz, imgsz, device=device, requires_grad=True),
-        os.path.join(output_folder, 'sfwaunet.onnx'),
-        input_names=["input"],
-        output_names=["output"],
-        dynamic_axes={
-            "input": {0: "batch"},
-            "output": {0: "batch"},
-        },
-        opset_version=16
-    )
+    # model.to_export()
+    # torch.onnx.export(
+    #     model,
+    #     torch.rand(1, 3, imgsz, imgsz, device=device, requires_grad=True),
+    #     os.path.join(output_folder, 'sfwaunet.onnx'),
+    #     input_names=["input"],
+    #     output_names=["output"],
+    #     dynamic_axes={
+    #         "input": {0: "batch"},
+    #         "output": {0: "batch"},
+    #     },
+    #     opset_version=16
+    # )
