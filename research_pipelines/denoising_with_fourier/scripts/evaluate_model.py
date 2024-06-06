@@ -42,8 +42,8 @@ def parse_args() -> Namespace:
     )
     parser.add_argument(
         '--attention_mode', type=str, required=False, default='full',
-        choices=['full', 'ca', 'sa', 'cbam', 'none'],
-        help='Attention mode from \'full\', \'ca\', \'sa\', \'cbam\', \'none\'.'
+        choices=['full', 'ca', 'sa', 'fca', 'cbam', 'none'],
+        help='Attention mode from \'full\', \'ca\', \'sa\', \'fca\', \'cbam\', \'none\'.'
     )
     return parser.parse_args()
     

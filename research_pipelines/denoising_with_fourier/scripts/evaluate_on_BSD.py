@@ -42,8 +42,8 @@ def parse_args() -> Namespace:
     )
     parser.add_argument(
         '--attention_mode', type=str, required=False, default='full',
-        choices=['full', 'ca', 'sa', 'cbam', 'none'],
-        help='Attention mode from \'full\', \'ca\', \'sa\', \'cbam\', \'none\'.'
+        choices=['full', 'ca', 'sa', 'fca', 'cbam', 'none'],
+        help='Attention mode from \'full\', \'ca\', \'sa\', \'fca\', \'cbam\', \'none\'.'
     )
     return parser.parse_args()
 
@@ -63,6 +63,7 @@ def tensor_to_image(t: torch.Tensor) -> np.ndarray:
 
 
 if __name__ == '__main__':
+    torch.set_float32_matmul_precision('high')
     args = parse_args()
 
     imgsz = 256
@@ -146,7 +147,7 @@ if __name__ == '__main__':
 
             cv2.imwrite(
                 os.path.join(output_save_folder, image_name),
-                cv2.cvtColor(pred_image, cv2.COLOR_RGB2BGR)
+                cv2.cvtColor(pred_image, cv2.COLOR_RGB2YCrCb)[..., 0]
             )
 
         print('Result PSNR -- mean: {:.2f}, std: {:.2f}'.format(np.array(psnr_values).mean(), np.array(psnr_values).std()))

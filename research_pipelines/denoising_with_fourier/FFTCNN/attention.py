@@ -20,6 +20,8 @@ from torch import nn
 import scipy.linalg
 
 from utils.haar_utils import HaarForward, HaarInverse
+from FFTCNN.uformer_modules import LeWinTransformerBlock, \
+    inv_transformer_transpose, forward_transformer_transpose
 
 
 def sim_attention (X: torch.Tensor, lamb: float) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -201,7 +203,7 @@ class FFTMaxPool2D(nn.Module):
 
 
 class ChannelAttention(nn.Module):
-    def __init__(self, channel, reduction=16):
+    def __init__(self, channel, reduction=16, return_attention_only: bool = False):
         super(ChannelAttention, self).__init__()
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.max_pool = nn.AdaptiveMaxPool2d(1)
@@ -211,12 +213,16 @@ class ChannelAttention(nn.Module):
             nn.Conv2d(channel // reduction, channel, 1, bias=False)
         )
         self.sigmoid = nn.Sigmoid()
+        self.return_attention_only = return_attention_only
 
     def forward(self, x):
         avg_out = self.fc(self.avg_pool(x))
         max_out = self.fc(self.max_pool(x))
         out = avg_out + max_out
         attn = self.sigmoid(out)
+
+        if self.return_attention_only:
+            return attn
 
         out = x * attn
 
@@ -287,12 +293,101 @@ class Self_Attn(nn.Module):
         
         out = self.gamma*pre_out + x
 
-        with torch.no_grad():
-            inv_attn = torch.abs(x - out).mean(dim=1).unsqueeze(1)
-            inv_attn /= (inv_attn.max() + 1E-5)
+        return out
 
-        return out, inv_attn
-    
+
+class CoordinateAttention(nn.Module):
+    def __init__(self, in_dim: int, out_dim: int, reduction: int, return_attention_only: bool):
+        super().__init__()
+        self.pool_h = nn.AdaptiveAvgPool2d((None, 1))
+        self.pool_w = nn.AdaptiveAvgPool2d((1, None))
+        hidden_dim = max(8, in_dim // reduction)
+        self.conv1 = nn.Conv2d(in_dim, hidden_dim, kernel_size=1, stride=1, padding=0)
+        self.bn1 = nn.BatchNorm2d(hidden_dim)
+        self.act = nn.ReLU(inplace=True)
+        self.conv_h = nn.Conv2d(hidden_dim, out_dim, kernel_size=1, stride=1, padding=0)
+        self.conv_w = nn.Conv2d(hidden_dim, out_dim, kernel_size=1, stride=1, padding=0)
+        self.return_attention_only = return_attention_only
+        
+    def forward(self, x: torch.Tensor) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        identity = x
+        b,c,h,w = x.shape
+        x_h = self.pool_h(x)
+        x_w = self.pool_w(x).transpose(-1, -2)
+        y = torch.cat([x_h, x_w], dim=2)
+        y = self.conv1(y)
+        y = self.bn1(y)
+        y = self.act(y)
+        x_h, x_w = torch.split(y, [h, w], dim=2)
+        x_w = x_w.transpose(-1, -2)
+        a_h = self.conv_h(x_h)
+        a_w = self.conv_w(x_w)
+
+        if self.return_attention_only:
+            return a_h, a_w
+        
+        out = identity * a_h * a_w
+        return out
+
+
+class WaveletCoordinateAttention(nn.Module):
+    padding_mode = 'reflect'
+
+    def __init__(self, channel: int, reduction: int):
+        super(WaveletCoordinateAttention, self).__init__()
+
+        self.wavelet_forward = HaarForward()
+        self.wavelet_inverse = HaarInverse()
+
+
+        self.features_to_a = nn.Sequential(
+            nn.Conv2d(channel * 4, channel * 4, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
+            nn.BatchNorm2d(channel * 4),
+            nn.LeakyReLU(),
+            nn.Conv2d(channel * 4, channel* 4, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode, groups=4),
+            nn.BatchNorm2d(channel * 4),
+            nn.LeakyReLU()
+        )
+
+        self.coordinate_attention = CoordinateAttention(channel * 4, channel * 4, reduction, return_attention_only=True)
+
+        self.conv_last = nn.Conv2d(channel * 4, channel * 4, kernel_size=1, stride=1)
+
+    def forward(self, x: torch.Tensor) ->  Tuple[torch.Tensor, torch.Tensor]:
+        w_feats = self.wavelet_forward(x)
+
+        y = self.features_to_a(w_feats)
+        a_h, a_w = self.coordinate_attention(y)
+        y = w_feats * a_h * a_w
+
+        with torch.no_grad():
+            diff_maps = torch.abs(w_feats - y)
+            ll_attn = diff_maps[:, :x.size(1)]
+            lh_attn = diff_maps[:, x.size(1):x.size(1)*2]
+            hl_attn = diff_maps[:, x.size(1)*2:x.size(1)*3]
+            hh_attn = diff_maps[:, x.size(1)*3:]
+
+            ll_attn = ll_attn.mean(dim=1).unsqueeze(1)
+            lh_attn = lh_attn.mean(dim=1).unsqueeze(1)
+            hl_attn = hl_attn.mean(dim=1).unsqueeze(1)
+            hh_attn = hh_attn.mean(dim=1).unsqueeze(1)
+
+            ll_attn = ll_attn / (ll_attn.max() + 1e-5)
+            lh_attn = lh_attn / (lh_attn.max() + 1e-5)
+            hl_attn = hl_attn / (hl_attn.max() + 1e-5)
+            hh_attn = hh_attn / (hh_attn.max() + 1e-5)
+
+            attn = torch.cat(
+                [
+                    torch.cat([ll_attn, lh_attn], dim=3),
+                    torch.cat([hl_attn, hh_attn], dim=3)
+                ],
+                dim=2
+            )
+
+        y = self.wavelet_inverse(y)
+        return y, attn
+
 
 class WaveletSpaialAttentionV2(nn.Module):
     padding_mode = 'reflect'
@@ -378,9 +473,9 @@ class WaveletSpaialAttentionV2(nn.Module):
         # y = torch.cat([ll_y, lh_y, hl_y, hh_y], dim=1)
         y = torch.cat([w_ll, w_lh, w_hl, w_hh], dim=1)
 
-        y = w_feats + self.conv_last(y)
+        y = self.conv_last(y)
 
-        y = self.wavelet_inverse(y)
+        y = x + self.wavelet_inverse(y)
 
         with torch.no_grad():
             attn = torch.cat(
@@ -391,8 +486,59 @@ class WaveletSpaialAttentionV2(nn.Module):
                 dim=2
             )
 
-        return y, attn    
+class WaveletSpaialAttentionV3Light(nn.Module):
+    padding_mode = 'reflect'
 
+    def get_ksize(self, image_size: int) -> int:
+        if image_size >= 128:
+            return 7
+        elif image_size >= 16:
+            return 5
+        return 3
+
+    def __init__(self, channel: int, image_size: int):
+        super(WaveletSpaialAttentionV3Light, self).__init__()
+
+        assert channel % 4 == 0, 'Channel must divisible by 4'
+        assert channel // 4 >= 4, 'Low channels for Spatial Attention bottleneck'
+
+        self.wavelet_forward = HaarForward()
+        self.wavelet_inverse = HaarInverse()
+
+        self.features_to_sa = nn.Sequential(
+            nn.Conv2d(channel * 4, channel * 2, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
+            nn.BatchNorm2d(channel * 2),
+            nn.LeakyReLU(),
+            nn.Conv2d(channel * 2, channel, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
+            nn.BatchNorm2d(channel),
+            nn.LeakyReLU()
+        )
+
+        self.sa_layer = SpatialAttention(kernel_size=self.get_ksize(image_size))
+
+        self.features_from_sa = nn.Sequential(
+            nn.Conv2d(channel, channel * 2, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
+            nn.BatchNorm2d(channel * 2),
+            nn.LeakyReLU(),
+            nn.Conv2d(channel * 2, channel * 4, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
+            nn.BatchNorm2d(channel * 4),
+            nn.LeakyReLU(),
+            nn.Conv2d(channel * 4, channel * 4, kernel_size=1, stride=1, padding=0)
+        )
+
+    def forward(self, x: torch.Tensor) ->  Tuple[torch.Tensor, torch.Tensor]:
+        w_feats = self.wavelet_forward(x)
+
+        y = self.features_to_sa(w_feats)
+        y = self.wavelet_inverse(y)
+        y, attn = self.sa_layer(y)
+        y = self.wavelet_forward(y)
+        y = w_feats + self.features_from_sa(y)
+        
+        y = self.wavelet_inverse(y)
+        
+        return y, attn
+    
 
 class WaveletSpaialAttentionV2Light(nn.Module):
     padding_mode = 'reflect'
@@ -400,7 +546,7 @@ class WaveletSpaialAttentionV2Light(nn.Module):
     def get_ksize(self, image_size: int) -> int:
         if image_size >= 128:
             return 7
-        elif image_size >= 32:
+        elif image_size >= 16:
             return 5
         return 3
 
@@ -436,23 +582,148 @@ class WaveletSpaialAttentionV2Light(nn.Module):
         hl_y = y[:, x.size(1)*2:x.size(1)*3]
         hh_y = y[:, x.size(1)*3:]
 
+        ll_w, ll_attn = self.ll_sa(ll_y)
+        lh_w, lh_attn = self.lh_sa(lh_y)
+        hl_w, hl_attn = self.hl_sa(hl_y)
+        hh_w, hh_attn = self.hh_sa(hh_y)
+
+        y = torch.cat([ll_w, lh_w, hl_w, hh_w], dim=1)
+
+        y = w_feats + self.conv_last(y)
+
+        y = self.wavelet_inverse(y)
+
+        with torch.no_grad():
+            attn = torch.cat(
+                [
+                    torch.cat([ll_attn, lh_attn], dim=3),
+                    torch.cat([hl_attn, hh_attn], dim=3)
+                ],
+                dim=2
+            )
+
+        return y, attn
+
+
+class WaveletSpaialAttentionV1Light(nn.Module):
+    padding_mode = 'reflect'
+
+    def get_ksize(self, image_size: int) -> int:
+        if image_size >= 128:
+            return 7
+        elif image_size >= 32:
+            return 5
+        return 3
+
+    def __init__(self, channel: int, image_size: int):
+        super(WaveletSpaialAttentionV1Light, self).__init__()
+
+        self.wavelet_forward = HaarForward()
+        self.wavelet_inverse = HaarInverse()
+
+        self.features_to_sa = nn.Sequential(
+            nn.Conv2d(channel * 4, channel * 4, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
+            nn.BatchNorm2d(channel * 4),
+            nn.LeakyReLU(),
+            nn.Conv2d(channel * 4, channel * 4, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode, groups=4),
+            nn.BatchNorm2d(channel * 4),
+            nn.LeakyReLU()
+        )
+
+        self.ll_sa = SpatialAttention(kernel_size=self.get_ksize(image_size))
+        self.lh_sa = SpatialAttention(kernel_size=self.get_ksize(image_size))
+        self.hl_sa = SpatialAttention(kernel_size=self.get_ksize(image_size))
+        self.hh_sa = SpatialAttention(kernel_size=self.get_ksize(image_size))
+
+        self.conv_last = nn.Conv2d(channel * 4, channel * 4, kernel_size=1, stride=1, groups=4)
+
+    def forward(self, x: torch.Tensor) ->  Tuple[torch.Tensor, torch.Tensor]:
+        w_feats = self.wavelet_forward(x)
+
+        y = self.features_to_sa(w_feats)
+
+        ll_y = y[:, :x.size(1)]
+        lh_y = y[:, x.size(1):x.size(1)*2]
+        hl_y = y[:, x.size(1)*2:x.size(1)*3]
+        hh_y = y[:, x.size(1)*3:]
+
         _, ll_attn = self.ll_sa(ll_y)
         _, lh_attn = self.lh_sa(lh_y)
         _, hl_attn = self.hl_sa(hl_y)
         _, hh_attn = self.hh_sa(hh_y)
 
-        w_ll = w_feats[:, :x.size(1)]               * ll_attn
-        w_lh = w_feats[:, x.size(1):x.size(1)*2]    * lh_attn
-        w_hl = w_feats[:, x.size(1)*2:x.size(1)*3]  * hl_attn
-        w_hh = w_feats[:, x.size(1)*3:]             * hh_attn
+        ll_w = w_feats[:, :x.size(1)]               * ll_attn
+        lh_w = w_feats[:, x.size(1):x.size(1)*2]    * lh_attn
+        hl_w = w_feats[:, x.size(1)*2:x.size(1)*3]  * hl_attn
+        hh_w = w_feats[:, x.size(1)*3:]             * hh_attn
 
-        y = torch.cat([w_ll, w_lh, w_hl, w_hh], dim=1)
+        y = torch.cat([ll_w, lh_w, hl_w, hh_w], dim=1)
 
         y = self.conv_last(y)
 
         y = self.wavelet_inverse(y)
 
         with torch.no_grad():
+            attn = torch.cat(
+                [
+                    torch.cat([ll_attn, lh_attn], dim=3),
+                    torch.cat([hl_attn, hh_attn], dim=3)
+                ],
+                dim=2
+            )
+
+        return y, attn
+
+
+class WaveletSelfAttention(nn.Module):
+    padding_mode = 'reflect'
+
+    def get_factor(self, image_size: int) -> int:
+        if image_size >= 128:
+            return 8
+        elif image_size >= 32:
+            return 4
+        return 2
+
+    def __init__(self, channel: int, image_size: int):
+        super(WaveletSelfAttention, self).__init__()
+
+        self.wavelet_forward = HaarForward()
+        self.wavelet_inverse = HaarInverse()
+
+        self.transformer_block = LeWinTransformerBlock(
+            dim=channel * 4,
+            input_resolution=(image_size, image_size),
+            win_size=8,
+            num_heads=1
+        )
+
+    def forward(self, x: torch.Tensor) ->  Tuple[torch.Tensor, torch.Tensor]:
+        wavelet_x = self.wavelet_forward(x)
+
+        wavelet_y = forward_transformer_transpose(wavelet_x)
+        wavelet_y = self.transformer_block(wavelet_y)
+        wavelet_y = inv_transformer_transpose(wavelet_y)
+        
+        y = self.wavelet_inverse(wavelet_y)
+
+        with torch.no_grad():
+            diff_maps = torch.abs(wavelet_y - wavelet_x)
+            ll_attn = diff_maps[:, :x.size(1)]
+            lh_attn = diff_maps[:, x.size(1):x.size(1)*2]
+            hl_attn = diff_maps[:, x.size(1)*2:x.size(1)*3]
+            hh_attn = diff_maps[:, x.size(1)*3:]
+
+            ll_attn = ll_attn.mean(dim=1).unsqueeze(1)
+            lh_attn = lh_attn.mean(dim=1).unsqueeze(1)
+            hl_attn = hl_attn.mean(dim=1).unsqueeze(1)
+            hh_attn = hh_attn.mean(dim=1).unsqueeze(1)
+
+            ll_attn = ll_attn / (ll_attn.max() + 1e-5)
+            lh_attn = lh_attn / (lh_attn.max() + 1e-5)
+            hl_attn = hl_attn / (hl_attn.max() + 1e-5)
+            hh_attn = hh_attn / (hh_attn.max() + 1e-5)
+
             attn = torch.cat(
                 [
                     torch.cat([ll_attn, lh_attn], dim=3),
@@ -526,14 +797,14 @@ class WaveletSpaialAttentionV4(nn.Module):
             nn.Conv2d(channel * 4, channel * 4, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
             nn.BatchNorm2d(channel * 4),
             nn.LeakyReLU(),
-            nn.Conv2d(channel * 4, channel * 4, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode),
+            nn.Conv2d(channel * 4, channel * 4, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode, groups=4),
             nn.BatchNorm2d(channel * 4),
-            nn.LeakyReLU(),
+            nn.LeakyReLU()
         )
 
         self.features_to_sa = Unet1lvl(channel * 4, channel, 4, activation=torch.sigmoid)
 
-        self.conv_last = nn.Conv2d(channel * 4, channel * 4, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode)
+        self.conv_last = nn.Conv2d(channel * 4, channel * 4, kernel_size=3, stride=1, padding=1, padding_mode=self.padding_mode, groups=4)
 
 
     def forward(self, x: torch.Tensor) ->  Tuple[torch.Tensor, torch.Tensor]:
@@ -555,7 +826,7 @@ class WaveletSpaialAttentionV4(nn.Module):
 
         y = torch.cat([ll_y, lh_y, hl_y, hh_y], dim=1)
 
-        y = w_feats + self.conv_last(w_feats)
+        y = w_feats + self.conv_last(y)
 
         y = self.wavelet_inverse(y)
 
@@ -585,7 +856,7 @@ class ShuffledSelfAttention(nn.Module):
 
     def forward(self, x: torch.Tensor) ->  Tuple[torch.Tensor, torch.Tensor]:
         y_pathes = self.pix_unshuffle(x)
-        y_pathes, _ = self.self_attn(y_pathes)
+        y_pathes = self.self_attn(y_pathes)
         y = self.pix_shuffle(y_pathes)
 
         with torch.no_grad():
@@ -658,9 +929,9 @@ class RealFFTChannelAttentionV4(nn.Module):
             ]
         )
         self.fc = nn.Sequential(
-            nn.Linear(channel * fsize * fsize // 2 // 2, channel * fsize * fsize // 2 // 2 // reduction, bias=False),
+            nn.Linear(channel * fsize * fsize // 2 // 2, channel // reduction, bias=False),
             nn.LeakyReLU(),
-            nn.Linear(channel * fsize * fsize // 2 // 2 // reduction, channel, bias=False)
+            nn.Linear(channel // reduction, channel, bias=False)
         )
         self.sigmoid = nn.Sigmoid()
 
@@ -682,7 +953,44 @@ class RealFFTChannelAttentionV4(nn.Module):
             inv_attn = torch.abs(out - x).mean(dim=1).unsqueeze(1)
             inv_attn /= (inv_attn.max() + 1E-5)
 
-        return x * channel_attn, inv_attn
+        return out, inv_attn
+    
+
+class RealFFTChannelAttentionV5(nn.Module):
+    def __init__(self, channel: int, image_size: int, fsize: int = 8, reduction: int = 16):
+        super(RealFFTChannelAttentionV5, self).__init__()
+
+        self.real_fft = MatrixRFFT(N=image_size)
+
+        pooling_depth = int(np.log2(image_size // fsize))
+        
+        self.pool_fft_features = nn.Sequential(
+            *[
+                nn.Sequential(
+                    ResidualComplexConv(channel, channel // 2),
+                    FFTMaxPool2D(2, 2),
+                    ResidualComplexConv(channel // 2, channel),
+                )
+                for i in range(pooling_depth)
+            ]
+        )
+        self.attn_head = ChannelAttention(channel=channel, reduction=reduction // 4, return_attention_only=True)
+
+    def forward(self, x):
+        z = self.real_fft(x)
+
+        z_deep_feats = self.pool_fft_features(z)
+        z_deep_feats = z_deep_feats[0] * z_deep_feats[0] + z_deep_feats[1] * z_deep_feats[1]
+
+        channel_attn = self.attn_head(z_deep_feats)
+        out = x * channel_attn
+
+        with torch.no_grad():
+            inv_attn = torch.abs(out - x).mean(dim=1).unsqueeze(1)
+            inv_attn /= (inv_attn.max() + 1E-5)
+
+        return out, inv_attn
+    
     
 
 class FCABlock(nn.Module):
@@ -693,9 +1001,9 @@ class FCABlock(nn.Module):
         self.real_fft = MatrixRFFT(N=image_size)
 
         self.in_feats = nn.Sequential(
-            nn.Conv2d(channel, channel, 3, stride=1, padding=1, padding_mode='reflect'),
+            nn.Conv2d(channel, channel, 3, stride=1, padding=1, padding_mode='zeros'),
             nn.GELU(),
-            nn.Conv2d(channel, channel, 3, stride=1, padding=1, padding_mode='reflect'),
+            nn.Conv2d(channel, channel, 3, stride=1, padding=1, padding_mode='zeros'),
             nn.GELU()
         )
 
@@ -740,10 +1048,10 @@ class FFTCAFSModule(nn.Module):
             self.final_conv = nn.Conv2d(channel, channel, 1, stride=1, padding=0)
 
         if mode in ['full', 'ca']:
-            self.fft_ca = RealFFTChannelAttentionV4(channel=channel, reduction=reduction, image_size=image_size)
+            self.fft_ca = RealFFTChannelAttentionV4(channel=channel, reduction=reduction // 4, image_size=image_size)
 
         if mode in ['full', 'sa']:
-            self.fft_sa = WaveletSpaialAttentionV2Light(channel=channel, image_size=image_size)
+            self.fft_sa = WaveletCoordinateAttention(channel=channel, reduction=reduction)
 
         if mode == 'cbam':
             self.cbam = CBAM(channel=channel, reduction=reduction, kernel_size=kernel_size)

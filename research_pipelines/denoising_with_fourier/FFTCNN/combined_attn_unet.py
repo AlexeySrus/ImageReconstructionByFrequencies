@@ -134,7 +134,7 @@ class FeaturesUpsample(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, window_size: int, image_size: int, use_attention: bool = True):
         super().__init__()
         self.in_features = FeaturesProcessing(in_ch, in_ch, window_size=window_size, image_size=image_size, use_attention=use_attention)
-        # self.up = lambda x: torch.nn.functional.interpolate(x, scale_factor=2, align_corners=True, mode='bicubic')
+        #  self.up = lambda x: torch.nn.functional.interpolate(x, scale_factor=2, align_corners=True, mode='bicubic')
         # self.up = lambda x: resize(x, scale_factors=2, clip=False, interpolation='lanczos4', antialiasing=False)
         self.up = lambda x: torch.nn.functional.interpolate(x, scale_factor=2, align_corners=True, mode='bilinear')
         self.features = FeaturesProcessing(in_ch, out_ch, window_size=window_size, image_size=image_size, use_attention=False)

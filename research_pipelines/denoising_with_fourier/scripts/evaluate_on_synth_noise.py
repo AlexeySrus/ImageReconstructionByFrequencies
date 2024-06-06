@@ -42,8 +42,8 @@ def parse_args() -> Namespace:
     )
     parser.add_argument(
         '--attention_mode', type=str, required=False, default='full',
-        choices=['full', 'ca', 'sa', 'cbam', 'none'],
-        help='Attention mode from \'full\', \'ca\', \'sa\', \'cbam\', \'none\'.'
+        choices=['full', 'ca', 'sa', 'fca', 'cbam', 'none'],
+        help='Attention mode from \'full\', \'ca\', \'sa\', \'fca\', \'cbam\', \'none\'.'
     )
     return parser.parse_args()
 
@@ -89,7 +89,7 @@ if __name__ == '__main__':
 
     clear_folder = args.folder
 
-    noisy_sigmas = [5, 10, 15, 25, 30, 50]
+    noisy_sigmas = [5, 10, 15, 25, 30, 50, 90]
 
     for noise_sigma in noisy_sigmas:
         print('SIGMA VALUE: {}'.format(noise_sigma))
