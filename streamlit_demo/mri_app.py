@@ -18,11 +18,14 @@ from streamlit_image_comparison import image_comparison
 ROOT_PATH: str = os.path.join(os.path.dirname(__file__), '../')
 RESEARCH_PATH: str = os.path.join(ROOT_PATH, 'research_pipelines/denoising_with_fourier/')
 MODEL_PATH: str = os.path.join(ROOT_PATH, 'materials/new_unet_mri.trh')
+UFORMER_MODEL_PATH: str = os.path.join(ROOT_PATH, 'materials/mri_uformer.trh')
 DEVICE: str = 'cuda:0'
 IMAGE_SIZE: int = 256
+USE_UFORMER: bool = True
 
 sys.path.insert(0, RESEARCH_PATH)
 from FFTCNN.combined_attn_unet import FFTAttentionUNet as DenoisingModel
+from FFTCNN.uformer import Uformer
 from utils.window_inference import eval_denoise_inference
 
 
@@ -76,8 +79,19 @@ class UserImagesStorage(object):
 
 @st.cache_resource()
 def cached_sesstion():
-    model = DenoisingModel(in_ch=1, out_ch=1, image_size=IMAGE_SIZE, use_substraction=False).to(DEVICE)
-    model.load_state_dict(torch.load(MODEL_PATH, map_location=torch.device(DEVICE))['model'])
+    if USE_UFORMER:
+        model = Uformer(
+            img_size=IMAGE_SIZE, embed_dim=32, win_size=8, 
+            token_projection='linear', token_mlp='leff',
+            depths=[1, 2, 8, 8, 2, 8, 8, 2, 1], modulator=True,
+            dd_in=1, in_chans=1,
+            attention_mode='full'
+        ).to(DEVICE)
+    else:
+        model = DenoisingModel(in_ch=1, out_ch=1, image_size=IMAGE_SIZE, use_substraction=False).to(DEVICE)
+
+    LOAD_WEIGHTS_PATH = UFORMER_MODEL_PATH if USE_UFORMER else MODEL_PATH
+    model.load_state_dict(torch.load(LOAD_WEIGHTS_PATH, map_location=torch.device(DEVICE))['model'])
     model.eval()
     
     return model
