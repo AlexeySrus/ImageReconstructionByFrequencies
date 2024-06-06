@@ -85,7 +85,7 @@ def cached_sesstion():
             token_projection='linear', token_mlp='leff',
             depths=[1, 2, 8, 8, 2, 8, 8, 2, 1], modulator=True,
             dd_in=1, in_chans=1,
-            attention_mode='full'
+            attention_mode='ca'
         ).to(DEVICE)
     else:
         model = DenoisingModel(in_ch=1, out_ch=1, image_size=IMAGE_SIZE, use_substraction=False).to(DEVICE)
