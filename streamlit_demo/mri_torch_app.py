@@ -67,7 +67,7 @@ def window_denoise_inference(
         window_size: int = 256,
         batch_size: int = 32,
         crop_size: int = 16,
-        use_tta: bool = False,
+        use_tta: bool = True,
         device: str = 'cpu',
         progress_bar: callable = None) -> np.ndarray:
     """Window inference method
