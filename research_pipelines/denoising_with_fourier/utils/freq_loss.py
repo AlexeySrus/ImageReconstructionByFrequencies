@@ -1,3 +1,4 @@
+from typing import Callable
 import torch
 from torch import nn
 import numpy as np
@@ -69,7 +70,6 @@ class HightFrequencyFFTLoss(nn.Module):
         assert reduction in ['mean', 'sum'], 'Not supported reduction method: {}'.format(reduction)
         self.reduction = reduction
 
-        # hight_pass_kernel = 1.0 - generate_batt(shape, 500, 1).astype(np.float32)
         hight_pass_kernel = create_butterworth_high_pass_filter(shape[0], shape[1], 15, 2)[..., 0]
 
         hight_pass_kernel = torch.from_numpy(hight_pass_kernel).unsqueeze(0).unsqueeze(0)
@@ -79,12 +79,11 @@ class HightFrequencyFFTLoss(nn.Module):
         self.kernel = nn.Parameter(hight_pass_kernel, requires_grad=False)
         self.kernel_sum = nn.Parameter(hight_pass_kernel.sum((1, 2, 3)), requires_grad=False)
 
-    def calculate_err_with_mask(self, pred, truth):
-        err = pred - truth
-        err = torch.abs(err)
+    def calculate_err_with_mask(self, base_err: torch.Tensor, warp_func: Callable[[torch.Tensor], torch.Tensor]):
+        err = warp_func(base_err)
 
         err = (err * self.kernel).sum((1, 2, 3))
-        err = err / (self.kernel_sum + 1E-6)
+        err = err / (self.kernel_sum + 1e-6)
 
         return err
 
@@ -92,16 +91,42 @@ class HightFrequencyFFTLoss(nn.Module):
         z_pred = torch.fft.rfft2(x_pred, norm='forward')
         z_truth = torch.fft.rfft2(x_truth, norm='forward')
 
-        abs_err = self.calculate_err_with_mask(
-            torch.abs(z_pred),
-            torch.abs(z_truth)
-        )
-        phase_err = self.calculate_err_with_mask(
-            torch.angle(z_pred),
-            torch.angle(z_truth)
-        )
+        base_err = z_pred - z_truth
+
+        abs_err = self.calculate_err_with_mask(base_err, torch.abs)
+        phase_err = self.calculate_err_with_mask(base_err, lambda v: torch.abs(torch.angle(v)))
 
         err = abs_err / 2 + phase_err / 2
+
+        if self.reduction == 'mean':
+            err = err.mean()
+        else:
+            err = err.sum()
+
+        return err
+    
+
+class FrequencyRelationLoss(nn.Module):
+    def __init__(self, shape: tuple, reduction: str = 'mean'):
+        super().__init__()
+        assert reduction in ['mean', 'sum'], 'Not supported reduction method: {}'.format(reduction)
+        self.reduction = reduction
+
+        hight_pass_kernel = create_butterworth_high_pass_filter(shape[0], shape[1], 15, 2)[..., 0]
+
+        hight_pass_kernel = torch.from_numpy(hight_pass_kernel).unsqueeze(0).unsqueeze(0)
+        hight_pass_kernel = torch.fft.fftshift(hight_pass_kernel)
+        hight_pass_kernel = hight_pass_kernel[:, :, :, :shape[1] // 2 + 1]
+        
+        self.hp_kernel = nn.Parameter(hight_pass_kernel, requires_grad=False)
+
+    def forward(self, x_pred):
+        z_pred = torch.fft.rfft2(x_pred, norm='ortho')
+
+        h_x = torch.fft.irfft2(z_pred * self.hp_kernel, norm='ortho')
+
+        err = torch.log(torch.abs(h_x)).mean((1, 2, 3))
+        err = 1.0 - err
 
         if self.reduction == 'mean':
             err = err.mean()

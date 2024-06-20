@@ -267,7 +267,7 @@ class Uformer(nn.Module):
         y = self.output_proj(deconv3)
 
         if self.export:
-            return x + y if self.dd_in ==3 else y, sa_list
+            return x + y if self.dd_in ==3 else y
 
         with torch.no_grad():
             sa_list = [
