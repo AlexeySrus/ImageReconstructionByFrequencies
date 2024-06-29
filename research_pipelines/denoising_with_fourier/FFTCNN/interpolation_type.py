@@ -75,3 +75,24 @@ def get_up_function(mode: UpSampleMode, channels: int) -> torch.nn.Module:
         return lambda x: resize(x, scale_factors=2, clip=False, interpolation='lanczos5', antialiasing=False)
     else:
         raise RuntimeError('Unsupported mode: {}'.format(mode))
+    
+
+def interpolation_type_from_str(s: str) -> InterpolationMode:
+    if s == 'none':
+        return InterpolationMode.NONE
+    elif s == 'max2bilinear':
+        return InterpolationMode.MAXPOOL_BILINEAR
+    elif s == 'bilinear':
+        return InterpolationMode.BILINEAR
+    elif s == 'bicubic':
+        return InterpolationMode.BICUBIC
+    elif s == 'lanczos2':
+        return InterpolationMode.LANCZOS2
+    elif s == 'lanczos3':
+        return InterpolationMode.LANCZOS3
+    elif s == 'lanczos4':
+        return InterpolationMode.LANCZOS4
+    elif s == 'lanczos5':
+        return InterpolationMode.LANCZOS5
+    
+    raise RuntimeError('Unsupported interpolation type: \'{}\''.format(s))

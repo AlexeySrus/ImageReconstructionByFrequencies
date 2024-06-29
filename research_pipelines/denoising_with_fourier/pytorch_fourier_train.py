@@ -38,6 +38,7 @@ from utils.laplassian_loss import LapLoss
 from utils.tv_loss import CharbonnierLoss, TVLoss
 from utils.tensor_utils import MixUp_AUG, convert_tensor_to_rgb
 from utils.cas import contrast_adaptive_sharpening
+from FFTCNN.interpolation_type import InterpolationMode, interpolation_type_from_str
 
 
 class SSIMLoss(SSIM):
@@ -137,6 +138,7 @@ class CustomTrainingPipeline(object):
                  annottaion_str: str = '',
                  use_ycrcb: bool = False,
                  attention_mode: str = 'full',
+                 interpolation_mode: str = 'none',
                  grayscale: bool = False,
                  use_unetpp: bool = False,
                  use_uformer: bool = False,
@@ -168,6 +170,7 @@ class CustomTrainingPipeline(object):
             annottaion_str (str, optional): Annotation string of experiment. Defaults to ''.
             use_ycrcb (bool, optional): Use YCrCb color space. Defaults to False.
             attention_mode (str, optional): Attention mode. Defaults to 'full'.
+            interpolation_mode (str, optional): Interpolation mode. Defaults to 'none'.
             grayscale (bool, optional): Use 1-channel images in pipeline. Defaults to False.
             use_unetpp (bool, optional): Use U-Net++ architecture. Defaults to False.
             use_uformer (bool, optional): Use U-Former architecture. Defaults to False.
@@ -194,6 +197,7 @@ class CustomTrainingPipeline(object):
         self.use_unetpp = use_unetpp
 
         print('Attention mode: {}'.format(attention_mode))
+        print('Interpolation mode: {}'.format(interpolation_mode))
 
         self.image_shape = (image_size, image_size)
 
@@ -322,7 +326,8 @@ class CustomTrainingPipeline(object):
                 out_ch=ch_count,
                 image_size=image_size,
                 use_substraction=substracted_noise,
-                attention_mode=attention_mode
+                attention_mode=attention_mode,
+                interolation_mode=interpolation_type_from_str(interpolation_mode)
             )
 
         self.loss_weighter = ModelMultitask(losses_count=2)
@@ -731,6 +736,12 @@ def parse_args() -> Namespace:
         help='Attention mode from \'full\', \'ca\', \'sa\', \'cbam\', \'fca\', \'none\'.'
     )
     parser.add_argument(
+        '--interpolation_mode', type=str, required=False, default='none',
+        choices=['none', 'max2bilinear', 'bilinear', 'bicubic', 'lanczos2', 'lanczos3', 'lanczos4', 'lanczos5'],
+        help='Interpolation mode where \'none\' is classic maxpool-decomvolution scheme, '
+                '\'max2bilinear\' is maxpool-bilinear scheme and other is X-X downsample-upsample interpolations methods.'
+    )
+    parser.add_argument(
         '--use_unetplusplus', action='store_true',
         help='Use U-Net++ architecture.'
     )
@@ -824,6 +835,7 @@ if __name__ == '__main__':
         gradient_accumulation_steps=args.grad_accum_steps,
         use_ycrcb=args.use_ycrcb,
         attention_mode=args.attention_mode,
+        interpolation_mode=args.interpolation_mode,
         grayscale=args.use_grayscale,
         use_unetpp=args.use_unetplusplus,
         use_uformer=args.use_uformer,
