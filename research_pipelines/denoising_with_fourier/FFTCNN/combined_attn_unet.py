@@ -145,7 +145,6 @@ class FFTAttentionUNetModule(nn.Module):
     def __init__(self, in_ch: int, mid_ch: int, out_ch: int, image_size: int = 256, 
                  attention_mode: str = 'full', interolation_mode: InterpolationMode = InterpolationMode.MAXPOOL_BILINEAR):
         super().__init__()
-        print(interolation_mode)
         down_interpolation_mode = interolation_mode.value[0]
         up_interpolation_mode = interolation_mode.value[1]
 
@@ -209,7 +208,7 @@ class FFTAttentionUNetModule(nn.Module):
         decoded_f1 = torch.cat((hx, deep_f), dim=1)
         decoded_f1, _ = self.upsample_features_block1(decoded_f1)
 
-        return decoded_f1,  sa_f1 + sa_f2 + sa_f3 + sa_f4
+        return decoded_f1, sa_f1 + sa_f2 + sa_f3 + sa_f4
 
 
 class FFTAttentionUNet(nn.Module):
@@ -253,7 +252,19 @@ class FFTAttentionUNet(nn.Module):
             return self.denorm_input(hx + y), sa_list
         
         return self.denorm_input(y), sa_list
+    
+    def custom_forward(self, x: torch.Tensor) -> torch.Tensor:
+        hx = self.norm_input(x)
+        y, sa_list = self.unet(hx)
+        y = self.out_conv(y)
 
+        sa_list = [
+            nn.functional.interpolate(torch.abs(sa), (x.size(2), x.size(3)), mode='bilinear')
+            for sa in sa_list
+        ]
+
+        res = torch.concat(sa_list, dim=1)
+        return res
 
 
 if __name__ == '__main__':
