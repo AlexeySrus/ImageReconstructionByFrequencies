@@ -105,24 +105,6 @@ class FeaturesDownsample(nn.Module):
         y = self.pool(y)
         y, _ = self.features_out(y)
         return y, sa
-    
-
-class FeaturesConvTransposeUpsample(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int, window_size: int, image_size: int):
-        super().__init__()
-        self.up = torch.nn.ConvTranspose2d(in_ch, in_ch // 2, kernel_size=2, stride=2)
-        self.norm = nn.BatchNorm2d(in_ch // 2)
-        self.act = nn.LeakyReLU()
-        self.features = FeaturesProcessing(in_ch // 2, out_ch, window_size=window_size, image_size=image_size, use_attention=False)
-        self.features_with_attn = FeaturesProcessing(out_ch, out_ch, window_size=window_size, image_size=image_size, use_attention=True)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        y = self.up(x)
-        y = self.norm(y)
-        y = self.act(y)
-        y, _ = self.features(y)
-        y, sa = self.features_with_attn(y)
-        return y, sa
 
 
 class FeaturesUpsample(nn.Module):

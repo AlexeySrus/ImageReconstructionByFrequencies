@@ -21,6 +21,7 @@ import yaml
 from haar_pytorch import HaarForward, HaarInverse
 # from FDL_pytorch import FDL_loss
 from pytorch_optimizer import AdaSmooth
+from contextlib import nullcontext
 
 from dataloader import PairedDenoiseDataset, SyntheticNoiseDataset, SYNTH_CONFIG
 from callbacks import VisImage, VisAttentionMaps, VisPlot
@@ -406,8 +407,8 @@ class CustomTrainingPipeline(object):
         # self.images_criterion = FocalFrequencyLoss(patch_factor=16, loss_weight=10).to(self.device)
         # self.images_criterion = MIXLoss(data_range=1.0, channel=ch_count)
         self.val_criterion = self.images_criterion
-        # self.perceptual_loss = DISTS().to(self.device)
-        self.perceptual_loss = None
+        self.perceptual_loss = DISTS().to(self.device)
+        # self.perceptual_loss = None
         # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
         # self.final_hist_loss = None
         # self.adv_loss = Adversarial(image_size=self.image_shape[0], gan_type='GAN', spectral_norm=True, in_ch=ch_count).to(device)
@@ -419,7 +420,7 @@ class CustomTrainingPipeline(object):
         # )
         # self.edges_loss = LapLoss().to(device)
         # self.tv_loss = TVLoss(tv_loss_weight=0.5)
-        self.fdl_loss = FDL_loss(image_size=image_size).to(self.device)
+        # self.fdl_loss = FDL_loss(image_size=image_size).to(self.device)
 
         # self.ssim_loss = None
         self.accuracy_measure = TorchPSNR(data_range=1.0).to(device)
@@ -473,7 +474,7 @@ class CustomTrainingPipeline(object):
                 if epoch > 3 and np.random.randint(0, 101) > SYNTH_CONFIG['MIXUP']:
                     clear_image, noisy_image = self.mixup.aug(clear_image, noisy_image)
 
-                with torch.autocast(device_type=self.device, dtype=self.train_dtype, enabled=self.use_amp):
+                with torch.autocast(device_type=self.device, dtype=self.train_dtype, enabled=self.use_amp) if self.use_amp else nullcontext():
                     output = self.model(noisy_image)
 
                     pred_images = output[0]
@@ -482,7 +483,7 @@ class CustomTrainingPipeline(object):
                     # Pixel-wise loss compuited in 0..1 data range
                     loss = calculate_loss(pred_images, clear_image, self.images_criterion, self.use_unetpp)
 
-                    p_loss = float(0)
+                    p_loss = torch.tensor(float(0))
                     if self.perceptual_loss is not None:
                         # Perceptual loss calculated in RGB 0..1
                         p_loss = calculate_loss(
@@ -522,21 +523,22 @@ class CustomTrainingPipeline(object):
                     #     self.use_unetpp
                     # )
 
-                    p_loss = calculate_loss(
-                        pred_images,
-                        self._convert_to_rgb(clear_image),
-                        lambda x, y: self.fdl_loss(self._convert_to_rgb(x), y),
-                        self.use_unetpp
-                    )
+                    # p_loss = calculate_loss(
+                    #     pred_images,
+                    #     self._convert_to_rgb(clear_image),
+                    #     lambda x, y: self.fdl_loss(self._convert_to_rgb(x), y),
+                    #     self.use_unetpp
+                    # )
 
                     total_loss = self.loss_weighter([loss, p_loss])
                     # total_loss = loss
 
-                    if total_loss.isnan():
-                        continue
-
                     if self.gradient_accumulation_steps > 1:
                         total_loss = total_loss / self.gradient_accumulation_steps
+
+                if total_loss.isnan():
+                    print('Loss is NaN, skip')
+                    continue
 
                 if not self.use_amp:
                     total_loss.backward()
@@ -547,12 +549,12 @@ class CustomTrainingPipeline(object):
                         (idx + 1) % self.gradient_accumulation_steps == 0) or (
                         idx + 1 == batches_count):
                     if not self.use_amp:
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.1)
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
                         self.optimizer.step()
                         self.optimizer.zero_grad()
                     else:
                         self.scaler.unscale_(self.optimizer)
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.1)
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
                         self.scaler.step(self.optimizer)
                         self.scaler.update()
                         self.optimizer.zero_grad()

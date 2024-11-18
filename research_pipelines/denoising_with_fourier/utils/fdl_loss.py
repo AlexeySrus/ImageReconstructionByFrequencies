@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from FDL_pytorch.models import VGG, ResNet, Inception, EffNet
 
 from FFTCNN.attention import MatrixFFT
+from utils.dsqrt import diff_sqrt
 
 
 class MatrixFFT_FDL_loss(torch.nn.Module):
@@ -36,9 +37,10 @@ class MatrixFFT_FDL_loss(torch.nn.Module):
 
         self.mfs = torch.nn.ModuleList([MatrixFFT(image_size // 2 ** _i) for _i in range(5)])
             
-    def fft_func(self, x: torch.Tensor, mfs_idx: int) -> tuple:
+    def fft_func(self, x: torch.Tensor, mfs_idx: int) -> torch.Tensor:
         xr, xi = self.mfs[mfs_idx](x)
-        return xr, xi
+        # return xr, xi
+        return torch.complex(xr, xi)
 
     def forward_once(self, x, y, idx):
         rand= self.__getattr__('rand_{}'.format(idx))
@@ -62,13 +64,21 @@ class MatrixFFT_FDL_loss(torch.nn.Module):
         score = []
         for i in range(len(x)):
             # Transform to Fourier Space
-            fft_x_r, fft_x_i = self.fft_func(x[i], i)
-            fft_y_r, fft_y_i = self.fft_func(y[i], i)
-            
-            x_mag = torch.norm(torch.stack((fft_x_r, fft_x_i), dim=2), dim=2).clamp_min(1e-12)
-            x_phase = torch.atan(fft_x_i / (fft_x_r + 1e-8))
-            y_mag = torch.norm(torch.stack((fft_y_r, fft_y_i), dim=2), dim=2).clamp_min(1e-12)
-            y_phase =  torch.atan(fft_y_i / (fft_y_r + 1e-8))
+            fft_x = self.fft_func(x[i], i)
+            fft_y = self.fft_func(y[i], i)
+        
+            x_mag = torch.abs(fft_x)
+            x_phase = torch.angle(fft_x)
+            y_mag = torch.abs(fft_y)
+            y_phase = torch.angle(fft_y)
+
+            # fft_x_r, fft_x_i = self.fft_func(x[i], i)
+            # fft_y_r, fft_y_i = self.fft_func(y[i], i)
+
+            # x_mag = diff_sqrt(fft_x_r * fft_x_r + fft_x_i * fft_x_i)
+            # x_phase = torch.arctan(fft_x_i / (fft_x_r + 1e-8))
+            # y_mag = diff_sqrt(fft_y_r * fft_y_r + fft_y_i * fft_y_i)
+            # y_phase = torch.arctan(fft_y_i / (fft_y_r + 1e-8))
             
             s_energy = self.forward_once(x_mag, y_mag, i)
             s_phase = self.forward_once(x_phase, y_phase, i)
@@ -82,9 +92,9 @@ class MatrixFFT_FDL_loss(torch.nn.Module):
 
 if __name__ == '__main__':
     print("FDL_loss")
-    X = torch.randn((1, 3,128,128)).cuda()
-    Y = torch.randn((1, 3,128,128)).cuda() * 2
+    X = torch.randn((1, 3, 128, 128)).cuda()
+    Y = torch.randn((1, 3, 128, 128)).cuda() * 2
 
     loss = MatrixFFT_FDL_loss(128).cuda()
     c1 = loss(X, Y)
-    print('loss1:', c1)
+    print('loss1:', c1) 

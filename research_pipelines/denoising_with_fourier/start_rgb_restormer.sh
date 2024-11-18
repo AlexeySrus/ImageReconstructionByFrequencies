@@ -12,13 +12,13 @@ python3 pytorch_fourier_train.py \
     --substracted_noise \
     --attention_mode 'full' \
     --architecture 'unet' \
-    --interpolation 'max2bilinear' \
+    --interpolation 'lanczos4' \
     --image_size 256 \
-    --batch_size 1 \
-    --grad_accum_steps 8 \
+    --batch_size 16 \
+    --grad_accum_steps 4 \
     --visdom 9100 \
     --njobs 8 \
     --exp /media/alexey/SSDData/experiments/denoising/main_restormer_denoiser/ \
-    --preload_datasets \
+    # --preload_datasets \
     # --load "/media/alexey/SSDData/experiments/denoising/main_restormer_denoiser/checkpoints/last.trh" \
     # --no_load_optim

@@ -11,7 +11,7 @@ to the entire input feature map, and it allows the network to focus on the most 
 of the image based on their channel relationships.
 """
 
-from typing import Tuple, Union, List
+from typing import Tuple, Union, List, Optional
 
 import numpy as np
 import math
@@ -22,6 +22,12 @@ import scipy.linalg
 from utils.haar_utils import HaarForward, HaarInverse
 from FFTCNN.uformer_modules import LeWinTransformerBlock, \
     inv_transformer_transpose, forward_transformer_transpose
+from utils.dsqrt import diff_sqrt
+
+
+import os
+DEPRECATED_IMPLEMENTATION: Optional[str] = os.getenv("DEPRECATED_IMPLEMENTATION")
+
 
 
 def sim_attention(X: torch.Tensor, lamb: float) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -563,11 +569,21 @@ class RealFFTChannelAttentionV4(nn.Module):
                 for i in range(pooling_depth)
             ]
         )
-        self.fc = nn.Sequential(
-            nn.Linear(channel * fsize * fsize // 2 // 2, channel // reduction, bias=False),
-            nn.LeakyReLU(),
-            nn.Linear(channel // reduction, channel, bias=False)
-        )
+        if DEPRECATED_IMPLEMENTATION is not None:
+            print('Warning! Use DEPRECATED_IMPLEMENTATION')
+            self.fc = nn.Sequential(
+                nn.Linear(channel * fsize * fsize // 2 // 2, channel // reduction, bias=False),
+                nn.LeakyReLU(),
+                nn.Linear(channel // reduction, channel, bias=False)
+            )
+        else:
+             self.fc = nn.Sequential(
+                nn.LayerNorm(channel * fsize * fsize // 2 // 2),
+                nn.Linear(channel * fsize * fsize // 2 // 2, channel // reduction, bias=False),
+                nn.LeakyReLU(),
+                nn.Linear(channel // reduction, channel, bias=False)
+            )
+
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
@@ -576,8 +592,7 @@ class RealFFTChannelAttentionV4(nn.Module):
         z_deep_feats = self.pool_fft_features(z)
         z_deep_feats = (z_deep_feats[0].view(x.size(0), -1), z_deep_feats[1].view(x.size(0), -1))
 
-        # z_abs_feats = z_deep_feats[0] * z_deep_feats[0] + z_deep_feats[1] * z_deep_feats[1]
-        z_abs_feats = torch.norm(torch.stack(z_deep_feats, dim=2), dim=2).clamp_min(1e-12)
+        z_abs_feats = z_deep_feats[0] * z_deep_feats[0] + z_deep_feats[1] * z_deep_feats[1]
 
         channel_attn = self.fc(z_abs_feats)
         channel_attn = self.sigmoid(channel_attn)
@@ -615,8 +630,8 @@ class FCABlock(nn.Module):
         init_hf_feats = self.in_feats(x)
 
         complex_complex_hf_feats = self.real_fft(init_hf_feats)
-        # hf_spectrums = complex_complex_hf_feats[0] * complex_complex_hf_feats[0]+ complex_complex_hf_feats[1] * complex_complex_hf_feats[1]
-        hf_spectrums = torch.norm(torch.stack(complex_complex_hf_feats, dim=2), dim=2).clamp_min(1e-12)
+
+        hf_spectrums = complex_complex_hf_feats[0] * complex_complex_hf_feats[0]+ complex_complex_hf_feats[1] * complex_complex_hf_feats[1]
         hf_spectrums = nn.functional.relu(self.conv(hf_spectrums))
         hf_feats = self.pool(hf_spectrums).view(x.size(0), x.size(1))
         channels_probs = nn.functional.sigmoid(self.fc(hf_feats)).unsqueeze(2).unsqueeze(3)
