@@ -349,7 +349,9 @@ class CustomTrainingPipeline(object):
                 image_size=image_size,
                 inp_channels=ch_count,
                 out_channels=ch_count,
-                attention_mode=attention_mode
+                attention_mode=attention_mode,
+                dim=32,
+                LayerNorm_type='BiasFree'
             )
         else:
             raise RuntimeError('Unsupported model architecture: {}'.format(model_architecture))
@@ -560,7 +562,7 @@ class CustomTrainingPipeline(object):
                         self.optimizer.zero_grad()
 
                 pbar.postfix = \
-                    'Epoch: {}/{}, loss: {:.7f}, p_loss: {:.2f}, w: [{:.2f}, {:.2f}], lr: {:.7f}'.format(
+                    'Epoch: {}/{}, loss: {:.5f}, p_loss: {:.4f}, w: [{:.2f}, {:.2f}], lr: {:.7f}'.format(
                         epoch,
                         self.epochs,
                         loss.item(),

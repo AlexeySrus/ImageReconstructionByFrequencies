@@ -9,6 +9,8 @@ from FFTCNN.attention import FFTCAFSModule, SpatialAttention, ChannelAttention
 from FFTCNN.interpolation_type import DownSampleMode, UpSampleMode, InterpolationMode, \
         get_down_function, get_up_function
 
+import os
+DEPRECATED_IMPLEMENTATION: Optional[str] = os.getenv("DEPRECATED_IMPLEMENTATION")
 
 padding_mode: str = 'reflect'
 
@@ -111,7 +113,11 @@ class FeaturesUpsample(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, window_size: int, image_size: int, use_attention: bool = True, interpolation_mode: UpSampleMode = UpSampleMode.BILINEAR):
         super().__init__()
         self.in_features = FeaturesProcessing(in_ch, in_ch, window_size=window_size, image_size=image_size, use_attention=use_attention)
-        self.up = get_up_function(interpolation_mode, in_ch)
+        if DEPRECATED_IMPLEMENTATION is None:
+            self.up = get_up_function(interpolation_mode, in_ch)
+        else:
+            print('Warning: Use deprecated UP method in FeaturesUpsample')
+            self.up = lambda x: torch.nn.functional.interpolate(x, scale_factor=2, align_corners=True, mode='bilinear')
         self.features = FeaturesProcessing(in_ch, out_ch, window_size=window_size, image_size=image_size, use_attention=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
