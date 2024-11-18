@@ -7,18 +7,18 @@ python3 pytorch_fourier_train.py \
     --validation_data_folder /media/alexey/SSDData/datasets/denoising_dataset/val/ \
     --synthetic_data_paths /media/alexey/SSDData/datasets/denoising_dataset/base_clear_images/ \
     --epochs 50 \
-    --lr 0.0001 \
-    --lr_milestones -1 \
+    --lr 0.01 \
+    --lr_milestones 0 \
     --substracted_noise \
-    --architecture 'unet' \
     --attention_mode 'full' \
-    --interpolation_mode 'lanczos4' \
+    --architecture 'unet' \
+    --interpolation 'max2bilinear' \
     --image_size 256 \
-    --batch_size 16 \
-    --grad_accum_steps 4 \
-    --visdom 9001 \
+    --batch_size 1 \
+    --grad_accum_steps 8 \
+    --visdom 9100 \
     --njobs 8 \
-    --exp /media/alexey/SSDData/experiments/denoising/dissertation/all_data/lanczos4/unet_full/ \
+    --exp /media/alexey/SSDData/experiments/denoising/main_restormer_denoiser/ \
     --preload_datasets \
-    --load "/media/alexey/SSDData/experiments/denoising/dissertation/all_data/lanczos4/unet_full/checkpoints/last.trh" \
+    # --load "/media/alexey/SSDData/experiments/denoising/main_restormer_denoiser/checkpoints/last.trh" \
     # --no_load_optim

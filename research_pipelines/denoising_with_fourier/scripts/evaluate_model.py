@@ -11,6 +11,7 @@ import os
 CURRENT_PATH = os.path.dirname(__file__)
 
 from FFTCNN.combined_attn_unet import FFTAttentionUNet as FFTCNN
+from FFTCNN.interpolation_type import interpolation_type_from_str
 from utils.window_inference import eval_denoise_inference
 
 
@@ -41,6 +42,12 @@ def parse_args() -> Namespace:
         help='Use test time augmentations until inference'
     )
     parser.add_argument(
+        '--interpolation_mode', type=str, required=False, default='none',
+        choices=['none', 'max2bilinear', 'bilinear', 'bicubic', 'lanczos2', 'lanczos3', 'lanczos4', 'lanczos5'],
+        help='Interpolation mode where \'none\' is classic maxpool-decomvolution scheme, '
+                '\'max2bilinear\' is maxpool-bilinear scheme and other is X-X downsample-upsample interpolations methods.'
+    )
+    parser.add_argument(
         '--attention_mode', type=str, required=False, default='full',
         choices=['full', 'ca', 'sa', 'fca', 'cbam', 'none'],
         help='Attention mode from \'full\', \'ca\', \'sa\', \'fca\', \'cbam\', \'none\'.'
@@ -61,7 +68,14 @@ if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     y_only = args.y_channel_only
 
-    model = FFTCNN(use_substraction=True, attention_mode=args.attention_mode).to(device)
+    print('Attention mode: {}'.format(args.attention_mode))
+    print('Interpolation mode: {}'.format(args.interpolation_mode))
+
+    model = FFTCNN(
+        use_substraction=True, 
+        attention_mode=args.attention_mode,
+        interolation_mode=interpolation_type_from_str(args.interpolation_mode)
+    ).to(device)
 
     load_path = args.model
     load_data = torch.load(load_path, map_location=device)

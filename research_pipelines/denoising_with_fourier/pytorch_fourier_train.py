@@ -19,7 +19,7 @@ from pytorch_msssim import SSIM, MS_SSIM
 from piq import DISTS
 import yaml
 from haar_pytorch import HaarForward, HaarInverse
-from FDL_pytorch import FDL_loss
+# from FDL_pytorch import FDL_loss
 from pytorch_optimizer import AdaSmooth
 
 from dataloader import PairedDenoiseDataset, SyntheticNoiseDataset, SYNTH_CONFIG
@@ -28,6 +28,7 @@ from FFTCNN.combined_attn_unet import init_weights
 from FFTCNN.combined_attn_unet import FFTAttentionUNet
 from FFTCNN.combined_attn_unet_plusplus import FFTAttentionUNetPlusPlus
 from FFTCNN.uformer import Uformer
+from FFTCNN.restormer import Restormer
 from utils.window_inference import denoise_inference
 from utils.hist_loss import HistLoss
 from utils.adversarial_loss import Adversarial
@@ -39,6 +40,7 @@ from utils.tv_loss import CharbonnierLoss, TVLoss
 from utils.tensor_utils import MixUp_AUG, convert_tensor_to_rgb
 from utils.cas import contrast_adaptive_sharpening
 from FFTCNN.interpolation_type import InterpolationMode, interpolation_type_from_str
+from utils.fdl_loss import MatrixFFT_FDL_loss as FDL_loss
 
 
 class SSIMLoss(SSIM):
@@ -126,22 +128,22 @@ class CustomTrainingPipeline(object):
                  batch_size: int = 32,
                  epochs: int = 200,
                  resume_epoch: int = 1,
-                 stop_criteria: float = 1E-7,
+                 stop_criteria: float = 1E-9,
                  device: str = 'cuda',
                  image_size: int = 512,
                  train_workers: int = 0,
                  preload_data: bool = False,
+                 use_fp16: bool = False,
                  init_lr: float = 0.001,
                  lr_steps: int = 4,
                  no_load_optim: bool = False,
                  gradient_accumulation_steps: int = 1,
                  annottaion_str: str = '',
                  use_ycrcb: bool = False,
+                 model_architecture: str = 'unet',
                  attention_mode: str = 'full',
                  interpolation_mode: str = 'none',
                  grayscale: bool = False,
-                 use_unetpp: bool = False,
-                 use_uformer: bool = False,
                  substracted_noise: bool = False,
                  compile_model: bool = False,
                  full_args: Optional[Namespace] = None):
@@ -163,17 +165,17 @@ class CustomTrainingPipeline(object):
             image_size (int, optional): Input image size. Defaults to 512.
             train_workers (int, optional): Count of parallel dataloaders. Defaults to 0.
             preload_data (bool, optional): Load training and validation data to RAM. Defaults to False.
+            use_fp16 (bool, optional): Use FP16 autocast for model training. Defaults to False.
             init_lr (float, optional): Start learning rate. Defaults to 0.001.
             lr_steps (int, optional): Count of uniformed LR steps. Defaults to 4.
             no_load_optim (bool, optional): Disable load optimizer from checkpoint. Defaults to False.
             gradient_accumulation_steps (bool, optional): Count of accumulated gradients per train batches.
             annottaion_str (str, optional): Annotation string of experiment. Defaults to ''.
             use_ycrcb (bool, optional): Use YCrCb color space. Defaults to False.
+            model_architecture (str, optional): Denoising model architecture. Defaults to 'unet'.
             attention_mode (str, optional): Attention mode. Defaults to 'full'.
             interpolation_mode (str, optional): Interpolation mode. Defaults to 'none'.
             grayscale (bool, optional): Use 1-channel images in pipeline. Defaults to False.
-            use_unetpp (bool, optional): Use U-Net++ architecture. Defaults to False.
-            use_uformer (bool, optional): Use U-Former architecture. Defaults to False.
             substracted_noise (bool, optinal): Use netwotk prediction as Y = X + F(X). Defaults to False.
             compile_model (bool, optinal): Use torc.compile to accelerate model training. Defaults to False.
             full_args (Namespace, optional): All command-line arguments. Defaules to None.
@@ -194,10 +196,14 @@ class CustomTrainingPipeline(object):
         self.gradient_accumulation_steps = gradient_accumulation_steps
         self.use_ycrcb = use_ycrcb
         self.grayscale = grayscale
-        self.use_unetpp = use_unetpp
+        self.use_unetpp = model_architecture == 'unetplusplus'
+        self.train_dtype = torch.float16 if use_fp16 else torch.float32
+        self.use_amp = use_fp16
 
+        print('Denoising model architecture: {}'.format(model_architecture))
         print('Attention mode: {}'.format(attention_mode))
         print('Interpolation mode: {}'.format(interpolation_mode))
+        print('AMP with FP16 is {}'.format('ENABLE' if self.use_amp else 'DISABLE'))
 
         self.image_shape = (image_size, image_size)
 
@@ -311,17 +317,8 @@ class CustomTrainingPipeline(object):
 
         ch_count = 1 if grayscale else 3
 
-        if use_uformer:
-            self.model = Uformer(
-                img_size=image_size, embed_dim=32, win_size=8, 
-                token_projection='linear', token_mlp='leff',
-                depths=[1, 2, 8, 8, 2, 8, 8, 2, 1], modulator=True,
-                dd_in=ch_count, in_chans=ch_count,
-                attention_mode=attention_mode
-            )
-        else:
-            used_architecture = FFTAttentionUNetPlusPlus if use_unetpp else FFTAttentionUNet
-            self.model = used_architecture(
+        if model_architecture == 'unet':
+            self.model = FFTAttentionUNet(
                 in_ch=ch_count,
                 out_ch=ch_count,
                 image_size=image_size,
@@ -329,6 +326,32 @@ class CustomTrainingPipeline(object):
                 attention_mode=attention_mode,
                 interolation_mode=interpolation_type_from_str(interpolation_mode)
             )
+        elif model_architecture == 'unetplusplus':
+            self.model = FFTAttentionUNetPlusPlus(
+                in_ch=ch_count,
+                out_ch=ch_count,
+                image_size=image_size,
+                use_substraction=substracted_noise,
+                attention_mode=attention_mode,
+                interolation_mode=interpolation_type_from_str(interpolation_mode)
+            )
+        elif model_architecture == 'uformer':
+            self.model = Uformer(
+                img_size=image_size, embed_dim=32, win_size=8, 
+                token_projection='linear', token_mlp='leff',
+                depths=[1, 2, 8, 8, 2, 8, 8, 2, 1], modulator=True,
+                dd_in=ch_count, in_chans=ch_count,
+                attention_mode=attention_mode
+            )
+        elif model_architecture == 'restormer':
+            self.model = Restormer(
+                image_size=image_size,
+                inp_channels=ch_count,
+                out_channels=ch_count,
+                attention_mode=attention_mode
+            )
+        else:
+            raise RuntimeError('Unsupported model architecture: {}'.format(model_architecture))
 
         self.loss_weighter = ModelMultitask(losses_count=2)
         self.loss_weighter = self.loss_weighter.to(self.device)
@@ -353,6 +376,7 @@ class CustomTrainingPipeline(object):
         #     params=[{'params': self.model.parameters()}, {'params': self.loss_weighter.parameters(), 'weight_decay': 0}], 
         #     lr=init_lr, weight_decay=1e-2, weight_decouple=True
         # )
+        self.scaler = torch.amp.GradScaler(enabled=self.use_amp)
 
         if load_path is not None:
             load_data = torch.load(load_path, map_location=self.device)
@@ -395,13 +419,15 @@ class CustomTrainingPipeline(object):
         # )
         # self.edges_loss = LapLoss().to(device)
         # self.tv_loss = TVLoss(tv_loss_weight=0.5)
-        # self.fdl_loss = FDL_loss().to(self.device)
+        self.fdl_loss = FDL_loss(image_size=image_size).to(self.device)
 
         # self.ssim_loss = None
         self.accuracy_measure = TorchPSNR(data_range=1.0).to(device)
         self.ssim_measure = SSIM(data_range=1.0, channel=ch_count)
 
         self.mixup = MixUp_AUG()
+
+        self.is_epoch_scheduler = True
 
         if lr_steps > 0:
             _lr_steps = lr_steps + 1
@@ -416,6 +442,10 @@ class CustomTrainingPipeline(object):
                 gamma=0.1,
                 verbose=True
             )
+        elif lr_steps < 0:
+            print('Use CosineAnnealingWarmRestarts with T_0 = {}'.format(abs(lr_steps)))
+            self.scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(self.optimizer, T_0=abs(lr_steps))
+            self.is_epoch_scheduler = False
         else:
             self.scheduler = None
 
@@ -443,88 +473,104 @@ class CustomTrainingPipeline(object):
                 if epoch > 3 and np.random.randint(0, 101) > SYNTH_CONFIG['MIXUP']:
                     clear_image, noisy_image = self.mixup.aug(clear_image, noisy_image)
 
-                output = self.model(noisy_image)
+                with torch.autocast(device_type=self.device, dtype=self.train_dtype, enabled=self.use_amp):
+                    output = self.model(noisy_image)
 
-                pred_images = output[0]
-                spatial_attention_maps = output[1]
+                    pred_images = output[0]
+                    spatial_attention_maps = output[1]
 
-                # Pixel-wise loss compuited in 0..1 data range
-                loss = calculate_loss(pred_images, clear_image, self.images_criterion, self.use_unetpp)
+                    # Pixel-wise loss compuited in 0..1 data range
+                    loss = calculate_loss(pred_images, clear_image, self.images_criterion, self.use_unetpp)
 
-                p_loss = float(0)
-                if self.perceptual_loss is not None:
-                    # Perceptual loss calculated in RGB 0..1
+                    p_loss = float(0)
+                    if self.perceptual_loss is not None:
+                        # Perceptual loss calculated in RGB 0..1
+                        p_loss = calculate_loss(
+                            pred_images,
+                            self._convert_to_rgb(clear_image),
+                            lambda x, y: self.perceptual_loss(self._convert_to_rgb(x), y),
+                            self.use_unetpp
+                        )
+
+                    # f_loss = calculate_loss(
+                    #     pred_images,
+                    #     clear_image[:, :1] if self.use_ycrcb or self.grayscale else kornia.color.rgb_to_y(clear_image),
+                    #     lambda x, y: self.hf_loss(
+                    #         x[:, :1] if self.use_ycrcb or self.grayscale else kornia.color.rgb_to_y(x),
+                    #         y
+                    #     ),
+                    #     self.use_unetpp
+                    # )
+
+                    # tv_loss_value = self.tv_loss(pred_images)
+
+                    # a_loss = calculate_loss(pred_images, clear_image, self.adv_loss, self.use_unetpp)
+
+                    # e_loss = calculate_loss(pred_images, clear_image, self.edges_loss, self.use_unetpp)
+
+                    # f_loss = calculate_loss(
+                    #     pred_images,
+                    #     self._convert_to_rgb(clear_image),
+                    #     lambda x, y: self.hf_loss(self._convert_to_rgb(x), y),
+                    #     self.use_unetpp
+                    # )
+
+                    # h_loss = calculate_loss(
+                    #     pred_images,
+                    #     self._convert_to_rgb(clear_image),
+                    #     lambda x, y: self.final_hist_loss(self._convert_to_rgb(x), y),
+                    #     self.use_unetpp
+                    # )
+
                     p_loss = calculate_loss(
                         pred_images,
                         self._convert_to_rgb(clear_image),
-                        lambda x, y: self.perceptual_loss(self._convert_to_rgb(x), y),
+                        lambda x, y: self.fdl_loss(self._convert_to_rgb(x), y),
                         self.use_unetpp
                     )
 
-                # f_loss = calculate_loss(
-                #     pred_images,
-                #     clear_image[:, :1] if self.use_ycrcb or self.grayscale else kornia.color.rgb_to_y(clear_image),
-                #     lambda x, y: self.hf_loss(
-                #         x[:, :1] if self.use_ycrcb or self.grayscale else kornia.color.rgb_to_y(x),
-                #         y
-                #     ),
-                #     self.use_unetpp
-                # )
+                    total_loss = self.loss_weighter([loss, p_loss])
+                    # total_loss = loss
 
-                # tv_loss_value = self.tv_loss(pred_images)
+                    if total_loss.isnan():
+                        continue
 
-                # a_loss = calculate_loss(pred_images, clear_image, self.adv_loss, self.use_unetpp)
+                    if self.gradient_accumulation_steps > 1:
+                        total_loss = total_loss / self.gradient_accumulation_steps
 
-                # e_loss = calculate_loss(pred_images, clear_image, self.edges_loss, self.use_unetpp)
-
-                # f_loss = calculate_loss(
-                #     pred_images,
-                #     self._convert_to_rgb(clear_image),
-                #     lambda x, y: self.hf_loss(self._convert_to_rgb(x), y),
-                #     self.use_unetpp
-                # )
-
-                # h_loss = calculate_loss(
-                #     pred_images,
-                #     self._convert_to_rgb(clear_image),
-                #     lambda x, y: self.final_hist_loss(self._convert_to_rgb(x), y),
-                #     self.use_unetpp
-                # )
-
-                # p_loss = calculate_loss(
-                #     pred_images,
-                #     self._convert_to_rgb(clear_image),
-                #     lambda x, y: self.fdl_loss(self._convert_to_rgb(x), y),
-                #     self.use_unetpp
-                # )
-
-                # total_loss = self.loss_weighter([loss, p_loss])
-                total_loss = loss
-
-
-                if self.gradient_accumulation_steps > 1:
-                    total_loss = total_loss / self.gradient_accumulation_steps
-
-                total_loss.backward()
+                if not self.use_amp:
+                    total_loss.backward()
+                else:
+                    self.scaler.scale(total_loss).backward()
 
                 if (self.gradient_accumulation_steps <= 1) or (
                         (idx + 1) % self.gradient_accumulation_steps == 0) or (
                         idx + 1 == batches_count):
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-                    self.optimizer.step()
-
-                    self.optimizer.zero_grad()
+                    if not self.use_amp:
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.1)
+                        self.optimizer.step()
+                        self.optimizer.zero_grad()
+                    else:
+                        self.scaler.unscale_(self.optimizer)
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.1)
+                        self.scaler.step(self.optimizer)
+                        self.scaler.update()
+                        self.optimizer.zero_grad()
 
                 pbar.postfix = \
-                    'Epoch: {}/{}, loss: {:.7f}, w: [{:.2f}, {:.2f}]'.format(
+                    'Epoch: {}/{}, loss: {:.7f}, p_loss: {:.2f}, w: [{:.2f}, {:.2f}], lr: {:.7f}'.format(
                         epoch,
                         self.epochs,
                         loss.item(),
-                        # p_loss.item(),
+                        p_loss.item(),
                         self.loss_weighter.sigma[0].item(),
-                        self.loss_weighter.sigma[1].item()
+                        self.loss_weighter.sigma[1].item(),
+                        self.get_lr()
                     )
                 avg_epoch_loss += loss.item() / len(self.train_dataloader)
+
+                if self.scheduler is not None and not self.is_epoch_scheduler:
+                    self.scheduler.step()
 
                 if self.images_visualizer is not None:
                     with torch.no_grad():
@@ -607,7 +653,7 @@ class CustomTrainingPipeline(object):
             avg_loss_rate /= test_len
             avg_ssim_rate /= test_len
 
-        if self.scheduler is not None:
+        if self.scheduler is not None and self.is_epoch_scheduler:
             old_lr = self.get_lr()
             self.scheduler.step()
             new_lr = self.get_lr()
@@ -653,6 +699,7 @@ class CustomTrainingPipeline(object):
                         if hasattr(self.model, '_orig_mod') else 
                             self.model.state_dict(),
             'optimizer': self.optimizer.state_dict(),
+            'scaler': self.scaler.state_dict(),
             'acc': avg_acc_rate,
             'epoch': epoch
         }
@@ -730,6 +777,11 @@ def parse_args() -> Namespace:
         help='Count of batches to accumulate gradiets.'
     )
     parser.add_argument(
+        '--architecture', type=str, required=False, default='unet',
+        choices=['unet', 'unetplusplus', 'uformer', 'restormer'],
+        help='Denoising model architecture from \'unet\', \'unetpp\', \'uformer\', \'restormer\'.'
+    )
+    parser.add_argument(
         '--attention_mode', type=str, required=False, default='full',
         choices=['full', 'ca', 'sa', 'cbam', 'fca', 'none'],
         help='Attention mode from \'full\', \'ca\', \'sa\', \'cbam\', \'fca\', \'none\'.'
@@ -739,14 +791,6 @@ def parse_args() -> Namespace:
         choices=['none', 'max2bilinear', 'bilinear', 'bicubic', 'lanczos2', 'lanczos3', 'lanczos4', 'lanczos5'],
         help='Interpolation mode where \'none\' is classic maxpool-decomvolution scheme, '
                 '\'max2bilinear\' is maxpool-bilinear scheme and other is X-X downsample-upsample interpolations methods.'
-    )
-    parser.add_argument(
-        '--use_unetplusplus', action='store_true',
-        help='Use U-Net++ architecture.'
-    )
-    parser.add_argument(
-        '--use_uformer', action='store_true',
-        help='Use U-Former architecture.'
     )
     parser.add_argument(
         '--use_ycrcb', action='store_true',
@@ -769,12 +813,16 @@ def parse_args() -> Namespace:
         help='Training batch size.'
     )
     parser.add_argument(
+        '--use_fp16', action='store_true',
+        help='Use FP16 mixed precision for model training.'
+    )
+    parser.add_argument(
         '--lr', type=float, required=False, default=0.001,
         help='Start value of learning rate.'
     )
     parser.add_argument(
         '--lr_milestones', type=int, required=False, default=3,
-        help='Count or learning rate scheduler milestones.'
+        help='Count or learning rate scheduler milestones. Set 0 to disable or set negative int to use Cosine LR with T_0 as abs(lr_milestones)'
     )
     parser.add_argument(
         '--preload_datasets', action='store_true',
@@ -827,17 +875,17 @@ if __name__ == '__main__':
         image_size=args.image_size,
         train_workers=args.njobs,
         preload_data=args.preload_datasets,
+        use_fp16=args.use_fp16,
         init_lr=args.lr,
         annottaion_str=args.annotation,
         lr_steps=args.lr_milestones,
         no_load_optim=args.no_load_optim,
         gradient_accumulation_steps=args.grad_accum_steps,
         use_ycrcb=args.use_ycrcb,
+        model_architecture=args.architecture,
         attention_mode=args.attention_mode,
         interpolation_mode=args.interpolation_mode,
         grayscale=args.use_grayscale,
-        use_unetpp=args.use_unetplusplus,
-        use_uformer=args.use_uformer,
         substracted_noise=args.substracted_noise,
         compile_model=args.compile_model,
         full_args=args

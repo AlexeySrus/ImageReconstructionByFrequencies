@@ -11,11 +11,11 @@ python3 pytorch_fourier_train.py \
     --image_size 256 \
     --batch_size 4 \
     --grad_accum_steps 8 \
+    --architecture 'uformer' \
     --visdom 9001 \
     --njobs 8 \
     --exp /media/alexey/SSDData/experiments/denoising/fft_attention_paper/mri_uformer_with_fswaunet/ \
     --preload_datasets \
     --use_grayscale \
-    --use_uformer \
     --load "/media/alexey/SSDData/experiments/denoising/fft_attention_paper/mri_uformer_with_fswaunet/checkpoints/last.trh" \
     # --no_load_optim

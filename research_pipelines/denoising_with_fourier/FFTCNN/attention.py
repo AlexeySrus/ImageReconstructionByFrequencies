@@ -24,7 +24,7 @@ from FFTCNN.uformer_modules import LeWinTransformerBlock, \
     inv_transformer_transpose, forward_transformer_transpose
 
 
-def sim_attention (X: torch.Tensor, lamb: float) -> Tuple[torch.Tensor, torch.Tensor]:
+def sim_attention(X: torch.Tensor, lamb: float) -> Tuple[torch.Tensor, torch.Tensor]:
     n = X.shape[2] * X.shape[3] - 1
     d = (X - X.mean(dim=[2,3]).unsqueeze(2).unsqueeze(3)).pow(2)
     v = d.sum(dim=[2,3]).unsqueeze(2).unsqueeze(3) / n
@@ -83,25 +83,53 @@ class MatrixRFFT(nn.Module):
         super().__init__()
         assert N > 0, 'Size of signal must be not 0'
 
-        W = torch.from_numpy(scipy.linalg.dft(N)).to(torch.cfloat)
+        # W = torch.from_numpy(scipy.linalg.dft(N, scale='n')).to(torch.cfloat)
+        W = torch.fft.fft(torch.eye(N), norm='forward')
         Wr, Wi = W.real.unsqueeze(0), W.imag.unsqueeze(0)
 
-        self.real_w = torch.nn.Parameter(Wr, requires_grad=False)
-        self.imag_w = torch.nn.Parameter(Wi, requires_grad=False)
+        # self.real_w = torch.nn.Parameter(Wr, requires_grad=False)
+        # self.imag_w = torch.nn.Parameter(Wi, requires_grad=False)
+
+        self.register_buffer('real_w', Wr)
+        self.register_buffer('imag_w', Wi)
     
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         fft_size = get_even_index(x.size(3))
-        # fft_size = x.size(3) // 2 + 1
 
         z_real = (
             (self.real_w @ x) @ self.real_w.transpose(1, 2)[:, :, :fft_size] - 
             (self.imag_w @ x) @ self.imag_w.transpose(1, 2)[:, :, :fft_size]
-        ) / x.size(2) / x.size(3)
+        )
 
         z_imag = (
             (self.imag_w @ x) @ self.real_w.transpose(1, 2)[:, :, :fft_size] + 
             (self.real_w @ x) @ self.imag_w.transpose(1, 2)[:, :, :fft_size]
-        ) / x.size(2) / x.size(3)
+        )
+
+        return z_real, z_imag
+    
+
+class MatrixFFT(nn.Module):
+    def __init__(self, N: int):
+        super().__init__()
+        assert N > 0, 'Size of signal must be not 0'
+
+        W = torch.fft.fft(torch.eye(N), norm='forward')
+        Wr, Wi = W.real.unsqueeze(0), W.imag.unsqueeze(0)
+
+        self.register_buffer('real_w', Wr)
+        self.register_buffer('imag_w', Wi)
+    
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        z_real = (
+            (self.real_w @ x) @ self.real_w.transpose(1, 2) - 
+            (self.imag_w @ x) @ self.imag_w.transpose(1, 2)
+        )
+
+        z_imag = (
+            (self.imag_w @ x) @ self.real_w.transpose(1, 2) + 
+            (self.real_w @ x) @ self.imag_w.transpose(1, 2)
+        )
 
         return z_real, z_imag
 
@@ -548,7 +576,8 @@ class RealFFTChannelAttentionV4(nn.Module):
         z_deep_feats = self.pool_fft_features(z)
         z_deep_feats = (z_deep_feats[0].view(x.size(0), -1), z_deep_feats[1].view(x.size(0), -1))
 
-        z_abs_feats = z_deep_feats[0] * z_deep_feats[0] + z_deep_feats[1] * z_deep_feats[1]
+        # z_abs_feats = z_deep_feats[0] * z_deep_feats[0] + z_deep_feats[1] * z_deep_feats[1]
+        z_abs_feats = torch.norm(torch.stack(z_deep_feats, dim=2), dim=2).clamp_min(1e-12)
 
         channel_attn = self.fc(z_abs_feats)
         channel_attn = self.sigmoid(channel_attn)
@@ -586,7 +615,8 @@ class FCABlock(nn.Module):
         init_hf_feats = self.in_feats(x)
 
         complex_complex_hf_feats = self.real_fft(init_hf_feats)
-        hf_spectrums = complex_complex_hf_feats[0] * complex_complex_hf_feats[0]+ complex_complex_hf_feats[1] * complex_complex_hf_feats[1]
+        # hf_spectrums = complex_complex_hf_feats[0] * complex_complex_hf_feats[0]+ complex_complex_hf_feats[1] * complex_complex_hf_feats[1]
+        hf_spectrums = torch.norm(torch.stack(complex_complex_hf_feats, dim=2), dim=2).clamp_min(1e-12)
         hf_spectrums = nn.functional.relu(self.conv(hf_spectrums))
         hf_feats = self.pool(hf_spectrums).view(x.size(0), x.size(1))
         channels_probs = nn.functional.sigmoid(self.fc(hf_feats)).unsqueeze(2).unsqueeze(3)
@@ -685,9 +715,11 @@ if __name__ == '__main__':
     import cv2
     from timeit import default_timer as time
     import scipy.linalg
+    from torch_frft.frft_module import frft
+    from torch_frft.dfrft_module import dfrft, dfrftmtx
 
-    layer = FFTCAFSModule(256, 32, mode='full')
-    out, attn = layer(torch.rand(1, 32, 256, 256))
+    # layer = FFTCAFSModule(256, 32, mode='full')
+    # out, attn = layer(torch.rand(1, 32, 256, 256))
 
     # torch.set_printoptions(precision=4, sci_mode=False)
 
@@ -706,9 +738,14 @@ if __name__ == '__main__':
     x = rgb[:, :, :N, :N]
     W = torch.from_numpy(scipy.linalg.dft(N)).to(torch.cfloat)
     # Wr, Wi = DFT_matrices(N)
+    # W = dfrftmtx(N, 1.0)
     Wr = W.real.unsqueeze(0)
     Wi = W.imag.unsqueeze(0)
 
+    # Wx = W.dot(x).dot(W)
+
+    a0, a1 = 1, 1
+    Wx = frft(frft(x, a0, dim=2) / N, a1, dim=3)[..., N//2-1:] / N
 
     # r = torch.stack(
     #     [
@@ -718,20 +755,24 @@ if __name__ == '__main__':
     #     ],
     #     dim=1
     # )
-    r = ((Wr @ x) @ Wr.transpose(1, 2)[:, :, :get_even_index(N)] - (Wi @ x) @ Wi.transpose(1, 2)[:, :, :get_even_index(N)]) / N / N
-    i = ((Wi @ x) @ Wr.transpose(1, 2)[:, :, :get_even_index(N)] + (Wr @ x) @ Wi.transpose(1, 2)[:, :, :get_even_index(N)]) / N / N
+    # r = ((Wr @ x) @ Wr.transpose(1, 2)[:, :, :get_even_index(N)] - (Wi @ x) @ Wi.transpose(1, 2)[:, :, :get_even_index(N)]) / N / N
+    # i = ((Wi @ x) @ Wr.transpose(1, 2)[:, :, :get_even_index(N)] + (Wr @ x) @ Wi.transpose(1, 2)[:, :, :get_even_index(N)]) / N / N
+
+    r = Wx.real
+    i = Wx.imag
 
     print(r.shape)
 
     mf = MatrixRFFT(N)
 
     f = torch.fft.rfft2(x.to('cpu'), norm='forward').to('cpu')
-    f2 = mf(x)
+    f2 = mf(x.to(torch.float))
+    f2 = [f2[0].to(torch.float), f2[1].to(torch.float)]
 
     print(f.shape, f2[0].shape, f2[1].shape)
 
-    reps = 0.001
-    aeps = 1e-3
+    reps = 1e-5
+    aeps = 1e-8
     print(torch.allclose(f.real, r, rtol=reps, atol=aeps))
     print(torch.allclose(f.real, f2[0], rtol=reps, atol=aeps))
 
@@ -742,3 +783,8 @@ if __name__ == '__main__':
 
     print(torch.abs(f.real - r).max())
     print(torch.abs(f.imag - i).max())
+
+    print()
+
+    print(torch.abs(f.real - f2[0]).max())
+    print(torch.abs(f.imag - f2[1]).max())

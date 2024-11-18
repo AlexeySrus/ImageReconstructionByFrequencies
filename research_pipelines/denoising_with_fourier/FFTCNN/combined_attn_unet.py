@@ -17,8 +17,7 @@ padding_mode: str = 'reflect'
 def init_weights(m):
     if type(m) == nn.Linear:
         torch.nn.init.xavier_uniform_(m.weight)
-
-    if type(m) == nn.Conv2d:
+    elif type(m) == nn.Conv2d:
         torch.nn.init.xavier_uniform_(m.weight)
 
 
@@ -131,7 +130,6 @@ class FeaturesUpsample(nn.Module):
         super().__init__()
         self.in_features = FeaturesProcessing(in_ch, in_ch, window_size=window_size, image_size=image_size, use_attention=use_attention)
         self.up = get_up_function(interpolation_mode, in_ch)
-        self.up = lambda x: torch.nn.functional.interpolate(x, scale_factor=2, align_corners=True, mode='bilinear')
         self.features = FeaturesProcessing(in_ch, out_ch, window_size=window_size, image_size=image_size, use_attention=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -274,21 +272,22 @@ if __name__ == '__main__':
     import segmentation_models_pytorch as smp
 
 
-    model = FFTAttentionUNet(3, 3)
+    model = FFTAttentionUNet(3, 3, use_substraction=True, interolation_mode=InterpolationMode.MAXPOOL_BILINEAR, attention_mode='none')
 
     m_params = sum(p.numel() for p in model.parameters())
 
     print('Ours model params: {}M'.format(m_params // 10 ** 6))
 
-    unet_model = smp.Unet(
-        encoder_name="resnet18",
-        encoder_weights="imagenet",
-        in_channels=1,
-        classes=3,
-    )
+    # unet_model = smp.Unet(
+    #     encoder_name="resnet18",
+    #     encoder_weights="imagenet",
+    #     in_channels=1,
+    #     classes=3,
+    # )
+    unet_model = model
     unet_model_params = sum(p.numel() for p in unet_model.parameters())
 
-    print('UNet(ResNet18) model params: {}M'.format(unet_model_params // 10 ** 6))
+    print('UNet model params: {}M'.format(unet_model_params // 10 ** 6))
 
     t = torch.rand(1, 3, 256, 256)
     out = model(t)
@@ -304,11 +303,12 @@ if __name__ == '__main__':
     print(out[0].shape)
 
     _ = model.eval()
+    model.to_export()
 
     with torch.no_grad():
         out = model(t)
 
-    n_attempts: int = 10
+    n_attempts: int = 100
 
     start_time = time()
     with torch.no_grad():
@@ -319,8 +319,8 @@ if __name__ == '__main__':
     infer_time = (finish_time - start_time) / n_attempts
     print('Inference time: {:.5f} sec'.format(infer_time))
 
-    model.to_export()
-    model.eval()
+    # model.to_export()
+    # model.eval()
 
-    traced = torch.jit.trace(model, example_inputs=t)
-    torch.jit.save(traced, '/home/alexey/Downloads/fftcnn.pt')
+    # traced = torch.jit.trace(model, example_inputs=t)
+    # torch.jit.save(traced, '/home/alexey/Downloads/fftcnn.pt')
