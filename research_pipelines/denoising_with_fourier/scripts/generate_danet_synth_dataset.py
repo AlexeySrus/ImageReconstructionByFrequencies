@@ -37,8 +37,8 @@ def parse_args() -> Namespace:
         help='Minimum image size (default: 256)'
     )
     parser.add_argument(
-        '--prefix', type=str, required=False, default='DANet',
-        help='Prefix of noise images names (default \'DANet\')'
+        '--prefix', type=str, required=False,
+        help='Prefix of noise images names (default: None)'
     )
     return parser.parse_args()
 
@@ -69,8 +69,8 @@ if  __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     device = torch.device(device)
 
-    # net = UNetG(3, wf=32, depth=5).to(device)
-    net = get_base_uformer_model(image_size=256, in_ch=4, out_ch=3).to(device)
+    net = UNetG(3, wf=32, depth=5).to(device)
+    # net = get_base_uformer_model(image_size=256, in_ch=4, out_ch=3).to(device)
     net.load_state_dict(torch.load(args.noise_generator_weights, map_location=device)['G'])
 
     for img_name in tqdm(os.listdir(args.input)):
@@ -99,9 +99,12 @@ if  __name__ == '__main__':
             )
         nimg = (nimg.to('cpu') * 255.0).numpy().transpose(1, 2, 0).astype(np.uint8)
 
-        image_basename = '{}_{}'.format(
-            args.prefix, bname
-        )
+        if args.prefix is not None:
+            image_basename = '{}_{}'.format(
+                args.prefix, bname
+            )
+        else:
+            image_basename = bname
         
         clear_path = os.path.join(
             output_clear_images_folder,
@@ -109,7 +112,7 @@ if  __name__ == '__main__':
         )
         noisy_path = os.path.join(
             output_noisy_images_folder,
-            image_basename + '.png'
+            image_basename + ext
         )
 
         copyfile(input_path, clear_path)
