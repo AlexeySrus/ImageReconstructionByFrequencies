@@ -72,6 +72,7 @@ if  __name__ == '__main__':
     net = UNetG(3, wf=32, depth=5).to(device)
     # net = get_base_uformer_model(image_size=256, in_ch=4, out_ch=3).to(device)
     net.load_state_dict(torch.load(args.noise_generator_weights, map_location=device)['G'])
+    _ = net.eval()
 
     for img_name in tqdm(os.listdir(args.input)):
         bname, ext = os.path.splitext(img_name)

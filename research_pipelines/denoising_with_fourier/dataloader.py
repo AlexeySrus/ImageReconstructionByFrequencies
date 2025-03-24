@@ -2,6 +2,7 @@ from typing import Tuple, Optional, List, Union, Dict
 import albumentations as A
 import cv2
 import numpy as np
+from regex import F
 import torch
 import torchvision
 from torch.utils.data import Dataset
@@ -59,7 +60,8 @@ class PairedDenoiseDataset(Dataset):
                  preload: bool = False,
                  return_names: bool = False,
                  use_ycrcb: bool = False,
-                 grayscale: bool = False):
+                 grayscale: bool = False,
+                 aa_simulation: bool = False):
         self.noisy_images = {
             os.path.splitext(img_name)[0]: os.path.join(noisy_images_path, img_name)
             for img_name in os.listdir(noisy_images_path)
@@ -78,6 +80,7 @@ class PairedDenoiseDataset(Dataset):
         self.return_names = return_names
         self.use_ycrcb = use_ycrcb
         self.grayscale = grayscale
+        self.aa_simulation = aa_simulation
 
         self.names = [img_name for img_name in os.listdir(clear_images_path)]
 
@@ -102,11 +105,28 @@ class PairedDenoiseDataset(Dataset):
             clear_image = load_image(clear_image)
 
         if self.need_crop:
-            noisy_image, clear_image = random_crop_with_transforms(
-                noisy_image, clear_image,
-                window_size=self.window_size,
-                random_swap=False
-            )
+            if self.aa_simulation and np.random.rand() < 0.1:
+                min_img_size = min(noisy_image.shape[:2])
+                max_scale = min_img_size // self.window_size
+                x_scale = np.random.randint(2, max_scale + 1)
+
+                noisy_image, clear_image = random_crop_with_transforms(
+                    noisy_image, clear_image,
+                    window_size=self.window_size * x_scale,
+                    random_swap=False
+                )
+
+                if x_scale > 2:
+                    clear_image = cv2.GaussianBlur(clear_image, ksize=(5, 5), sigmaX=1)
+
+                noisy_image = cv2.resize(noisy_image, (self.window_size, self.window_size), interpolation=cv2.INTER_NEAREST)
+                clear_image = cv2.resize(clear_image, (self.window_size, self.window_size), interpolation=cv2.INTER_AREA)
+            else:
+                noisy_image, clear_image = random_crop_with_transforms(
+                    noisy_image, clear_image,
+                    window_size=self.window_size,
+                    random_swap=False
+                )
 
         if self.return_names:
             img_name = self.names[idx]

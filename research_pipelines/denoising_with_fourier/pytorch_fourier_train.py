@@ -26,13 +26,10 @@ from contextlib import nullcontext
 from dataloader import PairedDenoiseDataset, SyntheticNoiseDataset, SYNTH_CONFIG
 from callbacks import VisImage, VisAttentionMaps, VisPlot
 from FFTCNN.combined_attn_unet import init_weights
-from FFTCNN.combined_attn_unet import FFTAttentionUNet
-from FFTCNN.combined_attn_unet_plusplus import FFTAttentionUNetPlusPlus
-from FFTCNN.uformer import Uformer
-from FFTCNN.restormer import Restormer
+from utils.model_build import build_denoising_model
+from utils.gan_loss import StyleGANv2Loss
 from utils.window_inference import denoise_inference
 from utils.hist_loss import HistLoss
-from utils.adversarial_loss import Adversarial
 from utils.freq_loss import HightFrequencyFFTLoss, HFENLoss, FrequencyRelationLoss
 from utils.focal_frequency_loss import FocalFrequencyLoss
 from utils.edge_loss import EdgeLoss
@@ -40,7 +37,6 @@ from utils.laplassian_loss import LapLoss
 from utils.tv_loss import CharbonnierLoss, TVLoss
 from utils.tensor_utils import MixUp_AUG, convert_tensor_to_rgb
 from utils.cas import contrast_adaptive_sharpening
-from FFTCNN.interpolation_type import InterpolationMode, interpolation_type_from_str
 from utils.fdl_loss import MatrixFFT_FDL_loss as FDL_loss
 
 
@@ -318,46 +314,19 @@ class CustomTrainingPipeline(object):
 
         ch_count = 1 if grayscale else 3
 
-        if model_architecture == 'unet':
-            self.model = FFTAttentionUNet(
-                in_ch=ch_count,
-                out_ch=ch_count,
-                image_size=image_size,
-                use_substraction=substracted_noise,
-                attention_mode=attention_mode,
-                interolation_mode=interpolation_type_from_str(interpolation_mode)
-            )
-        elif model_architecture == 'unetplusplus':
-            self.model = FFTAttentionUNetPlusPlus(
-                in_ch=ch_count,
-                out_ch=ch_count,
-                image_size=image_size,
-                use_substraction=substracted_noise,
-                attention_mode=attention_mode,
-                interolation_mode=interpolation_type_from_str(interpolation_mode)
-            )
-        elif model_architecture == 'uformer':
-            self.model = Uformer(
-                img_size=image_size, embed_dim=32, win_size=8, 
-                token_projection='linear', token_mlp='leff',
-                depths=[1, 2, 8, 8, 2, 8, 8, 2, 1], modulator=True,
-                dd_in=ch_count, in_chans=ch_count,
-                attention_mode=attention_mode
-            )
-        elif model_architecture == 'restormer':
-            self.model = Restormer(
-                image_size=image_size,
-                inp_channels=ch_count,
-                out_channels=ch_count,
-                attention_mode=attention_mode,
-                dim=32,
-                LayerNorm_type='BiasFree'
-            )
-        else:
-            raise RuntimeError('Unsupported model architecture: {}'.format(model_architecture))
+        self.model = build_denoising_model(
+            model_architecture=model_architecture, 
+            ch_count=ch_count, 
+            image_size=image_size,
+            substracted_noise=substracted_noise,
+            interpolation_mode=interpolation_mode,
+            attention_mode=attention_mode
+        )
 
-        self.loss_weighter = ModelMultitask(losses_count=2)
-        self.loss_weighter = self.loss_weighter.to(self.device)
+
+        # self.loss_weighter = ModelMultitask(losses_count=2)
+        # self.loss_weighter = self.loss_weighter.to(self.device)
+        self.loss_weighter = None
 
         self.model.apply(init_weights)
         self.model = self.model.to(device)
@@ -366,17 +335,18 @@ class CustomTrainingPipeline(object):
         #     params=[{'params': self.model.parameters()}, {'params': self.loss_weighter.parameters(), 'weight_decay': 0}], 
         #     lr=init_lr, nesterov=True, momentum=0.9, weight_decay=1e-4
         # )
-        # self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=init_lr, betas=(0.9, 0.999), eps=1e-8, weight_decay=1e-2)
-        self.optimizer = torch.optim.AdamW(
-            params=[{'params': self.model.parameters()}, {'params': self.loss_weighter.parameters(), 'weight_decay': 0}], 
-            lr=init_lr, betas=(0.9, 0.999), eps=1e-8, weight_decay=1e-4
-        )
+        self.optimizer = torch.optim.AdamW(params=self.model.parameters(), lr=init_lr, betas=(0.9, 0.999), eps=1e-8, weight_decay=1e-4)
+        # self.optimizer = torch.optim.Adam(
+        #     params=self.model.parameters(), 
+        #     lr=init_lr, betas=(0, 0.99), eps=1e-8,
+        # )
         # self.optimizer = torch.optim.RAdam(
         #     params=[{'params': self.model.parameters()}, {'params': self.loss_weighter.parameters(), 'weight_decay': 0}], 
         #     lr=init_lr, betas=(0.9, 0.999), eps=1e-8, decoupled_weight_decay=True, weight_decay=1e-2
         # )
         # self.optimizer = AdaSmooth(
-        #     params=[{'params': self.model.parameters()}, {'params': self.loss_weighter.parameters(), 'weight_decay': 0}], 
+        #     params=self.model.parameters(),
+        #     # params=[{'params': self.model.parameters()}, {'params': self.loss_weighter.parameters(), 'weight_decay': 0}], 
         #     lr=init_lr, weight_decay=1e-2, weight_decouple=True
         # )
         self.scaler = torch.amp.GradScaler(enabled=self.use_amp)
@@ -394,26 +364,31 @@ class CustomTrainingPipeline(object):
                 print(
                     '#' * 5 + ' Optimizer has been loaded by path: {} '.format(load_path) + '#' * 5
                 )
-                self.optimizer.param_groups[0]['lr'] = init_lr
+                for g in self.optimizer.param_groups:
+                    g['lr'] = init_lr
                 print('Optimizer LR: {:.5f}'.format(self.get_lr()))
 
                 if hasattr(self, 'loss_weighter') and self.loss_weighter is not None and 'loss_weighter' in load_data.keys():
                     self.loss_weighter.load_state_dict(load_data['loss_weighter'])
                     print('Loss weighter sigmas have been loaded')
 
-            self.optimizer.param_groups[0]['weight_decay'] = 1e-4
+            # self.optimizer.param_groups[0]['weight_decay'] = 1e-4
             print('Optimizer Weights Decay: {:.5f}'.format(self.optimizer.param_groups[0]['weight_decay']))
-            print('Loss Weights Decay: {:.5f}'.format(self.optimizer.param_groups[1]['weight_decay']))
+            # print('Loss Weights Decay: {:.5f}'.format(self.optimizer.param_groups[1]['weight_decay']))
 
         self.images_criterion = CharbonnierLoss().to(self.device)
         # self.images_criterion = FocalFrequencyLoss(patch_factor=16, loss_weight=10).to(self.device)
         # self.images_criterion = MIXLoss(data_range=1.0, channel=ch_count)
         self.val_criterion = self.images_criterion
-        self.perceptual_loss = DISTS().to(self.device)
-        # self.perceptual_loss = None
+        # self.perceptual_loss = DISTS().to(self.device)
+        self.perceptual_loss = None
         # self.final_hist_loss = HistLoss(image_size=128, device=self.device)
         # self.final_hist_loss = None
-        # self.adv_loss = Adversarial(image_size=self.image_shape[0], gan_type='GAN', spectral_norm=True, in_ch=ch_count).to(device)
+        # self.adv_loss = StyleGANv2Loss(
+        #     image_size=image_size,
+        #     lr=init_lr,
+        #     channels=ch_count
+        # ).to(device)
         self.adv_loss = None
         # self.hf_loss = HightFrequencyFFTLoss(self.image_shape).to(device)
         # self.hf_loss = HFENLoss(
@@ -532,8 +507,8 @@ class CustomTrainingPipeline(object):
                     #     self.use_unetpp
                     # )
 
-                    total_loss = self.loss_weighter([loss, p_loss])
-                    # total_loss = loss
+                    # total_loss = self.loss_weighter([loss, p_loss])
+                    total_loss = loss
 
                     if self.gradient_accumulation_steps > 1:
                         total_loss = total_loss / self.gradient_accumulation_steps
@@ -561,16 +536,27 @@ class CustomTrainingPipeline(object):
                         self.scaler.update()
                         self.optimizer.zero_grad()
 
-                pbar.postfix = \
-                    'Epoch: {}/{}, loss: {:.5f}, p_loss: {:.4f}, w: [{:.2f}, {:.2f}], lr: {:.7f}'.format(
-                        epoch,
-                        self.epochs,
-                        loss.item(),
-                        p_loss.item(),
-                        self.loss_weighter.sigma[0].item(),
-                        self.loss_weighter.sigma[1].item(),
-                        self.get_lr()
-                    )
+                if self.loss_weighter is not None:
+                    pbar.postfix = \
+                        'Epoch: {}/{}, loss: {:.5f}, p_loss: {:.4f}, w: [{:.2f}, {:.2f}], lr: {:.7f}'.format(
+                            epoch,
+                            self.epochs,
+                            loss.item(),
+                            p_loss.item(),
+                            self.loss_weighter.sigma[0].item(),
+                            self.loss_weighter.sigma[1].item(),
+                            self.get_lr()
+                        )
+                else:
+                    pbar.postfix = \
+                        'Epoch: {}/{}, loss: {:.5f}, lr: {:.7f}'.format(
+                            epoch,
+                            self.epochs,
+                            loss.item(),
+                            # p_loss.item(),
+                            self.get_lr()
+                        )
+                    
                 avg_epoch_loss += loss.item() / len(self.train_dataloader)
 
                 if self.scheduler is not None and not self.is_epoch_scheduler:
@@ -782,8 +768,8 @@ def parse_args() -> Namespace:
     )
     parser.add_argument(
         '--architecture', type=str, required=False, default='unet',
-        choices=['unet', 'unetplusplus', 'uformer', 'restormer'],
-        help='Denoising model architecture from \'unet\', \'unetpp\', \'uformer\', \'restormer\'.'
+        choices=['unet', 'unetplusplus', 'uformer', 'restormer', 'dncnn', 'nafnet', 'stylegan'],
+        help='Denoising model architecture from \'unet\', \'unetpp\', \'uformer\', \'restormer\', \'dncnn\', \'nafnet\', \'stylegan\'.'
     )
     parser.add_argument(
         '--attention_mode', type=str, required=False, default='full',
@@ -793,7 +779,7 @@ def parse_args() -> Namespace:
     parser.add_argument(
         '--interpolation_mode', type=str, required=False, default='none',
         choices=['none', 'max2bilinear', 'bilinear', 'bicubic', 'lanczos2', 'lanczos3', 'lanczos4', 'lanczos5'],
-        help='Interpolation mode where \'none\' is classic maxpool-decomvolution scheme, '
+        help='Interpolation mode where \'none\' is classic maxpool-deconvolution scheme, '
                 '\'max2bilinear\' is maxpool-bilinear scheme and other is X-X downsample-upsample interpolations methods.'
     )
     parser.add_argument(

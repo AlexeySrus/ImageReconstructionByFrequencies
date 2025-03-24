@@ -2,6 +2,7 @@ from typing import Tuple
 from argparse import ArgumentParser, Namespace
 import cv2
 import numpy as np
+from regex import T
 from skimage.metrics import structural_similarity as ssim
 from tqdm import tqdm
 import torch
@@ -10,13 +11,17 @@ import os
 # os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 CURRENT_PATH = os.path.dirname(__file__)
 
-from FFTCNN.combined_attn_unet import FFTAttentionUNet as FFTCNN
-from FFTCNN.interpolation_type import interpolation_type_from_str
+from utils.model_build import build_denoising_model
 from utils.window_inference import eval_denoise_inference
 
 
 def parse_args() -> Namespace:
     parser = ArgumentParser(description='Plot wavelets')
+    parser.add_argument(
+        '--architecture', type=str, required=False, default='unet',
+        choices=['unet', 'unetplusplus', 'uformer', 'restormer', 'dncnn', 'nafnet', 'stylegan'],
+        help='Denoising model architecture from \'unet\', \'unetpp\', \'uformer\', \'restormer\', \'dncnn\', \'nafnet\', \'stylegan\'.'
+    )
     parser.add_argument(
         '-m', '--model', type=str, required=True,
         help='Path to model checkpoint file'
@@ -68,17 +73,21 @@ if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     y_only = args.y_channel_only
 
+    print('Architecture: {}'.format(args.architecture))
     print('Attention mode: {}'.format(args.attention_mode))
     print('Interpolation mode: {}'.format(args.interpolation_mode))
 
-    model = FFTCNN(
-        use_substraction=True, 
-        attention_mode=args.attention_mode,
-        interolation_mode=interpolation_type_from_str(args.interpolation_mode)
+    model = build_denoising_model(
+        model_architecture=args.architecture, 
+        ch_count=3, 
+        image_size=imgsz,
+        substracted_noise=True,
+        interpolation_mode=args.interpolation_mode,
+        attention_mode=args.attention_mode
     ).to(device)
 
     load_path = args.model
-    load_data = torch.load(load_path, map_location=device)
+    load_data = torch.load(load_path, map_location=device, weights_only=True)
     model.load_state_dict(load_data['model'])
     model.eval()
 
